@@ -61,7 +61,10 @@ tmp/
 *.tsbuildinfo
 
 # --- Never commit real client/case data or exports ---
+# (Prisma migration SQL is source of truth and must NOT be ignored here —
+# see docs/ARCHITECTURE.md/CLAUDE.md section 4.3 — hence the negation.)
 *.sql
+!prisma/migrations/**/*.sql
 *.dump
 /uploads/
 /local-data/

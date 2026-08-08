@@ -1,0 +1,316 @@
+// Frye Case Management — database schema
+//
+// This is the initial schema for the first vertical slice (Matters +
+// Matter detail with Overview/Discovery/Documents/Calls/Notes/Tasks/
+// Deadlines/Timeline). It intentionally omits entities not needed yet
+// (Contact, MatterContact, generic Communication, DiscoveryComparison/
+// DiscoveryFileMatch) — see docs/DATA_MODEL.md for the full target model
+// and docs/ROADMAP.md for when those land.
+//
+// All schema changes must go through `prisma migrate dev` — never hand-edit
+// the database or the generated client (see CLAUDE.md, section 4).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --- Enums ---------------------------------------------------------------
+
+enum UserRole {
+  ADMIN
+  ATTORNEY
+  PARALEGAL
+  STAFF
+}
+
+enum MatterStatus {
+  OPEN
+  PENDING
+  CLOSED
+}
+
+enum AssignmentRole {
+  LEAD_ATTORNEY
+  ASSOCIATE_ATTORNEY
+  PARALEGAL
+  STAFF
+}
+
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  DONE
+  CANCELLED
+}
+
+enum TaskPriority {
+  LOW
+  NORMAL
+  HIGH
+}
+
+enum DeadlineType {
+  STATUTE_OF_LIMITATIONS
+  SPEEDY_TRIAL
+  FILING
+  OTHER
+}
+
+enum DiscoveryFileType {
+  PDF
+  VIDEO
+  AUDIO
+  PHOTO
+  OTHER
+}
+
+enum DocumentCategory {
+  PLEADING
+  CORRESPONDENCE
+  CONTRACT
+  OTHER
+}
+
+enum CallDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  VIEW
+  EXPORT
+}
+
+// --- Core entities ---------------------------------------------------------
+
+/// Firm staff account. Authentication is not wired up yet (Phase 1 of
+/// docs/ROADMAP.md) — these rows exist today so seed data can attribute
+/// notes, tasks, uploads, and audit events to a real "who did this."
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         UserRole @default(STAFF)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  assignments       MatterAssignment[]
+  assignedTasks     Task[]             @relation("TaskAssignee")
+  authoredNotes     Note[]
+  uploadedDocuments Document[]
+  filedCalls        Call[]             @relation("CallFiledBy")
+  auditEvents       AuditEvent[]
+}
+
+/// A person or entity the firm represents. One Client can have multiple
+/// Matters over time (repeat client).
+model Client {
+  id          String    @id @default(cuid())
+  firstName   String
+  lastName    String
+  dateOfBirth DateTime?
+  email       String?
+  phone       String?
+  address     String?
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  matters Matter[]
+}
+
+/// A single criminal matter/case for a Client. This is the hub every other
+/// entity in this slice hangs off of.
+model Matter {
+  id          String       @id @default(cuid())
+  clientId    String
+  client      Client       @relation(fields: [clientId], references: [id])
+  caseNumber  String       @unique
+  court       String
+  charges     String
+  status      MatterStatus @default(OPEN)
+  openedDate  DateTime
+  closedDate  DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  assignments          MatterAssignment[]
+  notes                Note[]
+  tasks                Task[]
+  deadlines            Deadline[]
+  discoveryProductions DiscoveryProduction[]
+  documents            Document[]
+  calls                Call[]
+  auditEvents          AuditEvent[]
+}
+
+/// Join table: which staff are assigned to a Matter, and in what capacity.
+/// This is the basis for matter-level authorization (see docs/SECURITY.md)
+/// once auth is wired up — a user should only see matters they're assigned
+/// to unless they're an admin.
+model MatterAssignment {
+  id         String         @id @default(cuid())
+  matterId   String
+  matter     Matter         @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User           @relation(fields: [userId], references: [id])
+  role       AssignmentRole
+  assignedAt DateTime       @default(now())
+
+  @@unique([matterId, userId])
+}
+
+/// Free-text note attached to a Matter.
+model Note {
+  id        String   @id @default(cuid())
+  matterId  String
+  matter    Matter   @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id])
+  body      String
+  pinned    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Actionable to-do attached to a Matter, optionally assigned to a staff
+/// member.
+model Task {
+  id           String       @id @default(cuid())
+  matterId     String
+  matter       Matter       @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  assignedToId String?
+  assignedTo   User?        @relation("TaskAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  title        String
+  description  String?
+  dueDate      DateTime?
+  status       TaskStatus   @default(OPEN)
+  priority     TaskPriority @default(NORMAL)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+}
+
+/// A date-driven legal obligation on a Matter (statute of limitations,
+/// speedy trial, filing deadline). Kept separate from Task because missing
+/// one has legal consequences and needs its own satisfied/audit semantics
+/// rather than a generic "done" checkbox.
+model Deadline {
+  id                 String       @id @default(cuid())
+  matterId           String
+  matter             Matter       @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  type               DeadlineType
+  date               DateTime
+  description        String
+  reminderDaysBefore Int          @default(7)
+  satisfied          Boolean      @default(false)
+  satisfiedAt        DateTime?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+}
+
+/// One batch of discovery received on a Matter. File-level Bates numbering
+/// and cross-production comparison logic are not implemented yet (see
+/// docs/ROADMAP.md, Phase 4) — this and DiscoveryFile exist now only to
+/// hold the page structure and let a production/file list render.
+model DiscoveryProduction {
+  id           String   @id @default(cuid())
+  matterId     String
+  matter       Matter   @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  label        String
+  source       String?
+  receivedDate DateTime
+  batesPrefix  String?
+  batesStart   Int?
+  batesEnd     Int?
+  notes        String?
+  createdAt    DateTime @default(now())
+
+  files DiscoveryFile[]
+}
+
+/// One file within a DiscoveryProduction. `identifier` will eventually hold
+/// the assigned Bates number (PDFs) or consistent media ID (video/audio/
+/// photo) — for now it's just a plain field populated by seed data.
+model DiscoveryFile {
+  id                  String            @id @default(cuid())
+  productionId        String
+  production          DiscoveryProduction @relation(fields: [productionId], references: [id], onDelete: Cascade)
+  originalFilename    String
+  identifier          String?
+  fileType            DiscoveryFileType
+  contentHash         String?
+  dropboxPathOriginal String?
+  dropboxPathNumbered String?
+  pageCount           Int?
+  createdAt           DateTime          @default(now())
+}
+
+/// A general (non-discovery) document tied to a Matter — pleadings,
+/// correspondence, contracts. References a Dropbox path; the file itself
+/// is never stored in this application (see docs/ARCHITECTURE.md).
+model Document {
+  id           String           @id @default(cuid())
+  matterId     String
+  matter       Matter           @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  category     DocumentCategory @default(OTHER)
+  title        String
+  dropboxPath  String
+  uploadedById String
+  uploadedBy   User             @relation(fields: [uploadedById], references: [id])
+  uploadedAt   DateTime         @default(now())
+  notes        String?
+}
+
+/// A phone call. `matterId` is nullable to represent the "unfiled call"
+/// state (received, not yet attached to a matter) from the planned Vonage
+/// workflow — no telephony integration exists yet; rows here are manually
+/// logged or seeded.
+model Call {
+  id                   String        @id @default(cuid())
+  matterId             String?
+  matter               Matter?       @relation(fields: [matterId], references: [id], onDelete: SetNull)
+  contactName          String?
+  vonageCallId         String?
+  direction            CallDirection
+  fromNumber           String
+  toNumber             String
+  occurredAt           DateTime
+  durationSeconds      Int
+  recordingDropboxPath String?
+  flagged              Boolean       @default(false)
+  notes                String?
+  filedById            String?
+  filedBy              User?         @relation("CallFiledBy", fields: [filedById], references: [id], onDelete: SetNull)
+  filedAt              DateTime?
+  createdAt            DateTime      @default(now())
+}
+
+/// Immutable log of who did what to which record and when (see CLAUDE.md,
+/// section 4.5 — every write to case data must produce one of these). No
+/// update/delete should ever be exposed for this model at the application
+/// layer. `matterId` is a nullable, denormalized pointer for fast
+/// "everything on this matter" queries and is set to null (not cascaded)
+/// if the matter is ever removed, so the historical record survives.
+model AuditEvent {
+  id         String      @id @default(cuid())
+  actorId    String?
+  actor      User?       @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action     AuditAction
+  entityType String
+  entityId   String
+  matterId   String?
+  matter     Matter?     @relation(fields: [matterId], references: [id], onDelete: SetNull)
+  metadata   Json?
+  occurredAt DateTime    @default(now())
+  ipAddress  String?
+}

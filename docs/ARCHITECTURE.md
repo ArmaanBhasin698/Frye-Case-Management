@@ -157,8 +157,10 @@ Planned architecture (not implemented yet — see `docs/ROADMAP.md`):
 └── README.md
 ```
 
-This structure is created as empty scaffolding in this groundwork phase;
-files are added feature-by-feature.
+This structure was created as empty scaffolding in the groundwork phase and
+is now populated feature-by-feature — the `matters/` slice (list, detail,
+and its tabs) is the first real example. See `docs/ROADMAP.md` for what's
+built vs. still a placeholder.
 
 ## Deployment (future decision, not needed yet)
 
