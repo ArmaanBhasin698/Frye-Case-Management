@@ -1,7 +1,7 @@
 import { format } from "date-fns";
 
 import { getMatterAuditEvents } from "@/lib/matters/queries";
-import { humanizeEntityType } from "@/lib/matters/format";
+import { auditActionPastTense, humanizeEntityType } from "@/lib/matters/format";
 import { Card, CardContent } from "@/components/ui/card";
 
 export default async function MatterTimelinePage({
@@ -37,7 +37,7 @@ export default async function MatterTimelinePage({
                     <span className="font-medium text-foreground">
                       {event.actor?.name ?? "System"}
                     </span>{" "}
-                    {event.action.toLowerCase()}d a {humanizeEntityType(event.entityType)}
+                    {auditActionPastTense(event.action)} a {humanizeEntityType(event.entityType)}
                   </div>
                 </li>
               ))}

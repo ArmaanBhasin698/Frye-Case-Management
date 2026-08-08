@@ -136,6 +136,12 @@ export function humanizeEntityType(entityType: string) {
   return entityType.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
 }
 
+/** "VIEW" -> "viewed", "CREATE" -> "created" for audit timeline copy. */
+export function auditActionPastTense(action: string) {
+  const lower = action.toLowerCase();
+  return lower.endsWith("e") ? `${lower}d` : `${lower}ed`;
+}
+
 const DISCOVERY_REVIEW_STATUS_LABEL: Record<DiscoveryReviewStatus, string> = {
   NOT_STARTED: "Not Started",
   IN_REVIEW: "In Review",
