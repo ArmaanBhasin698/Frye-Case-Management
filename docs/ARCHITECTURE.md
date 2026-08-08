@@ -140,6 +140,8 @@ Planned architecture (not implemented yet — see `docs/ROADMAP.md`):
 ├── lib/
 │   ├── auth/                   # Auth.js config, session/permission helpers
 │   ├── db/                     # Prisma client singleton
+│   ├── dashboard/               # Cross-matter aggregate reads for the dashboard home page
+│   ├── matters/                 # Matter-scoped data access + presentation helpers (format.ts)
 │   ├── discovery/              # Bates numbering, identifiers, comparison logic (future)
 │   ├── storage/                # Dropbox interface (future)
 │   ├── telephony/              # Vonage interface (future)

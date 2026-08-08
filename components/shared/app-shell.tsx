@@ -9,6 +9,7 @@ import {
   CheckSquare,
   FileSearch,
   FolderKanban,
+  LayoutDashboard,
   Menu,
   Phone,
   Scale,
@@ -27,6 +28,7 @@ type NavItem = {
 };
 
 const NAV_ITEMS: NavItem[] = [
+  { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/matters", label: "Matters", icon: FolderKanban },
   { href: "/clients", label: "Clients", icon: Users, disabled: true },
   { href: "/tasks", label: "Tasks", icon: CheckSquare, disabled: true },
@@ -52,7 +54,10 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-4">
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
-          const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+          const active =
+            item.href === "/"
+              ? pathname === "/"
+              : pathname === item.href || pathname.startsWith(`${item.href}/`);
 
           if (item.disabled) {
             return (

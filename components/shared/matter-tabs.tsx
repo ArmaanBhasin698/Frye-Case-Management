@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -19,6 +20,11 @@ const TABS = [
 export function MatterTabs({ matterId }: { matterId: string }) {
   const pathname = usePathname();
   const basePath = `/matters/${matterId}`;
+  const activeRef = React.useRef<HTMLAnchorElement>(null);
+
+  React.useEffect(() => {
+    activeRef.current?.scrollIntoView({ block: "nearest", inline: "center" });
+  }, [pathname]);
 
   return (
     <div className="overflow-x-auto border-b border-border">
@@ -31,6 +37,7 @@ export function MatterTabs({ matterId }: { matterId: string }) {
             <Link
               key={tab.segment}
               href={href}
+              ref={active ? activeRef : undefined}
               className={cn(
                 "border-b-2 px-3 py-2.5 text-sm font-medium transition-colors",
                 active

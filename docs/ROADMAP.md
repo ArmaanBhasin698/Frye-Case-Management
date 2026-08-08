@@ -56,6 +56,36 @@ particular:
 - `AuditEvent` rows are seeded for the Timeline tab demo, not produced by
   live writes, since there are no writes yet.
 
+## Milestone — Visual demo polish (third session)
+
+Purpose-built for a firm demo: a dashboard homepage, a "command center"
+Matter overview, a showcase Discovery tab, a richer Calls tab, and a
+Kanban-style Tasks board. Still no create/edit forms, auth, or real
+integrations — this is presentation polish over the same read-only slice,
+plus a few schema additions pulled forward from later phases specifically
+to make the demo data richer and more honest:
+
+- Added `CalendarEvent` (Phase 3) so "upcoming court dates" are real rows,
+  not just Deadlines wearing a court-date costume.
+- Added `DiscoveryProduction.reviewStatus` and the `DiscoveryComparison`/
+  `DiscoveryFileMatch` tables (Phase 4) to show a New/Changed/Duplicate/
+  Missing comparison view. The rows are hand-seeded to look plausible —
+  there is no hashing/diffing engine behind them yet (see Phase 4 below).
+- The Tasks tab is now a drag-and-drop Kanban board
+  (`components/shared/task-board.tsx`). Dragging a card updates on-screen
+  state only; there's no Task-update Server Action yet, so moves don't
+  survive a refresh.
+- The Calls tab now shows the firm-wide "unfiled calls" pool with a mocked
+  "Attach to Matter" button (`components/shared/attach-call-list.tsx`).
+  Clicking it only changes local component state — no write happens.
+- The Matter Overview has a "Quick actions" row (Add Note / Log a Call /
+  Upload Document / New Task). Clicking any of them shows an inline
+  "coming soon" message instead of a form — there's nothing to submit to
+  yet.
+- Every one of the above is called out in-app (banners, badges, helper
+  text) so a demo viewer — or the next developer — can't mistake mocked
+  interactivity for a finished feature.
+
 ## Phase 2 — Clients & Matters (CRUD + authorization)
 
 - [ ] Client CRUD (create/list/view/edit) with server-side validation.
@@ -78,11 +108,13 @@ audited.
 
 - [ ] Notes on a matter — *read-only view shipped; no create/edit form.*
 - [ ] Tasks (assignable, with status/priority) on a matter — *read-only
-      view shipped; no create/edit form.*
+      Kanban board shipped (drag-and-drop is UI-only, not persisted); no
+      create/edit form or a real status-update action.*
 - [ ] Deadlines on a matter, with a simple upcoming-deadlines view —
       *read-only view shipped; no create/edit form.*
-- [ ] Calendar events on a matter. **Not started** — no `CalendarEvent`
-      model or UI yet.
+- [x] Calendar events on a matter. `CalendarEvent` model exists and is
+      shown (Matter Overview's "Upcoming key dates", Dashboard's "Upcoming
+      court dates & deadlines") — still no create/edit form.
 - [ ] A per-matter timeline/activity view combining the above — *read-only
       view shipped, but it reflects seed data, not live audit events (see
       milestone note above).*
@@ -93,7 +125,8 @@ calendar) works without MyCase for a pilot matter.
 ## Phase 4 — Discovery management (core differentiator)
 
 - [ ] `DiscoveryProduction` and `DiscoveryFile` CRUD. *Read-only
-      production/file listing shipped (see milestone above); no create/
+      production/file listing shipped, now with review status
+      (`NOT_STARTED`/`IN_REVIEW`/`COMPLETE`) and file-type icons; no create/
       edit/upload UI, and no Bates numbering or media identifier logic.*
 - [ ] Standardized Dropbox folder-structure convention per matter
       (documented in a new `docs/DISCOVERY.md` once designed).
@@ -101,7 +134,9 @@ calendar) works without MyCase for a pilot matter.
 - [ ] Consistent identifier scheme for video/audio/photo files.
 - [ ] Content hashing on ingest to support later comparison.
 - [ ] Discovery production comparison (new/changed/duplicate/missing)
-      across two productions.
+      across two productions. *`DiscoveryComparison`/`DiscoveryFileMatch`
+      tables and a visual comparison view shipped (see milestone above),
+      but the rows are hand-seeded — no hashing/diffing engine runs this.*
 
 **Exit criteria:** discovery for a pilot matter can be received, numbered,
 organized, and a re-served production compared against the original.
@@ -114,8 +149,10 @@ organized, and a re-served production compared against the original.
       email/SMS/letter logging is needed.
 - [ ] `Call` entity and UI for manually logging/filing a call to a matter,
       as a stand-in for the eventual Vonage sync. *`Call` model and a
-      read-only Calls tab shipped (see milestone above); no UI to log,
-      flag, or file a call yet.*
+      Calls tab shipped, including an "unfiled calls" pool with a mocked
+      Attach-to-Matter button (see milestone above); attaching only
+      updates on-screen state — there's still no real log/flag/file
+      action or Task-status-update Server Action.*
 
 **Exit criteria:** the data model and UI for communications are proven out
 manually before any Vonage API work begins.

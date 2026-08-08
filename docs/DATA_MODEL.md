@@ -161,8 +161,8 @@ Phone call — designed around future Vonage sync.
 One batch of discovery received on a matter.
 - `id`, `matterId` (FK), `label` (e.g. "Initial Production",
   "Supplemental #2"), `source` (e.g. prosecuting agency name),
-  `receivedDate`, `batesPrefix`, `batesStart`, `batesEnd`, `notes`,
-  `createdAt`.
+  `receivedDate`, `batesPrefix`, `batesStart`, `batesEnd`, `reviewStatus`
+  (`not_started` | `in_review` | `complete`), `notes`, `createdAt`.
 
 ### DiscoveryFile
 One file within a production.
@@ -174,19 +174,26 @@ One file within a production.
   original), `dropboxPathNumbered` (numbered/processed copy, nullable),
   `pageCount` (nullable), `createdAt`.
 
-### DiscoveryComparison
+### DiscoveryComparison — implemented, but hand-seeded (not computed)
 Result of comparing two productions.
 - `id`, `matterId` (FK), `fromProductionId` (FK →
   DiscoveryProduction), `toProductionId` (FK → DiscoveryProduction),
-  `runAt`, `runBy` (FK → User).
+  `runAt`.
+- **Implementation note:** this entity and `DiscoveryFileMatch` exist in
+  the schema ahead of their originally-planned Phase 4 slot, specifically
+  to back a visual mockup of the comparison feature for a firm demo. Rows
+  are seeded by hand (`prisma/seed.ts`) to look like a plausible result —
+  there is no content-hashing or diffing engine yet. Treat any comparison
+  shown in the UI as illustrative, not as real analysis of real files.
 
 ### DiscoveryFileMatch
 One line item of a comparison result.
-- `id`, `comparisonId` (FK), `fileId` (FK → DiscoveryFile, nullable if
-  missing entirely), `status`
-  (`new` | `changed` | `duplicate` | `missing`), `matchedFileId`
-  (FK → DiscoveryFile, nullable — the counterpart file it was compared
-  against), `notes`.
+- `id`, `comparisonId` (FK), `status`
+  (`new` | `changed` | `duplicate` | `missing`), `filename` (display name —
+  works even for `missing` rows where no current file exists), `identifier`
+  (nullable), `fileId` (FK → DiscoveryFile, nullable — set for
+  new/changed/duplicate rows, null for `missing` since by definition the
+  file isn't in the newer production), `notes`.
 
 ### Document
 General, non-discovery document.
@@ -226,3 +233,14 @@ Immutable log of who did what.
 - **AuditEvent is intentionally generic/polymorphic** (`entityType` +
   `entityId`) rather than having a separate audit table per entity, so
   every future entity gets audit logging for free without a schema change.
+- **DiscoveryComparison/DiscoveryFileMatch were pulled forward from Phase 4**
+  to support a visual, seeded demo of the "compare re-served discovery"
+  feature (see docs/ROADMAP.md). The tables are real; the diffing logic
+  that would populate them from actual file comparisons is not.
+- **CalendarEvent is separate from Deadline** even though both are "a date
+  on a matter": a Deadline carries legal consequences and a
+  satisfied/audit lifecycle (statute of limitations, filing deadlines); a
+  CalendarEvent is just something scheduled (a hearing, a meeting) with no
+  such lifecycle. A hearing that's also legally significant may reasonably
+  have both a CalendarEvent and a linked Deadline — that linkage isn't
+  modeled yet.

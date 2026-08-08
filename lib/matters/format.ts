@@ -1,8 +1,12 @@
+import { differenceInCalendarDays } from "date-fns";
 import type {
   AssignmentRole,
+  CalendarEventType,
   CallDirection,
   DeadlineType,
   DiscoveryFileType,
+  DiscoveryMatchStatus,
+  DiscoveryReviewStatus,
   DocumentCategory,
   MatterStatus,
   TaskPriority,
@@ -130,4 +134,84 @@ export function callDirectionLabel(direction: CallDirection) {
 /** "DiscoveryProduction" -> "discovery production" for audit timeline copy. */
 export function humanizeEntityType(entityType: string) {
   return entityType.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
+}
+
+const DISCOVERY_REVIEW_STATUS_LABEL: Record<DiscoveryReviewStatus, string> = {
+  NOT_STARTED: "Not Started",
+  IN_REVIEW: "In Review",
+  COMPLETE: "Reviewed",
+};
+
+const DISCOVERY_REVIEW_STATUS_VARIANT: Record<DiscoveryReviewStatus, BadgeProps["variant"]> = {
+  NOT_STARTED: "outline",
+  IN_REVIEW: "warning",
+  COMPLETE: "success",
+};
+
+export function discoveryReviewStatusLabel(status: DiscoveryReviewStatus) {
+  return DISCOVERY_REVIEW_STATUS_LABEL[status];
+}
+
+export function discoveryReviewStatusVariant(status: DiscoveryReviewStatus): BadgeProps["variant"] {
+  return DISCOVERY_REVIEW_STATUS_VARIANT[status];
+}
+
+const DISCOVERY_MATCH_STATUS_LABEL: Record<DiscoveryMatchStatus, string> = {
+  NEW: "New",
+  CHANGED: "Changed",
+  DUPLICATE: "Duplicate",
+  MISSING: "Missing",
+};
+
+const DISCOVERY_MATCH_STATUS_VARIANT: Record<DiscoveryMatchStatus, BadgeProps["variant"]> = {
+  NEW: "success",
+  CHANGED: "warning",
+  DUPLICATE: "secondary",
+  MISSING: "destructive",
+};
+
+export function discoveryMatchStatusLabel(status: DiscoveryMatchStatus) {
+  return DISCOVERY_MATCH_STATUS_LABEL[status];
+}
+
+export function discoveryMatchStatusVariant(status: DiscoveryMatchStatus): BadgeProps["variant"] {
+  return DISCOVERY_MATCH_STATUS_VARIANT[status];
+}
+
+const CALENDAR_EVENT_TYPE_LABEL: Record<CalendarEventType, string> = {
+  HEARING: "Hearing",
+  DEPOSITION: "Deposition",
+  MEETING: "Meeting",
+  OTHER: "Other",
+};
+
+export function calendarEventTypeLabel(type: CalendarEventType) {
+  return CALENDAR_EVENT_TYPE_LABEL[type];
+}
+
+/** "555-0142" style numbers, kept as-is; formats a call's duration as "7 min" / "45 sec". */
+export function formatCallDuration(durationSeconds: number) {
+  if (durationSeconds < 60) return `${durationSeconds} sec`;
+  const minutes = Math.round(durationSeconds / 60);
+  return `${minutes} min`;
+}
+
+/**
+ * Calendar days between now and `date` (positive = future). Kept as a
+ * standalone helper (rather than inlining `new Date()` in a component) so
+ * "now" is only read once per call and never inside render in a way React's
+ * purity lint flags.
+ */
+export function daysUntil(date: Date) {
+  return differenceInCalendarDays(date, new Date());
+}
+
+/** "Today" / "Tomorrow" / "in 6 days" / "3 days ago" for hero deadline callouts. */
+export function formatRelativeDays(date: Date) {
+  const days = daysUntil(date);
+  if (days === 0) return "Today";
+  if (days === 1) return "Tomorrow";
+  if (days === -1) return "Yesterday";
+  if (days > 1) return `in ${days} days`;
+  return `${Math.abs(days)} days ago`;
 }

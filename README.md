@@ -19,11 +19,15 @@ architecture rules, security requirements, coding standards) and the
 
 ## Current status
 
-**First vertical slice: Matters.** The app now runs, with a dashboard shell
-and a working Matters list + Matter detail view (Overview, Discovery,
-Documents, Calls, Notes, Tasks, Deadlines, Timeline tabs) backed by a real
-Postgres database via Prisma. There is no authentication yet, no
-create/edit forms, and no third-party integrations — see
+**Polished visual prototype, built on the Matters vertical slice.** The app
+runs with a firm-wide Dashboard, a Matters list, and a Matter detail view
+(Overview, Discovery, Documents, Calls, Notes, Tasks, Deadlines, Timeline
+tabs) backed by a real Postgres database via Prisma. The Discovery tab
+demos a New/Changed/Duplicate/Missing production comparison, the Calls tab
+demos attaching an unfiled call to a matter, and Tasks is a drag-and-drop
+Kanban board — all on fictional seeded data, all clearly marked where the
+interaction is UI-only. There is no authentication yet, no create/edit
+forms, and no third-party integrations — see
 [`docs/ROADMAP.md`](./docs/ROADMAP.md) for exactly what's built vs. planned,
 and the "What's mocked / not implemented yet" section below.
 
@@ -94,15 +98,26 @@ wired up yet:
   authorization (`docs/ROADMAP.md`, Phase 1–2) are in place.
 - **No create/edit forms.** Everything currently on screen is read-only,
   rendered from seed data — there's no way yet to add a matter, note, task,
-  etc. through the UI.
+  etc. through the UI. The Matter Overview's "Quick actions" buttons (Add
+  Note, Log a Call, Upload Document, New Task) show what the entry point
+  will feel like but only display a "coming soon" message.
 - **No Dropbox, Vonage, Loop/HighLevel, MyCase, or QuickBooks integration.**
   Documents/discovery show fake Dropbox paths as plain text; calls are
   manually-seeded rows, not pulled from Vonage.
-- **No Bates numbering or discovery comparison logic.** The Discovery tab
-  only lists production/file records seeded directly into the database.
-- **Sidebar items other than Matters** (Clients, Tasks, Calendar, Discovery,
-  Communications, Reports) are shown but disabled ("Soon") — present for
-  layout/orientation, not yet functional as their own sections.
+- **No Bates numbering or real discovery comparison logic.** The Discovery
+  tab's production/file records and review status are real database rows,
+  but the New/Changed/Duplicate/Missing comparison view is backed by
+  hand-seeded rows, not a hashing/diffing engine.
+- **Tasks board drag-and-drop is UI-only.** Moving a card between columns
+  updates the screen, not the database — there's no Task-update Server
+  Action yet, so refreshing resets it.
+- **"Attach to Matter" on the Calls tab is UI-only.** Clicking it updates
+  local component state to show the intended workflow; it doesn't file the
+  call in the database.
+- **Sidebar items other than Dashboard/Matters** (Clients, Tasks, Calendar,
+  Discovery, Communications, Reports) are shown but disabled ("Soon") —
+  present for layout/orientation, not yet functional as their own
+  sections.
 - **Audit trail is seeded, not generated.** `AuditEvent` rows exist to
   demonstrate the Timeline tab, but since there are no write actions yet,
   nothing in the running app currently produces them.

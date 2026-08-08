@@ -53,11 +53,30 @@ export function getMatterDeadlines(matterId: string) {
   });
 }
 
+export function getMatterCalendarEvents(matterId: string) {
+  return prisma.calendarEvent.findMany({
+    where: { matterId },
+    orderBy: { startTime: "asc" },
+  });
+}
+
 export function getMatterDiscoveryProductions(matterId: string) {
   return prisma.discoveryProduction.findMany({
     where: { matterId },
     include: { files: true },
     orderBy: { receivedDate: "desc" },
+  });
+}
+
+export function getMatterDiscoveryComparisons(matterId: string) {
+  return prisma.discoveryComparison.findMany({
+    where: { matterId },
+    include: {
+      fromProduction: true,
+      toProduction: true,
+      matches: { orderBy: { status: "asc" } },
+    },
+    orderBy: { runAt: "desc" },
   });
 }
 
@@ -81,6 +100,19 @@ export function getMatterAuditEvents(matterId: string) {
   return prisma.auditEvent.findMany({
     where: { matterId },
     include: { actor: true },
+    orderBy: { occurredAt: "desc" },
+  });
+}
+
+/**
+ * Calls received but not yet attached to any matter — the pool a staff
+ * member picks from when filing a call. Global (not matter-scoped) by
+ * definition; the Calls tab uses this to power the mocked "Attach to
+ * Matter" workflow (see components/shared/attach-call-list.tsx).
+ */
+export function getUnfiledCalls() {
+  return prisma.call.findMany({
+    where: { matterId: null },
     orderBy: { occurredAt: "desc" },
   });
 }

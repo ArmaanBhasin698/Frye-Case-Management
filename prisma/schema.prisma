@@ -1,11 +1,15 @@
 // Frye Case Management — database schema
 //
-// This is the initial schema for the first vertical slice (Matters +
-// Matter detail with Overview/Discovery/Documents/Calls/Notes/Tasks/
-// Deadlines/Timeline). It intentionally omits entities not needed yet
-// (Contact, MatterContact, generic Communication, DiscoveryComparison/
-// DiscoveryFileMatch) — see docs/DATA_MODEL.md for the full target model
-// and docs/ROADMAP.md for when those land.
+// This is the schema behind the Matters vertical slice and the Monday-demo
+// visual-polish pass on top of it. It intentionally omits entities not
+// needed yet (Contact, MatterContact, generic Communication) — see
+// docs/DATA_MODEL.md for the full target model and docs/ROADMAP.md for
+// when those land.
+//
+// DiscoveryComparison/DiscoveryFileMatch exist here ahead of their
+// originally-planned phase specifically to back a *visual, seeded* mockup
+// of production-to-production comparison for the demo — there is no real
+// diffing/hashing engine yet (see docs/ROADMAP.md, Phase 4).
 //
 // All schema changes must go through `prisma migrate dev` — never hand-edit
 // the database or the generated client (see CLAUDE.md, section 4).
@@ -66,6 +70,26 @@ enum DiscoveryFileType {
   VIDEO
   AUDIO
   PHOTO
+  OTHER
+}
+
+enum DiscoveryReviewStatus {
+  NOT_STARTED
+  IN_REVIEW
+  COMPLETE
+}
+
+enum DiscoveryMatchStatus {
+  NEW
+  CHANGED
+  DUPLICATE
+  MISSING
+}
+
+enum CalendarEventType {
+  HEARING
+  DEPOSITION
+  MEETING
   OTHER
 }
 
@@ -132,23 +156,25 @@ model Client {
 /// A single criminal matter/case for a Client. This is the hub every other
 /// entity in this slice hangs off of.
 model Matter {
-  id          String       @id @default(cuid())
-  clientId    String
-  client      Client       @relation(fields: [clientId], references: [id])
-  caseNumber  String       @unique
-  court       String
-  charges     String
-  status      MatterStatus @default(OPEN)
-  openedDate  DateTime
-  closedDate  DateTime?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  id         String       @id @default(cuid())
+  clientId   String
+  client     Client       @relation(fields: [clientId], references: [id])
+  caseNumber String       @unique
+  court      String
+  charges    String
+  status     MatterStatus @default(OPEN)
+  openedDate DateTime
+  closedDate DateTime?
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
 
   assignments          MatterAssignment[]
   notes                Note[]
   tasks                Task[]
   deadlines            Deadline[]
+  calendarEvents       CalendarEvent[]
   discoveryProductions DiscoveryProduction[]
+  discoveryComparisons DiscoveryComparison[]
   documents            Document[]
   calls                Call[]
   auditEvents          AuditEvent[]
@@ -218,31 +244,53 @@ model Deadline {
   updatedAt          DateTime     @updatedAt
 }
 
+/// A scheduled event on a Matter — hearings, depositions, client meetings.
+/// Distinct from Deadline: a Deadline is a legal obligation with a
+/// satisfied/audit lifecycle, while a CalendarEvent is simply something
+/// happening on the calendar (it may have no legal consequence if missed).
+model CalendarEvent {
+  id        String            @id @default(cuid())
+  matterId  String
+  matter    Matter            @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  title     String
+  type      CalendarEventType @default(OTHER)
+  startTime DateTime
+  endTime   DateTime?
+  location  String?
+  notes     String?
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+}
+
 /// One batch of discovery received on a Matter. File-level Bates numbering
-/// and cross-production comparison logic are not implemented yet (see
-/// docs/ROADMAP.md, Phase 4) — this and DiscoveryFile exist now only to
-/// hold the page structure and let a production/file list render.
+/// logic is not implemented yet (see docs/ROADMAP.md, Phase 4) — this and
+/// DiscoveryFile hold real records (production metadata, file listing,
+/// review status) so the Discovery tab can render an accurate picture;
+/// only the numbering/hashing *engine* is still a placeholder.
 model DiscoveryProduction {
-  id           String   @id @default(cuid())
+  id           String                @id @default(cuid())
   matterId     String
-  matter       Matter   @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  matter       Matter                @relation(fields: [matterId], references: [id], onDelete: Cascade)
   label        String
   source       String?
   receivedDate DateTime
   batesPrefix  String?
   batesStart   Int?
   batesEnd     Int?
+  reviewStatus DiscoveryReviewStatus @default(NOT_STARTED)
   notes        String?
-  createdAt    DateTime @default(now())
+  createdAt    DateTime              @default(now())
 
-  files DiscoveryFile[]
+  files           DiscoveryFile[]
+  comparisonsFrom DiscoveryComparison[] @relation("ComparisonFromProduction")
+  comparisonsTo   DiscoveryComparison[] @relation("ComparisonToProduction")
 }
 
 /// One file within a DiscoveryProduction. `identifier` will eventually hold
 /// the assigned Bates number (PDFs) or consistent media ID (video/audio/
 /// photo) — for now it's just a plain field populated by seed data.
 model DiscoveryFile {
-  id                  String            @id @default(cuid())
+  id                  String              @id @default(cuid())
   productionId        String
   production          DiscoveryProduction @relation(fields: [productionId], references: [id], onDelete: Cascade)
   originalFilename    String
@@ -252,7 +300,42 @@ model DiscoveryFile {
   dropboxPathOriginal String?
   dropboxPathNumbered String?
   pageCount           Int?
-  createdAt           DateTime          @default(now())
+  createdAt           DateTime            @default(now())
+
+  matches DiscoveryFileMatch[]
+}
+
+/// A production-to-production comparison run. In this milestone the result
+/// rows (DiscoveryFileMatch) are seeded by hand to demonstrate what the
+/// feature will look like — there is no real content-hash diffing yet (see
+/// docs/ROADMAP.md, Phase 4).
+model DiscoveryComparison {
+  id               String              @id @default(cuid())
+  matterId         String
+  matter           Matter              @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  fromProductionId String
+  fromProduction   DiscoveryProduction @relation("ComparisonFromProduction", fields: [fromProductionId], references: [id])
+  toProductionId   String
+  toProduction     DiscoveryProduction @relation("ComparisonToProduction", fields: [toProductionId], references: [id])
+  runAt            DateTime            @default(now())
+
+  matches DiscoveryFileMatch[]
+}
+
+/// One row of a DiscoveryComparison result: how a given filename fared
+/// between the "from" and "to" productions. `fileId` points at the
+/// DiscoveryFile it refers to when one exists (absent for MISSING rows,
+/// since by definition the file isn't in the newer production).
+model DiscoveryFileMatch {
+  id           String               @id @default(cuid())
+  comparisonId String
+  comparison   DiscoveryComparison  @relation(fields: [comparisonId], references: [id], onDelete: Cascade)
+  status       DiscoveryMatchStatus
+  filename     String
+  identifier   String?
+  fileId       String?
+  file         DiscoveryFile?       @relation(fields: [fileId], references: [id], onDelete: SetNull)
+  notes        String?
 }
 
 /// A general (non-discovery) document tied to a Matter — pleadings,
