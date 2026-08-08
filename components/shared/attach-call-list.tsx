@@ -5,6 +5,7 @@ import { format } from "date-fns";
 import { Flag, Mic, MicOff, PhoneIncoming, PhoneOutgoing } from "lucide-react";
 
 import { formatCallDuration } from "@/lib/matters/format";
+import { attachCallToMatter } from "@/lib/matters/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -23,23 +24,43 @@ export type UnfiledCallSummary = {
 };
 
 /**
- * Mocked "attach an unfiled call to this matter" workflow. There is no
- * Vonage integration and no write path yet (see docs/ROADMAP.md, Phase 6)
- * — clicking "Attach" only updates local component state so the demo can
- * show the intended interaction. Nothing is persisted; refreshing the page
- * resets it.
+ * "Attach an unfiled call to this matter" workflow. There is still no
+ * Vonage integration (see docs/ROADMAP.md, Phase 6) — these calls are
+ * manually logged/seeded — but clicking "Attach" now persists
+ * `Call.matterId`/`filedById`/`filedAt` via the `attachCallToMatter`
+ * Server Action and survives a refresh.
  */
 export function AttachCallList({
   calls,
+  matterId,
   matterTitle,
 }: {
   calls: UnfiledCallSummary[];
+  matterId: string;
   matterTitle: string;
 }) {
   const [attachedIds, setAttachedIds] = React.useState<Set<string>>(new Set());
+  const [pendingIds, setPendingIds] = React.useState<Set<string>>(new Set());
+  const [errorId, setErrorId] = React.useState<string | null>(null);
 
   if (calls.length === 0) {
     return <p className="text-sm text-muted-foreground">No unfiled calls waiting for review.</p>;
+  }
+
+  async function attach(callId: string) {
+    setErrorId(null);
+    setPendingIds((prev) => new Set(prev).add(callId));
+    const result = await attachCallToMatter({ matterId, callId });
+    setPendingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(callId);
+      return next;
+    });
+    if (result.ok) {
+      setAttachedIds((prev) => new Set(prev).add(callId));
+    } else {
+      setErrorId(callId);
+    }
   }
 
   return (
@@ -47,6 +68,7 @@ export function AttachCallList({
       {calls.map((call) => {
         const DirectionIcon = call.direction === "INBOUND" ? PhoneIncoming : PhoneOutgoing;
         const isAttached = attachedIds.has(call.id);
+        const isPending = pendingIds.has(call.id);
 
         return (
           <Card key={call.id} className={isAttached ? "border-emerald-300 bg-emerald-50/50" : undefined}>
@@ -74,6 +96,11 @@ export function AttachCallList({
                     )}
                   </p>
                   {call.notes && <p className="mt-1 text-sm text-muted-foreground">{call.notes}</p>}
+                  {errorId === call.id && (
+                    <p className="mt-1 text-xs font-medium text-destructive" role="alert">
+                      Couldn&apos;t attach this call. It may have already been filed elsewhere.
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
@@ -85,8 +112,8 @@ export function AttachCallList({
                 {isAttached ? (
                   <Badge variant="success">Attached to {matterTitle}</Badge>
                 ) : (
-                  <Button size="sm" onClick={() => setAttachedIds((prev) => new Set(prev).add(call.id))}>
-                    Attach to {matterTitle}
+                  <Button size="sm" disabled={isPending} onClick={() => attach(call.id)}>
+                    {isPending ? "Attaching…" : `Attach to ${matterTitle}`}
                   </Button>
                 )}
               </div>
@@ -95,8 +122,8 @@ export function AttachCallList({
         );
       })}
       <p className="text-xs text-muted-foreground">
-        Demo only — attaching here updates this screen, not the database. Real Vonage call
-        filing is a later phase (see docs/ROADMAP.md, Phase 6).
+        Attaching a call here saves it to this matter. Automatic Vonage call filing is a later
+        phase (see docs/ROADMAP.md, Phase 6) — for now calls land here manually logged/seeded.
       </p>
     </div>
   );

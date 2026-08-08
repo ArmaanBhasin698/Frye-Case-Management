@@ -38,7 +38,11 @@ export default async function MatterCallsPage({
             </p>
           </CardHeader>
           <CardContent>
-            <AttachCallList calls={unfiledCalls} matterTitle={formatMatterTitle(matter)} />
+            <AttachCallList
+              calls={unfiledCalls}
+              matterId={matterId}
+              matterTitle={formatMatterTitle(matter)}
+            />
           </CardContent>
         </Card>
       )}
