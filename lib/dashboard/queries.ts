@@ -1,34 +1,41 @@
 import type { CalendarEventType, DeadlineType } from "@prisma/client";
 
 import { prisma } from "@/lib/db";
+import { getAssignedMatterIds, matterIdFilterFor, matterScopeFilterFor } from "@/lib/auth/access";
+import { isAdmin } from "@/lib/auth/authorization";
+import type { AuthorizableUser } from "@/lib/auth/authorization";
 
 /**
  * Cross-matter aggregate reads for the firm-wide dashboard home page.
  *
- * Same caveat as lib/matters/queries.ts: no access control yet. Once
- * matter-level authorization exists (docs/ROADMAP.md, Phase 1/2), every
- * one of these needs to be scoped to the current user's assigned matters
- * unless they're an admin.
+ * Every function here takes the current user and scopes its results to
+ * matters they're allowed to see (see CLAUDE.md, section 4.4): admins get
+ * everything, everyone else only what they're assigned to. Unfiled calls
+ * (`matterId: null`) are the one exception — they aren't attached to any
+ * matter yet, so matter-level authorization doesn't apply to them; they're
+ * firm-wide intake visible to any authenticated staff member.
  */
 
-export async function getDashboardStats() {
+export async function getDashboardStats(user: AuthorizableUser) {
   const now = new Date();
+  const [matterWhere, scopeWhere] = await Promise.all([matterIdFilterFor(user), matterScopeFilterFor(user)]);
 
   const [activeMatters, openTasks, upcomingDeadlines, upcomingCourtDates, unfiledCalls] =
     await Promise.all([
-      prisma.matter.count({ where: { status: { in: ["OPEN", "PENDING"] } } }),
-      prisma.task.count({ where: { status: { in: ["OPEN", "IN_PROGRESS"] } } }),
-      prisma.deadline.count({ where: { satisfied: false, date: { gte: now } } }),
-      prisma.calendarEvent.count({ where: { startTime: { gte: now } } }),
+      prisma.matter.count({ where: { ...matterWhere, status: { in: ["OPEN", "PENDING"] } } }),
+      prisma.task.count({ where: { ...scopeWhere, status: { in: ["OPEN", "IN_PROGRESS"] } } }),
+      prisma.deadline.count({ where: { ...scopeWhere, satisfied: false, date: { gte: now } } }),
+      prisma.calendarEvent.count({ where: { ...scopeWhere, startTime: { gte: now } } }),
       prisma.call.count({ where: { matterId: null } }),
     ]);
 
   return { activeMatters, openTasks, upcomingDeadlines, upcomingCourtDates, unfiledCalls };
 }
 
-export function getActiveMatters(limit = 5) {
+export async function getActiveMatters(user: AuthorizableUser, limit = 5) {
+  const where = await matterIdFilterFor(user);
   return prisma.matter.findMany({
-    where: { status: { in: ["OPEN", "PENDING"] } },
+    where: { ...where, status: { in: ["OPEN", "PENDING"] } },
     include: { client: true, assignments: { include: { user: true } } },
     orderBy: { openedDate: "desc" },
     take: limit,
@@ -55,18 +62,19 @@ export type UpcomingKeyDate =
     };
 
 /** Merges Deadlines and CalendarEvents into one chronological "what's next" list. */
-export async function getUpcomingKeyDates(limit = 6): Promise<UpcomingKeyDate[]> {
+export async function getUpcomingKeyDates(user: AuthorizableUser, limit = 6): Promise<UpcomingKeyDate[]> {
   const now = new Date();
+  const scopeWhere = await matterScopeFilterFor(user);
 
   const [deadlines, events] = await Promise.all([
     prisma.deadline.findMany({
-      where: { satisfied: false, date: { gte: now } },
+      where: { ...scopeWhere, satisfied: false, date: { gte: now } },
       include: { matter: { include: { client: true } } },
       orderBy: { date: "asc" },
       take: limit,
     }),
     prisma.calendarEvent.findMany({
-      where: { startTime: { gte: now } },
+      where: { ...scopeWhere, startTime: { gte: now } },
       include: { matter: { include: { client: true } } },
       orderBy: { startTime: "asc" },
       take: limit,
@@ -97,25 +105,33 @@ export async function getUpcomingKeyDates(limit = 6): Promise<UpcomingKeyDate[]>
   return merged.slice(0, limit);
 }
 
-export function getOpenTasksAcrossMatters(limit = 6) {
+export async function getOpenTasksAcrossMatters(user: AuthorizableUser, limit = 6) {
+  const where = await matterScopeFilterFor(user);
   return prisma.task.findMany({
-    where: { status: { in: ["OPEN", "IN_PROGRESS"] } },
+    where: { ...where, status: { in: ["OPEN", "IN_PROGRESS"] } },
     include: { matter: { include: { client: true } }, assignedTo: true },
     orderBy: [{ dueDate: "asc" }],
     take: limit,
   });
 }
 
-export function getRecentDiscoveryAcrossMatters(limit = 5) {
+export async function getRecentDiscoveryAcrossMatters(user: AuthorizableUser, limit = 5) {
+  const where = await matterScopeFilterFor(user);
   return prisma.discoveryProduction.findMany({
+    where,
     include: { matter: { include: { client: true } }, files: true },
     orderBy: { receivedDate: "desc" },
     take: limit,
   });
 }
 
-export function getRecentCallsAcrossMatters(limit = 6) {
+export async function getRecentCallsAcrossMatters(user: AuthorizableUser, limit = 6) {
+  const where = isAdmin(user)
+    ? {}
+    : { OR: [{ matterId: null }, { matterId: { in: await getAssignedMatterIds(user.id) } }] };
+
   return prisma.call.findMany({
+    where,
     include: { matter: { include: { client: true } } },
     orderBy: { occurredAt: "desc" },
     take: limit,

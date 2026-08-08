@@ -80,6 +80,11 @@ Firm staff account.
 - `id`, `email` (unique), `name`, `passwordHash`, `role`
   (`admin` | `attorney` | `paralegal` | `staff`), `active`, `createdAt`,
   `updatedAt`.
+- `passwordHash` is a real bcrypt hash as of the fourth session — Auth.js
+  (`lib/auth/config.ts`) verifies it against the Credentials provider's
+  `authorize()` callback. `active: false` blocks login even with a correct
+  password (no UI to toggle it yet; set directly via `prisma studio` or a
+  migration if needed).
 
 ### Client
 Person or entity the firm represents.

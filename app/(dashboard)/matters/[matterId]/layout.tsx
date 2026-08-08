@@ -11,6 +11,8 @@ import {
   matterStatusVariant,
   matterTitle,
 } from "@/lib/matters/format";
+import { assertMatterAccess } from "@/lib/auth/access";
+import { requireCurrentUser } from "@/lib/auth/session";
 import { Badge } from "@/components/ui/badge";
 import { MatterTabs } from "@/components/shared/matter-tabs";
 
@@ -22,11 +24,19 @@ export default async function MatterLayout({
   params: Promise<{ matterId: string }>;
 }) {
   const { matterId } = await params;
+  const user = await requireCurrentUser();
   const matter = await getMatterHeader(matterId);
 
   if (!matter) {
     notFound();
   }
+
+  // Matter-level authorization (see CLAUDE.md, section 4.4 and
+  // docs/SECURITY.md): admins see every matter, everyone else only
+  // matters they're assigned to. A denied user gets the same not-found
+  // page as a nonexistent matter id — access is never distinguishable
+  // from "doesn't exist."
+  await assertMatterAccess(user, matter.id);
 
   return (
     <div className="space-y-6">

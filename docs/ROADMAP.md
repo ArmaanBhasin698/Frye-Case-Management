@@ -28,16 +28,18 @@ Each phase should be fully usable/stable before starting the next.
       schema (User, Client, Matter, MatterAssignment, plus Note, Task,
       Deadline, DiscoveryProduction/File, Document, Call, AuditEvent — see
       "Milestone" note below).
-- [ ] Set up Auth.js with credentials-based login and role field. **Not
-      done.** There is no login yet — the app is fully open to anyone who
-      can reach it. Do not deploy anywhere but a developer's own machine
-      until this lands.
+- [x] Set up Auth.js with credentials-based login and role field. Done in
+      the fourth session (see "Milestone — Authentication & matter-level
+      authorization" below) — Auth.js v5, Credentials provider, fictional
+      dev users, roles from the existing `UserRole` enum.
 - [x] Install and configure shadcn/ui + Tailwind.
-- [ ] Basic *authenticated* app shell. A dashboard shell (sidebar + topbar)
-      exists and is used, but it is not gated by login — see above.
+- [x] Basic *authenticated* app shell. The dashboard shell (sidebar +
+      topbar) is now gated by `proxy.ts` and shows the logged-in user's
+      name, role, and a sign-out control.
 
-**Exit criteria not yet met:** a developer can run the app and browse
-matters, but cannot yet "log in" because there is nothing to log into.
+**Exit criteria met:** a developer can clone the repo, seed fictional
+users, and log in to a dashboard scoped to what that user is allowed to
+see.
 
 ## Milestone — Matters read-only vertical slice (second session)
 
@@ -86,6 +88,39 @@ to make the demo data richer and more honest:
   text) so a demo viewer — or the next developer — can't mistake mocked
   interactivity for a finished feature.
 
+## Milestone — Authentication & matter-level authorization (fourth session)
+
+Narrowly scoped to real security foundation, deliberately not bundled with
+any new feature or integration:
+
+- Auth.js v5 (Credentials provider, JWT sessions) — `lib/auth/config.ts`.
+  Fictional dev users only; no OAuth/SSO provider configured.
+- Five seeded users covering all four roles (`ADMIN`, `ATTORNEY`,
+  `PARALEGAL`, `STAFF`) with deliberately varied `MatterAssignment` rows —
+  see README's demo credentials table. Taylor Brooks (STAFF) is assigned
+  to exactly one matter specifically to make the access boundary visible
+  in a demo.
+- `proxy.ts` gates every route except `/login` on "is anyone logged in."
+- Matter-level authorization enforced server-side in
+  `app/(dashboard)/matters/[matterId]/layout.tsx` (denies via `notFound()`,
+  not a distinguishable "access denied" page) and in every cross-matter
+  read (`lib/dashboard/queries.ts`, `lib/matters/queries.ts`). The core
+  decision logic is pure and unit-tested
+  (`lib/auth/authorization.ts` / `tests/auth/authorization.test.ts`).
+- Login page, logout control, and the current user's name + role in the
+  top nav — replacing the old "Dev preview — no login yet" badge, which is
+  no longer true.
+- Everything from the second and third sessions (dashboard, Discovery
+  showcase, Kanban board, Attach-to-Matter) is unchanged in behavior, now
+  simply gated behind a real login and scoped to what the logged-in user
+  may see.
+
+**Deliberately not done here** (see docs/SECURITY.md's "Implementation
+status" section for the full list): MFA, login rate-limiting/lockout,
+forced sign-out on assignment change, HTTPS enforcement, and any actual
+write path (so `AuditEvent` is still seeded, not generated — authorization
+for writes will need the same treatment once Server Actions exist).
+
 ## Phase 2 — Clients & Matters (CRUD + authorization)
 
 - [ ] Client CRUD (create/list/view/edit) with server-side validation.
@@ -94,9 +129,11 @@ to make the demo data richer and more honest:
 - [x] `MatterAssignment` exists in the schema and is displayed (assigned
       staff shown on Matter overview), but there's no UI to change
       assignments yet.
-- [ ] Matter-level authorization: users only see matters they're assigned
-      to, unless admin. **Not possible yet — there's no auth (see Phase
-      1), so every matter is visible to everyone.**
+- [x] Matter-level authorization: users only see matters they're assigned
+      to, unless admin. Done in the fourth session (see "Milestone —
+      Authentication & matter-level authorization" above) — enforced
+      server-side, unit-tested, and applies to every cross-matter list,
+      not just direct matter URLs.
 - [ ] AuditEvent wired in as a side effect of real writes (currently only
       seeded — see milestone above).
 

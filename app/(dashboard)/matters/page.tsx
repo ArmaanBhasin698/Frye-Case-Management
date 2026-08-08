@@ -3,6 +3,7 @@ import { format } from "date-fns";
 
 import { listMatters } from "@/lib/matters/queries";
 import { formatClientName, matterStatusLabel, matterStatusVariant, matterTitle } from "@/lib/matters/format";
+import { requireCurrentUser } from "@/lib/auth/session";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -15,7 +16,8 @@ import {
 } from "@/components/ui/table";
 
 export default async function MattersPage() {
-  const matters = await listMatters();
+  const user = await requireCurrentUser();
+  const matters = await listMatters(user);
 
   return (
     <div className="space-y-6">

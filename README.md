@@ -19,24 +19,33 @@ architecture rules, security requirements, coding standards) and the
 
 ## Current status
 
-**Polished visual prototype, built on the Matters vertical slice.** The app
-runs with a firm-wide Dashboard, a Matters list, and a Matter detail view
-(Overview, Discovery, Documents, Calls, Notes, Tasks, Deadlines, Timeline
-tabs) backed by a real Postgres database via Prisma. The Discovery tab
-demos a New/Changed/Duplicate/Missing production comparison, the Calls tab
-demos attaching an unfiled call to a matter, and Tasks is a drag-and-drop
-Kanban board — all on fictional seeded data, all clearly marked where the
-interaction is UI-only. There is no authentication yet, no create/edit
-forms, and no third-party integrations — see
-[`docs/ROADMAP.md`](./docs/ROADMAP.md) for exactly what's built vs. planned,
-and the "What's mocked / not implemented yet" section below.
+**Polished visual prototype with real authentication, built on the
+Matters vertical slice.** The app runs with a firm-wide Dashboard, a
+Matters list, and a Matter detail view (Overview, Discovery, Documents,
+Calls, Notes, Tasks, Deadlines, Timeline tabs) backed by a real Postgres
+database via Prisma. The Discovery tab demos a New/Changed/Duplicate/
+Missing production comparison, the Calls tab demos attaching an unfiled
+call to a matter, and Tasks is a drag-and-drop Kanban board — all on
+fictional seeded data, all clearly marked where the interaction is
+UI-only.
+
+Login is real: Auth.js (credentials, fictional dev users) gates every
+page, and matter-level authorization is enforced server-side — admins see
+every matter, everyone else only sees matters they're assigned to,
+including on a direct URL to a matter they don't have. See "Demo login
+credentials" below to sign in, and
+[`docs/ROADMAP.md`](./docs/ROADMAP.md) for exactly what's built vs.
+planned, and "What's mocked / not implemented yet" below for what auth
+does *not* cover yet (no create/edit forms, no MFA, no rate limiting).
 
 ## Tech stack
 
 - [Next.js](https://nextjs.org/) 16 (App Router, Turbopack) + TypeScript (`strict`)
 - [PostgreSQL](https://www.postgresql.org/) + [Prisma](https://www.prisma.io/)
 - [shadcn/ui](https://ui.shadcn.com/) primitives + Tailwind CSS
-- [Auth.js](https://authjs.dev/) for authentication (planned — not wired up yet)
+- [Auth.js](https://authjs.dev/) (NextAuth v5) — Credentials provider,
+  JWT sessions, no OAuth/SSO provider configured
+- [Vitest](https://vitest.dev/) for unit tests
 
 ## Getting started
 
@@ -63,14 +72,31 @@ cp .env.example .env
 # 4. Apply the schema
 npm run db:migrate
 
-# 5. Load fake sample data (clearly fictional — see docs/SECURITY.md)
+# 5. Load fake sample data AND fictional login users (see docs/SECURITY.md)
 npm run db:seed
 
 # 6. Run the dev server
 npm run dev
 ```
 
-Then visit http://localhost:3000 — it redirects to `/matters`.
+Then visit http://localhost:3000 — it redirects to `/login`. Sign in with
+any account from the table below.
+
+### Demo login credentials
+
+All accounts are fictional, seeded by `prisma/seed.ts`, and share one
+password so a demo doesn't require memorizing five of them. **Never reuse
+this password anywhere real** — see `docs/SECURITY.md`.
+
+| Email | Role | Assigned matters | What it demonstrates |
+|---|---|---|---|
+| `alex.rivera@fryelawgroup.example` | Admin | All (bypasses assignment checks) | Admin sees every matter regardless of assignment. |
+| `sarah.whitfield@fryelawgroup.example` | Attorney | State v. Ellis, State v. Alvarez | A typical lead attorney's scoped view (2 of 4 matters). |
+| `marcus.odom@fryelawgroup.example` | Attorney | State v. Marsh, State v. Patel | Same as above, different matters — proves scoping isn't hardcoded to one user. |
+| `priya.nair@fryelawgroup.example` | Paralegal | All 4 (assigned to every matter) | A broadly-assigned support role — not an admin, but sees everything because she's genuinely assigned to all of it. |
+| `taylor.brooks@fryelawgroup.example` | Staff | State v. Patel only | The clearest access-boundary demo: logging in as Taylor and trying to open any other matter's URL directly returns a 404, not an error page that reveals the matter exists. |
+
+**Password for every account above:** `FryeDemo!2026`
 
 ### Available scripts
 
@@ -81,21 +107,27 @@ Then visit http://localhost:3000 — it redirects to `/matters`.
 | `npm run start` | Run a production build. |
 | `npm run lint` | ESLint (flat config; Next.js no longer ships `next lint`). |
 | `npm run typecheck` | `tsc --noEmit`. |
+| `npm run test` | Run unit tests once (Vitest). |
+| `npm run test:watch` | Run unit tests in watch mode. |
 | `npm run db:migrate` | Create/apply a Prisma migration (`prisma migrate dev`). |
-| `npm run db:seed` | Reset and reload fake sample data (`prisma/seed.ts`). |
+| `npm run db:seed` | Reset and reload fake sample data + login users (`prisma/seed.ts`). |
 | `npm run db:reset` | Drop, recreate, migrate, and reseed the database. |
 | `npm run db:studio` | Open Prisma Studio to browse the database. |
 
 ## What's mocked / not implemented yet
 
-This is intentionally a small first slice. Not real, not built, or not
-wired up yet:
+This is intentionally a small slice. Not real, not built, or not wired up
+yet:
 
-- **No authentication.** There is no login; the app shows all matters to
-  anyone who can reach it. The topbar's "Dev preview — no login yet" badge
-  is a deliberate, visible reminder of this gap. Do not deploy this
-  anywhere reachable by non-developers until Auth.js + matter-level
-  authorization (`docs/ROADMAP.md`, Phase 1–2) are in place.
+- **Authentication and matter-level authorization are real** (Auth.js,
+  credentials login, server-side enforcement — see `docs/SECURITY.md`),
+  but several things around them are still dev-only or missing: no MFA,
+  no rate-limiting/lockout on failed logins, no forced sign-out when a
+  user's role or assignments change mid-session, no HTTPS enforcement,
+  and every seeded account shares one password. None of this is
+  acceptable once real staff accounts or real case data are involved —
+  see `docs/SECURITY.md`'s "Implementation status" section for the full
+  list.
 - **No create/edit forms.** Everything currently on screen is read-only,
   rendered from seed data — there's no way yet to add a matter, note, task,
   etc. through the UI. The Matter Overview's "Quick actions" buttons (Add
@@ -120,7 +152,9 @@ wired up yet:
   sections.
 - **Audit trail is seeded, not generated.** `AuditEvent` rows exist to
   demonstrate the Timeline tab, but since there are no write actions yet,
-  nothing in the running app currently produces them.
+  nothing in the running app currently produces them — including login/
+  logout and permission-denial events, which `docs/SECURITY.md` calls for
+  logging but which aren't wired up yet.
 
 ## Working with confidential data
 

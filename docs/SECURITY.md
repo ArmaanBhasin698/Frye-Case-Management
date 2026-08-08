@@ -6,6 +6,34 @@ sensitive evidence, victim/witness information, and law-enforcement
 materials), attorney work product, and communications. Security is a
 first-class requirement from day one, not something added before launch.
 
+## Implementation status (read this first)
+
+This document describes the target design. As of this session, the
+following pieces of it are **actually implemented**, not just planned:
+
+- **Authentication** via Auth.js (NextAuth v5), credentials provider,
+  session-based (JWT) — see "Authentication" below for what's real vs.
+  still open (MFA, rate limiting, HTTPS).
+- **Matter-level authorization**, enforced server-side in
+  `app/(dashboard)/matters/[matterId]/layout.tsx` and in every cross-matter
+  query in `lib/dashboard/queries.ts` / `lib/matters/queries.ts` — see
+  "Authorization" below.
+- **Route-level login gating** via `proxy.ts` for every page except
+  `/login`.
+
+Still **not implemented** (tracked in `docs/ROADMAP.md`):
+
+- Audit logging is seeded demo data, not produced by real writes — there
+  are no create/edit/delete actions yet for it to log.
+- No MFA, no rate limiting on failed logins, no forced sign-out on
+  role/assignment change.
+- No HTTPS enforcement (this is a local-dev prototype; see
+  `AuthConfig.trustHost` in `lib/auth/config.ts`, which is itself a
+  dev-only convenience that needs revisiting before any real deployment).
+- Every seeded user shares one password (`FryeDemo!2026`, see README) —
+  acceptable for a demo of five fictional accounts, never acceptable
+  once real staff accounts exist.
+
 ## Guiding principles
 
 1. **Confidentiality by default.** No one sees a matter's data unless
@@ -36,29 +64,62 @@ first-class requirement from day one, not something added before launch.
 
 ## Authentication
 
-- Every staff user has their own account — no shared logins.
-- Passwords hashed with a strong, modern algorithm (argon2 or bcrypt), never
-  stored or logged in plaintext.
-- Session-based auth via Auth.js, with reasonable session expiry and the
-  ability to force sign-out (e.g., on role change or offboarding).
+- Every staff user has their own account — no shared logins. **Implemented**
+  via Auth.js (NextAuth v5) with a Credentials provider
+  (`lib/auth/config.ts`); no OAuth/SSO provider is configured.
+- Passwords hashed with bcrypt (`bcryptjs`, 10 rounds), never stored or
+  logged in plaintext. **Implemented.**
+- Session-based auth via Auth.js, JWT strategy. **Implemented** — but
+  session expiry is Auth.js's default and there is no way yet to force a
+  sign-out on role/assignment change (e.g., if someone is unassigned from
+  a matter mid-session, their existing session still carries the old
+  assignment until the JWT is next refreshed/re-issued). **Not
+  implemented.**
 - Design the auth flow so multi-factor authentication (TOTP) can be added
-  later without restructuring — do not paint ourselves into a
-  password-only corner.
+  later without restructuring. **Not implemented** — no MFA yet, but
+  nothing in the current design blocks adding it (Auth.js supports
+  additional verification steps without a rewrite).
 - Failed login attempts are logged and rate-limited to slow credential
-  stuffing/brute force.
+  stuffing/brute force. **Not implemented.** Failed `authorize()` calls
+  currently just return `null` (Auth.js shows a generic error) with no
+  logging or throttling — acceptable for five fictional dev accounts
+  behind a private environment, not for a real deployment.
+- Every seeded account uses one shared password
+  (`FryeDemo!2026` — see README's demo credentials table) purely so a demo
+  doesn't require memorizing five passwords. This must never happen with
+  real accounts.
 
 ## Authorization
 
-- Role-based: `admin`, `attorney`, `paralegal`, `staff` (expand as needed).
+- Role-based: `ADMIN`, `ATTORNEY`, `PARALEGAL`, `STAFF`
+  (`prisma/schema.prisma`'s `UserRole` enum). **Implemented.**
 - **Matter-level access control**: being logged in is not enough. A user
-  must be assigned to a matter (via `MatterAssignment`) or hold an admin
-  role to view or modify that matter's data — this mirrors ethical-wall and
-  confidentiality expectations in a law firm.
-- All authorization checks happen **server-side**, on every Server
-  Action/Route Handler, regardless of what the UI does or doesn't show.
-  Never trust the client.
-- Discovery and communications are especially sensitive — apply the same
-  matter-assignment check to them, not just to the parent Matter record.
+  must be assigned to a matter (via `MatterAssignment`) or hold the
+  `ADMIN` role to view that matter's data — this mirrors ethical-wall and
+  confidentiality expectations in a law firm. **Implemented** for reads
+  (there are no write actions yet to gate — see docs/ROADMAP.md):
+  - The decision logic is pure and unit-tested
+    (`lib/auth/authorization.ts`, `tests/auth/authorization.test.ts`).
+  - `app/(dashboard)/matters/[matterId]/layout.tsx` enforces it for a
+    single matter — an unassigned, non-admin user gets the same
+    `not-found` page as a nonexistent matter id, so access can't be
+    distinguished from "doesn't exist."
+  - Every cross-matter read (`lib/dashboard/queries.ts`,
+    `lib/matters/queries.ts`'s `listMatters`) filters by the same rule, so
+    the Dashboard and Matters list never leak the existence of matters a
+    non-admin can't open.
+- All authorization checks happen **server-side** — `proxy.ts` gates
+  "is anyone logged in," and every Server Component that reads matter data
+  re-checks independently rather than trusting the proxy alone (see
+  CLAUDE.md, section 4.4). There are no Server Actions/Route Handlers with
+  write access yet; when they're added, each one must repeat this same
+  check rather than relying on the page having already checked it.
+- Discovery, documents, notes, tasks, deadlines, and calls are scoped to
+  the same per-matter check as the parent Matter record, since they only
+  render inside a matter route the layout has already authorized —
+  **implemented** by construction (there's no separate route for, say, a
+  single Note that could be reached without going through the matter
+  layout first).
 
 ## Audit logging
 

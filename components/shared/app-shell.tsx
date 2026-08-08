@@ -19,6 +19,19 @@ import {
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { LogoutButton } from "@/components/shared/logout-button";
+import type { SessionUser } from "@/lib/auth/session";
+
+function initials(name: string) {
+  const parts = name.trim().split(/\s+/);
+  const first = parts[0]?.[0] ?? "";
+  const last = parts.length > 1 ? (parts[parts.length - 1]?.[0] ?? "") : "";
+  return `${first}${last}`.toUpperCase();
+}
+
+function roleLabel(role: string) {
+  return role.charAt(0) + role.slice(1).toLowerCase();
+}
 
 type NavItem = {
   href: string;
@@ -103,7 +116,13 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell({
+  user,
+  children,
+}: {
+  user: SessionUser;
+  children: React.ReactNode;
+}) {
   const [mobileOpen, setMobileOpen] = React.useState(false);
 
   return (
@@ -142,12 +161,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="flex items-center gap-3">
-            <Badge variant="outline" className="hidden sm:inline-flex">
-              Dev preview &mdash; no login yet
+            <div className="hidden text-right sm:block">
+              <p className="text-sm font-medium leading-none text-foreground">{user.name}</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">{roleLabel(user.role)}</p>
+            </div>
+            <Badge variant="outline" className="sm:hidden">
+              {roleLabel(user.role)}
             </Badge>
             <Avatar className="h-8 w-8">
-              <AvatarFallback>PN</AvatarFallback>
+              <AvatarFallback>{initials(user.name ?? user.email ?? "?")}</AvatarFallback>
             </Avatar>
+            <LogoutButton />
           </div>
         </header>
 

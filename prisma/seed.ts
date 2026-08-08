@@ -7,13 +7,23 @@
  * "comparison" rows are hand-authored to look like a plausible result, not
  * computed by any real diffing engine (see docs/ROADMAP.md, Phase 4).
  *
+ * All seeded users share one password so a demo doesn't require memorizing
+ * five of them. This is a development-only convenience — see
+ * docs/SECURITY.md for why it must never happen anywhere near production.
+ *
  * Run with: npm run db:seed
  */
 import { PrismaClient } from "@prisma/client";
+import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
+/** Fictional dev-only password shared by every seeded user. See README for the login table. */
+const DEV_PASSWORD = "FryeDemo!2026";
+
 async function main() {
+  const devPasswordHash = await bcrypt.hash(DEV_PASSWORD, 10);
+
   // Idempotent: wipe and reseed, in dependency order.
   await prisma.discoveryFileMatch.deleteMany();
   await prisma.discoveryComparison.deleteMany();
@@ -32,13 +42,27 @@ async function main() {
   await prisma.user.deleteMany();
 
   // --- Staff -----------------------------------------------------------
-  // passwordHash is a placeholder — Auth.js login isn't implemented yet
-  // (see docs/ROADMAP.md, Phase 1). Never a real credential.
+  // Every account below logs in with DEV_PASSWORD (see top of file and
+  // README's "Demo login credentials" table). Fictional people, fictional
+  // firm — never real credentials.
+  // Admin: intentionally not captured or assigned to any matter below —
+  // the ADMIN role bypasses MatterAssignment checks entirely (see
+  // lib/auth/authorization.ts), so this account should see all four
+  // matters despite having zero assignment rows.
+  await prisma.user.create({
+    data: {
+      name: "Alex Rivera",
+      email: "alex.rivera@fryelawgroup.example",
+      passwordHash: devPasswordHash,
+      role: "ADMIN",
+    },
+  });
+
   const sarah = await prisma.user.create({
     data: {
       name: "Sarah Whitfield",
       email: "sarah.whitfield@fryelawgroup.example",
-      passwordHash: "not-implemented",
+      passwordHash: devPasswordHash,
       role: "ATTORNEY",
     },
   });
@@ -47,7 +71,7 @@ async function main() {
     data: {
       name: "Marcus Odom",
       email: "marcus.odom@fryelawgroup.example",
-      passwordHash: "not-implemented",
+      passwordHash: devPasswordHash,
       role: "ATTORNEY",
     },
   });
@@ -56,8 +80,17 @@ async function main() {
     data: {
       name: "Priya Nair",
       email: "priya.nair@fryelawgroup.example",
-      passwordHash: "not-implemented",
+      passwordHash: devPasswordHash,
       role: "PARALEGAL",
+    },
+  });
+
+  const taylor = await prisma.user.create({
+    data: {
+      name: "Taylor Brooks",
+      email: "taylor.brooks@fryelawgroup.example",
+      passwordHash: devPasswordHash,
+      role: "STAFF",
     },
   });
 
@@ -135,6 +168,11 @@ async function main() {
       { matterId: marshMatter.id, userId: priya.id, role: "PARALEGAL" },
       { matterId: patelMatter.id, userId: marcus.id, role: "LEAD_ATTORNEY" },
       { matterId: patelMatter.id, userId: priya.id, role: "PARALEGAL" },
+      // Taylor Brooks (STAFF) is deliberately assigned to exactly one
+      // matter, unlike everyone else — logging in as Taylor is the
+      // clearest way to demonstrate that non-admins only see what
+      // they're assigned to (see README's demo credentials table).
+      { matterId: patelMatter.id, userId: taylor.id, role: "STAFF" },
     ],
   });
 

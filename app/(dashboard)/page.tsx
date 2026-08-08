@@ -31,18 +31,20 @@ import {
   taskPriorityLabel,
   taskStatusVariant,
 } from "@/lib/matters/format";
+import { requireCurrentUser } from "@/lib/auth/session";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export default async function DashboardPage() {
+  const user = await requireCurrentUser();
   const [stats, activeMatters, keyDates, openTasks, recentDiscovery, recentCalls] =
     await Promise.all([
-      getDashboardStats(),
-      getActiveMatters(5),
-      getUpcomingKeyDates(6),
-      getOpenTasksAcrossMatters(6),
-      getRecentDiscoveryAcrossMatters(4),
-      getRecentCallsAcrossMatters(6),
+      getDashboardStats(user),
+      getActiveMatters(user, 5),
+      getUpcomingKeyDates(user, 6),
+      getOpenTasksAcrossMatters(user, 6),
+      getRecentDiscoveryAcrossMatters(user, 4),
+      getRecentCallsAcrossMatters(user, 6),
     ]);
 
   return (

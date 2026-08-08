@@ -1,17 +1,23 @@
 import { prisma } from "@/lib/db";
+import { matterIdFilterFor } from "@/lib/auth/access";
+import type { AuthorizableUser } from "@/lib/auth/authorization";
 
 /**
  * Data-access functions for the Matters vertical slice.
  *
- * These are plain reads with no access control yet — authentication and
- * matter-level authorization are not implemented in this milestone (see
- * docs/ROADMAP.md, Phase 1/2). Every one of these will need an
- * authorization check added before this application handles real case
- * data (see CLAUDE.md, section 4.4 and docs/SECURITY.md).
+ * `listMatters` is the only function here that needs to be told *who's
+ * asking* — it returns a cross-matter list, so it must be scoped to what
+ * `user` may see (see CLAUDE.md, section 4.4). Every other function below
+ * takes a specific `matterId` whose access has already been checked by the
+ * caller (app/(dashboard)/matters/[matterId]/layout.tsx runs
+ * `assertMatterAccess` before any of these run), so they don't repeat that
+ * check themselves.
  */
 
-export function listMatters() {
+export async function listMatters(user: AuthorizableUser) {
+  const where = await matterIdFilterFor(user);
   return prisma.matter.findMany({
+    where,
     include: {
       client: true,
       assignments: { include: { user: true } },
