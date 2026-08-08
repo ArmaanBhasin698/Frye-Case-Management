@@ -6,6 +6,7 @@ import type { TaskPriority, TaskStatus } from "@prisma/client";
 
 import { cn } from "@/lib/utils";
 import { taskPriorityLabel } from "@/lib/matters/format";
+import { updateTaskStatus } from "@/lib/matters/actions";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import type { BadgeProps } from "@/components/ui/badge";
@@ -34,17 +35,36 @@ const PRIORITY_VARIANT: Record<TaskPriority, BadgeProps["variant"]> = {
 };
 
 /**
- * Kanban-style task board — the "replace monday.com" visual. Drag-and-drop
- * only updates component state, not the database (no Task-update Server
- * Action exists yet, see docs/ROADMAP.md); refreshing the page resets any
- * moves made here.
+ * Kanban-style task board — the "replace monday.com" visual. Dropping a
+ * card updates local state immediately (optimistic) and persists via the
+ * `updateTaskStatus` Server Action; a failed write reverts the card to its
+ * previous column so the board never shows a move that didn't actually
+ * save.
  */
-export function TaskBoard({ tasks: initialTasks }: { tasks: BoardTask[] }) {
+export function TaskBoard({ tasks: initialTasks, matterId }: { tasks: BoardTask[]; matterId: string }) {
   const [tasks, setTasks] = React.useState(initialTasks);
+  const [prevInitialTasks, setPrevInitialTasks] = React.useState(initialTasks);
   const [dragOverColumn, setDragOverColumn] = React.useState<TaskStatus | null>(null);
 
+  // Re-sync from fresh server data (e.g. after a revalidated refetch)
+  // without an effect — see https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes.
+  if (initialTasks !== prevInitialTasks) {
+    setPrevInitialTasks(initialTasks);
+    setTasks(initialTasks);
+  }
+
   function moveTask(taskId: string, status: TaskStatus) {
+    const previous = tasks;
+    const task = previous.find((t) => t.id === taskId);
+    if (!task || task.status === status) return;
+
     setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status } : t)));
+
+    updateTaskStatus({ matterId, taskId, status }).then((result) => {
+      if (!result.ok) {
+        setTasks(previous);
+      }
+    });
   }
 
   return (
@@ -88,8 +108,7 @@ export function TaskBoard({ tasks: initialTasks }: { tasks: BoardTask[] }) {
         })}
       </div>
       <p className="text-xs text-muted-foreground">
-        Drag a card between columns to see the workflow — this is a live UI demo; moves aren&apos;t
-        saved yet (no update action exists, see docs/ROADMAP.md).
+        Drag a card between columns to change its status — moves save automatically.
       </p>
     </div>
   );

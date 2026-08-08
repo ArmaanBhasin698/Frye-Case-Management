@@ -15,9 +15,10 @@ export default async function MatterTimelinePage({
   return (
     <div className="space-y-4">
       <div className="rounded-md border border-dashed border-border bg-muted/40 p-3 text-sm text-muted-foreground">
-        This timeline is built from audit log records. No create/edit forms exist yet in this
-        milestone, so these entries are seeded for demonstration rather than produced by live
-        actions (see CLAUDE.md, section 4.5).
+        This timeline is built from audit log records. Notes, tasks, task status changes, and
+        call filing now produce real entries here as they happen; the earliest entries on some
+        matters are still seeded demonstration history from before those write actions existed
+        (see CLAUDE.md, section 4.5).
       </div>
 
       {events.length === 0 ? (

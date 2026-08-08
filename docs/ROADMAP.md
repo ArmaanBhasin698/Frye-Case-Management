@@ -121,6 +121,48 @@ forced sign-out on assignment change, HTTPS enforcement, and any actual
 write path (so `AuditEvent` is still seeded, not generated — authorization
 for writes will need the same treatment once Server Actions exist).
 
+## Milestone — First persistent write paths (fifth session)
+
+The first real writes: Task status changes, Notes, Tasks, and attaching an
+unfiled Call to a matter, all backed by Server Actions
+(`lib/matters/actions.ts`) instead of local component state:
+
+- Dragging a card on the Tasks Kanban board (`components/shared/task-board.tsx`)
+  now persists via `updateTaskStatus` — optimistic on-screen update,
+  reverted automatically if the write fails — and survives a refresh.
+- "Add Note" (Notes tab) and "New Task" (Tasks tab) are now real forms
+  (`components/shared/new-note-form.tsx`, `new-task-form.tsx`) backed by
+  `createNote`/`createTask`, using `useActionState` the same way the login
+  form does.
+- "Attach to Matter" on the Calls tab (`components/shared/attach-call-list.tsx`)
+  now calls `attachCallToMatter`, which sets `Call.matterId`/`filedById`/
+  `filedAt` and only ever claims a call that's still unfiled.
+- The Matter Overview's "Quick actions" row now links "Add Note"/"New Task"
+  to the tabs that host the real forms. "Log a Call" and "Upload Document"
+  remain mocked — there's still no Vonage/Dropbox integration for either to
+  write to.
+- Every one of these writes independently re-checks authentication
+  (`requireCurrentUser`) and matter-level access (`hasMatterAccess`, a new
+  boolean-returning sibling of `assertMatterAccess` in `lib/auth/access.ts`
+  for call sites that aren't a page render) rather than trusting that a
+  page already checked — see docs/SECURITY.md's "Authorization" section.
+  A denied write returns the same generic "not found or access denied"
+  message regardless of whether the matter/record doesn't exist or simply
+  isn't the caller's to touch.
+- Every successful write now produces a real `AuditEvent` (`CREATE`/
+  `UPDATE`, actor, entity, matter) — the Timeline tab reflects live
+  activity for these four actions. Older/seeded matters still carry
+  hand-seeded audit history from before this session; that's unchanged.
+- Inputs are validated server-side with Zod (`lib/matters/actions.ts`);
+  Server Action authorization/validation boundaries are covered by
+  `tests/matters/actions.test.ts` and `tests/auth/access.test.ts`.
+
+**Deliberately not done here:** logging a brand-new call (only attaching
+an already-existing unfiled one), document upload, task reassignment/
+deletion, note editing/pinning, and deadline/calendar-event writes — none
+of those had an existing mocked UI to wire up in this pass. See Phases 3–5
+below for what's still open.
+
 ## Phase 2 — Clients & Matters (CRUD + authorization)
 
 - [ ] Client CRUD (create/list/view/edit) with server-side validation.
@@ -134,8 +176,10 @@ for writes will need the same treatment once Server Actions exist).
       Authentication & matter-level authorization" above) — enforced
       server-side, unit-tested, and applies to every cross-matter list,
       not just direct matter URLs.
-- [ ] AuditEvent wired in as a side effect of real writes (currently only
-      seeded — see milestone above).
+- [x] AuditEvent wired in as a side effect of real writes — done for
+      Note/Task create, Task status update, and Call attach in the fifth
+      session (see milestone above). Matter/Client create-edit-delete
+      still don't exist, so this isn't complete for every entity yet.
 
 **Exit criteria:** a staff member can create a client, open a matter for
 them, assign staff to it, and have that access properly restricted and
@@ -143,18 +187,21 @@ audited.
 
 ## Phase 3 — Case workflow essentials
 
-- [ ] Notes on a matter — *read-only view shipped; no create/edit form.*
-- [ ] Tasks (assignable, with status/priority) on a matter — *read-only
-      Kanban board shipped (drag-and-drop is UI-only, not persisted); no
-      create/edit form or a real status-update action.*
+- [x] Notes on a matter — create is done (fifth-session milestone above);
+      no edit/delete/pin-toggle form yet.
+- [x] Tasks (assignable, with status/priority) on a matter — create and
+      Kanban drag-to-update-status are done (fifth-session milestone
+      above); no edit/delete/reassign form yet.
 - [ ] Deadlines on a matter, with a simple upcoming-deadlines view —
       *read-only view shipped; no create/edit form.*
 - [x] Calendar events on a matter. `CalendarEvent` model exists and is
       shown (Matter Overview's "Upcoming key dates", Dashboard's "Upcoming
       court dates & deadlines") — still no create/edit form.
-- [ ] A per-matter timeline/activity view combining the above — *read-only
-      view shipped, but it reflects seed data, not live audit events (see
-      milestone note above).*
+- [x] A per-matter timeline/activity view combining the above — now
+      reflects live `AuditEvent` rows for Note/Task create, Task status
+      update, and Call attach (fifth-session milestone above); older
+      matters still carry seeded history from before those actions
+      existed.
 
 **Exit criteria:** day-to-day case management (notes, tasks, deadlines,
 calendar) works without MyCase for a pilot matter.
@@ -184,12 +231,12 @@ organized, and a re-served production compared against the original.
       **Not started** — the schema only has `Call`, not the more general
       `Communication` entity from `docs/DATA_MODEL.md`; add it if/when
       email/SMS/letter logging is needed.
-- [ ] `Call` entity and UI for manually logging/filing a call to a matter,
+- [x] `Call` entity and UI for manually logging/filing a call to a matter,
       as a stand-in for the eventual Vonage sync. *`Call` model and a
-      Calls tab shipped, including an "unfiled calls" pool with a mocked
-      Attach-to-Matter button (see milestone above); attaching only
-      updates on-screen state — there's still no real log/flag/file
-      action or Task-status-update Server Action.*
+      Calls tab shipped; attaching an unfiled call to a matter now persists
+      (`attachCallToMatter`, fifth-session milestone above). There's still
+      no UI to log a brand-new call (only to attach an existing unfiled
+      one) or to toggle the `flagged` field.*
 
 **Exit criteria:** the data model and UI for communications are proven out
 manually before any Vonage API work begins.

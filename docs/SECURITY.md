@@ -21,10 +21,22 @@ following pieces of it are **actually implemented**, not just planned:
 - **Route-level login gating** via `proxy.ts` for every page except
   `/login`.
 
+Also now real:
+
+- **Write actions** for Task status changes, Notes, Tasks, and attaching a
+  Call to a matter — see `lib/matters/actions.ts`. Each independently
+  re-checks authentication and matter-level access rather than trusting
+  that a page already did (see "Authorization" below).
+- **Audit logging** for those same writes — `AuditEvent` rows are now
+  produced by real `CREATE`/`UPDATE` actions, not only seeded, and the
+  Timeline tab reflects them.
+
 Still **not implemented** (tracked in `docs/ROADMAP.md`):
 
-- Audit logging is seeded demo data, not produced by real writes — there
-  are no create/edit/delete actions yet for it to log.
+- Client/Matter create-edit-delete, Deadline/CalendarEvent writes, Document
+  upload, logging a brand-new Call (only attaching an existing unfiled
+  one), and Note/Task edit-delete — none of those have a write path yet,
+  so `AuditEvent` for them is still only seeded demo data.
 - No MFA, no rate limiting on failed logins, no forced sign-out on
   role/assignment change.
 - No HTTPS enforcement (this is a local-dev prototype; see
@@ -95,25 +107,38 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
   (`prisma/schema.prisma`'s `UserRole` enum). **Implemented.**
 - **Matter-level access control**: being logged in is not enough. A user
   must be assigned to a matter (via `MatterAssignment`) or hold the
-  `ADMIN` role to view that matter's data — this mirrors ethical-wall and
-  confidentiality expectations in a law firm. **Implemented** for reads
-  (there are no write actions yet to gate — see docs/ROADMAP.md):
+  `ADMIN` role to view or write that matter's data — this mirrors
+  ethical-wall and confidentiality expectations in a law firm.
+  **Implemented** for reads and for the write actions that exist so far:
   - The decision logic is pure and unit-tested
     (`lib/auth/authorization.ts`, `tests/auth/authorization.test.ts`).
+  - `lib/auth/access.ts` exposes two DB-backed wrappers around that logic:
+    `assertMatterAccess` (throws `notFound()`, for page renders) and
+    `hasMatterAccess` (returns a boolean, for Server Actions that can't use
+    `notFound()` since they aren't rendering a page).
   - `app/(dashboard)/matters/[matterId]/layout.tsx` enforces it for a
-    single matter — an unassigned, non-admin user gets the same
-    `not-found` page as a nonexistent matter id, so access can't be
-    distinguished from "doesn't exist."
+    single matter's pages via `assertMatterAccess` — an unassigned,
+    non-admin user gets the same `not-found` page as a nonexistent matter
+    id, so access can't be distinguished from "doesn't exist."
   - Every cross-matter read (`lib/dashboard/queries.ts`,
     `lib/matters/queries.ts`'s `listMatters`) filters by the same rule, so
     the Dashboard and Matters list never leak the existence of matters a
     non-admin can't open.
+  - Every write action in `lib/matters/actions.ts` (`updateTaskStatus`,
+    `createNote`, `createTask`, `attachCallToMatter`) calls
+    `hasMatterAccess` itself and returns the same generic
+    "not found or access denied" failure whether the matter doesn't exist
+    or the caller just isn't assigned to it — a denied write can't be used
+    to probe for what matters/records exist.
 - All authorization checks happen **server-side** — `proxy.ts` gates
   "is anyone logged in," and every Server Component that reads matter data
   re-checks independently rather than trusting the proxy alone (see
-  CLAUDE.md, section 4.4). There are no Server Actions/Route Handlers with
-  write access yet; when they're added, each one must repeat this same
-  check rather than relying on the page having already checked it.
+  CLAUDE.md, section 4.4). The Server Actions in `lib/matters/actions.ts`
+  follow the same rule: each calls `requireCurrentUser()` and
+  `hasMatterAccess()` itself rather than trusting that the page that
+  rendered its form/button already checked — Server Actions can be invoked
+  directly, not just through a page render. Future write actions must do
+  the same.
 - Discovery, documents, notes, tasks, deadlines, and calls are scoped to
   the same per-matter check as the parent Matter record, since they only
   render inside a matter route the layout has already authorized —
@@ -126,6 +151,10 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
 - Every create/update/delete on Client, Matter, Note, Task, Deadline,
   CalendarEvent, Communication, Call, Document, DiscoveryProduction, and
   DiscoveryFile produces an `AuditEvent` (see `docs/DATA_MODEL.md`).
+  **Implemented so far** for: Note create, Task create, Task status
+  update, and Call attach-to-matter (`lib/matters/actions.ts`). Every
+  other entity/action in that list still has no write path at all, so
+  there's nothing yet to log for them (see `docs/ROADMAP.md`).
 - Sensitive read actions that matter for accountability (e.g., viewing/
   exporting discovery, exporting a client's full file) should also be
   logged, not just writes.
