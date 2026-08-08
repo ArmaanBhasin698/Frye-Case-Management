@@ -206,24 +206,74 @@ audited.
 **Exit criteria:** day-to-day case management (notes, tasks, deadlines,
 calendar) works without MyCase for a pilot matter.
 
+## Milestone — Real Bates/hashing/comparison engine (sixth session)
+
+Most of Phase 4 (below) pulled forward and made real, ahead of Documents/
+Communications:
+
+- "New Production" (Discovery tab) creates a real `DiscoveryProduction`
+  (`lib/discovery/actions.ts#createDiscoveryProduction`).
+- "Register File" uploads a fictional/test file, computes its SHA-256 hash
+  (`lib/discovery/hash.ts`), and for PDFs reads the page count and
+  generates a Bates-stamped derivative (`lib/discovery/pdf.ts`, via
+  `pdf-lib`) with a sequential range continuing from whatever's already
+  assigned in that production (`lib/discovery/bates.ts`) — configurable per
+  production via `batesPrefix`. Non-paginated media (video/audio/photo/
+  other) gets a sequential evidence ID instead of page numbers. The
+  original is preserved untouched; the stamp is a separate derivative.
+  Both are saved via the new `lib/storage/DocumentStore` (a local-disk
+  stand-in for Dropbox — see docs/ARCHITECTURE.md).
+- A download link (original, and stamped for PDFs) streams the stored
+  bytes through an authenticated Route Handler that logs an `EXPORT`
+  audit event.
+- "Compare" runs a real comparison between two productions
+  (`lib/discovery/compare.ts`, via `#runDiscoveryComparison`): matched
+  first by content hash (a rename doesn't register as a new file), falling
+  back to filename (a same-named file with different content is flagged
+  Changed, not missed) — persisted as real `DiscoveryFileMatch` rows.
+- Every action above is authenticated, matter-scoped (including verifying
+  a given `productionId` actually belongs to the matter), Zod-validated,
+  and produces an `AuditEvent` — see docs/SECURITY.md.
+- Productions/files/comparisons seeded before this session remain in the
+  database as illustrative historical demo data (no real stored bytes
+  behind them) — the Discovery tab's existing look is unchanged, just fed
+  real data going forward.
+
+**Deliberately not done here:** editing/deleting a production or file, a
+Dropbox-backed `DocumentStore` (still local-disk), and a standardized
+per-matter Dropbox folder convention (`docs/DISCOVERY.md`) — see Phase 4
+and Phase 6 below.
+
 ## Phase 4 — Discovery management (core differentiator)
 
-- [ ] `DiscoveryProduction` and `DiscoveryFile` CRUD. *Read-only
-      production/file listing shipped, now with review status
-      (`NOT_STARTED`/`IN_REVIEW`/`COMPLETE`) and file-type icons; no create/
-      edit/upload UI, and no Bates numbering or media identifier logic.*
+- [x] `DiscoveryProduction` and `DiscoveryFile` create. *Real as of the
+      sixth session (see milestone above) — review status, file-type
+      icons, Bates ranges, hashes, and download links are all live. No
+      edit/delete UI yet.*
 - [ ] Standardized Dropbox folder-structure convention per matter
-      (documented in a new `docs/DISCOVERY.md` once designed).
-- [ ] Bates numbering for PDFs (apply to a copy; preserve the original).
-- [ ] Consistent identifier scheme for video/audio/photo files.
-- [ ] Content hashing on ingest to support later comparison.
-- [ ] Discovery production comparison (new/changed/duplicate/missing)
-      across two productions. *`DiscoveryComparison`/`DiscoveryFileMatch`
-      tables and a visual comparison view shipped (see milestone above),
-      but the rows are hand-seeded — no hashing/diffing engine runs this.*
+      (documented in a new `docs/DISCOVERY.md` once designed) — files
+      currently key into `lib/storage/DocumentStore` by
+      `matters/<matterId>/discovery/<productionId>/<uuid>/...`, a
+      placeholder scheme that only matters once Dropbox is the backing
+      store.
+- [x] Bates numbering for PDFs (apply to a copy; preserve the original).
+      *Real — `lib/discovery/pdf.ts` + `lib/discovery/bates.ts`, unit
+      tested for sequencing and non-destructiveness.*
+- [x] Consistent identifier scheme for video/audio/photo files. *Real —
+      `formatEvidenceIdentifier` in `lib/discovery/bates.ts`.*
+- [x] Content hashing on ingest to support later comparison. *Real —
+      SHA-256 via `lib/discovery/hash.ts`, computed at registration.*
+- [x] Discovery production comparison (new/changed/duplicate/missing)
+      across two productions. *Real as of the sixth session
+      (`lib/discovery/compare.ts`) for anything created through the UI;
+      comparisons seeded before that session remain as illustrative
+      historical data (see milestone above).*
 
 **Exit criteria:** discovery for a pilot matter can be received, numbered,
-organized, and a re-served production compared against the original.
+organized, and a re-served production compared against the original. Met
+for fictional/test files as of the sixth session — not yet for real
+evidence, since that needs Dropbox (Phase 6) instead of the local-disk
+storage stand-in.
 
 ## Phase 5 — Communications (groundwork for Vonage)
 
@@ -244,7 +294,12 @@ manually before any Vonage API work begins.
 ## Phase 6 — Integrations (Dropbox, Vonage)
 
 - [ ] Dropbox integration behind `lib/storage/DocumentStore`: link matter
-      folders, browse/upload/reference files from the app.
+      folders, browse/upload/reference files from the app. The interface
+      already exists with a local-disk implementation
+      (`LocalDocumentStore`, sixth session) — this phase is writing a
+      Dropbox-backed implementation of the same interface and swapping it
+      in; `lib/discovery/`'s Bates/hashing/comparison engine and every
+      Server Action calling `documentStore` should need no changes.
 - [ ] Vonage integration behind `lib/telephony/CallProvider`: pull call/SMS
       history, support flagging and filing a real call to a matter, save
       recordings into the matter's Dropbox structure.

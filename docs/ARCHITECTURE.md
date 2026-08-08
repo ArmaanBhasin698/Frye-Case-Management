@@ -76,18 +76,27 @@ a handful of staff, thousands of matters at most).
 
 ## Documents & Dropbox
 
-Dropbox remains the actual file store. This application will (in a later
-phase, not now):
+Dropbox will eventually be the actual file store. `lib/storage/DocumentStore`
+is the narrow interface every file-backed feature talks to instead of a
+storage SDK directly — as of the fifth session it has one real
+implementation, `LocalDocumentStore`, which writes fictional/test discovery
+files to a gitignored `local-data/discovery-files/` directory. This is a
+dev/demo-only stand-in, not Dropbox:
 
-- Store Dropbox paths/IDs and metadata in Postgres (`Document`,
-  `DiscoveryFile` records), not file contents.
-- Enforce a **standardized folder structure per matter** in Dropbox (defined
-  in a future `docs/DISCOVERY.md` once that phase starts) so discovery,
-  correspondence, pleadings, etc. are organized consistently across all
-  matters.
-- Talk to Dropbox only through a narrow internal interface
-  (e.g. `lib/storage/DocumentStore`), so the Dropbox SDK is never called
-  directly from UI code, and swapping/mocking it later is straightforward.
+- `lib/discovery/actions.ts` calls `documentStore.save`/`.read` — it has no
+  idea whether that's local disk or Dropbox underneath.
+- When Dropbox is eventually built, only a new class implementing
+  `DocumentStore` needs to be written and swapped in; `lib/discovery/`'s
+  Bates/hashing/comparison engine and every Server Action calling it stay
+  unchanged.
+- A **standardized folder structure per matter** in Dropbox (defined in a
+  future `docs/DISCOVERY.md` once that phase starts) will replace the
+  current flat `matters/<id>/discovery/<productionId>/<uuid>/...` key
+  scheme so discovery, correspondence, pleadings, etc. are organized
+  consistently across all matters.
+- `Document` (general, non-discovery files) doesn't use `DocumentStore` yet
+  — it still only stores a Dropbox-shaped path string with nothing behind
+  it (see `docs/ROADMAP.md`).
 
 ## Calls & Vonage
 
@@ -102,22 +111,30 @@ Similarly deferred, but planned for behind an interface
 
 ## Discovery management (core differentiator)
 
-Planned architecture (not implemented yet — see `docs/ROADMAP.md`):
+Real as of the fifth session (see `docs/ROADMAP.md`) — `lib/discovery/` is
+fully unit tested and independent of the UI:
 
 - Each `DiscoveryProduction` represents one batch of discovery received
-  (e.g., "Initial Production", "Supplemental Production 2").
-- Every file gets a stable, consistent identifier: Bates numbers for PDFs
-  (applied by the system, not manually), and a parallel consistent ID scheme
-  for non-paginated media (video/audio/photo) that doesn't naturally take
-  Bates numbers.
-- Original files are always preserved untouched; numbering/identifiers are
-  applied to copies or via a non-destructive overlay, never by mutating the
-  source file the firm received.
-- Re-served discovery can be compared production-to-production to flag
-  files that are new, changed (e.g., re-hashed/modified), duplicated, or
-  missing relative to a prior production. This requires content hashing and
-  metadata comparison — logic that belongs in `lib/discovery/`, fully unit
-  tested, independent of the UI.
+  (e.g., "Initial Production", "Supplemental Production 2"), created via
+  the Discovery tab's "New Production" form
+  (`lib/discovery/actions.ts#createDiscoveryProduction`).
+- Registering a file (`#registerDiscoveryFile`) computes a SHA-256 content
+  hash (`lib/discovery/hash.ts`) and, for PDFs, reads the page count and
+  generates a Bates-stamped derivative (`lib/discovery/pdf.ts`, via
+  `pdf-lib`) with a sequential range continuing from whatever's already
+  been assigned in that production (`lib/discovery/bates.ts`). Non-paginated
+  media (video/audio/photo/other) gets a sequential evidence ID instead of
+  pretending to have page numbers.
+- Original files are always preserved untouched — stamping loads the bytes
+  into a fresh in-memory PDF document and saves a *new* byte array; the
+  stored original is never written to. Both the original and the stamped
+  derivative are saved via `lib/storage/DocumentStore` under separate keys.
+- Re-served discovery is compared production-to-production
+  (`lib/discovery/compare.ts`, run via `#runDiscoveryComparison`) to flag
+  files as new, changed, duplicated, or missing relative to a prior
+  production — matched first by content hash (so a rename doesn't register
+  as a new file), falling back to filename (so a same-named file with
+  different content is flagged as changed rather than missed).
 
 ## Folder structure
 

@@ -202,6 +202,13 @@ export function formatCallDuration(durationSeconds: number) {
   return `${minutes} min`;
 }
 
+/** 128000 -> "125 KB"; used for registered discovery files' `sizeBytes`. */
+export function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 /**
  * Calendar days between now and `date` (positive = future). Kept as a
  * standalone helper (rather than inlining `new Date()` in a component) so

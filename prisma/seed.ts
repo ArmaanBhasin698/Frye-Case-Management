@@ -4,8 +4,12 @@
  * Everything here is fictional (see CLAUDE.md, section 2 and
  * docs/SECURITY.md) — no real client, matter, or case data. Names, case
  * numbers, courts, and phone numbers are all made up. The discovery
- * "comparison" rows are hand-authored to look like a plausible result, not
- * computed by any real diffing engine (see docs/ROADMAP.md, Phase 4).
+ * productions/files/comparison below are hand-authored to look like a
+ * plausible result, from before the real Bates/hashing/comparison engine
+ * existed (see lib/discovery/ and docs/ROADMAP.md) — they carry no stored
+ * file content, so there's nothing to download or re-compare for them.
+ * Anything created through the Discovery tab's UI goes through the real
+ * engine instead.
  *
  * All seeded users share one password so a demo doesn't require memorizing
  * five of them. This is a development-only convenience — see
@@ -445,7 +449,7 @@ async function main() {
       identifier: "ELLIS000001",
       fileType: "PDF",
       pageCount: 12,
-      dropboxPathOriginal:
+      originalStorageKey:
         "/Frye Law Group/Clients/Ellis, Jordan/24-CR-04821/Discovery/Production 1/Originals/incident-report.pdf",
     },
   });
@@ -457,7 +461,7 @@ async function main() {
       identifier: "ELLIS000009",
       fileType: "PDF",
       pageCount: 2,
-      dropboxPathOriginal:
+      originalStorageKey:
         "/Frye Law Group/Clients/Ellis, Jordan/24-CR-04821/Discovery/Production 1/Originals/property-inventory.pdf",
     },
   });
@@ -469,7 +473,7 @@ async function main() {
       identifier: "ELLIS000013",
       fileType: "PDF",
       pageCount: 4,
-      dropboxPathOriginal:
+      originalStorageKey:
         "/Frye Law Group/Clients/Ellis, Jordan/24-CR-04821/Discovery/Production 1/Originals/lab-report.pdf",
     },
   });
@@ -480,7 +484,7 @@ async function main() {
       originalFilename: "bodycam-officer-reyes.mp4",
       identifier: "ELLIS-V001",
       fileType: "VIDEO",
-      dropboxPathOriginal:
+      originalStorageKey:
         "/Frye Law Group/Clients/Ellis, Jordan/24-CR-04821/Discovery/Production 1/Originals/bodycam-officer-reyes.mp4",
     },
   });
@@ -491,7 +495,7 @@ async function main() {
       originalFilename: "bodycam-officer-diaz.mp4",
       identifier: "ELLIS-V002",
       fileType: "VIDEO",
-      dropboxPathOriginal:
+      originalStorageKey:
         "/Frye Law Group/Clients/Ellis, Jordan/24-CR-04821/Discovery/Production 1/Originals/bodycam-officer-diaz.mp4",
     },
   });
@@ -502,7 +506,7 @@ async function main() {
       originalFilename: "dispatch-audio.mp3",
       identifier: "ELLIS-A001",
       fileType: "AUDIO",
-      dropboxPathOriginal:
+      originalStorageKey:
         "/Frye Law Group/Clients/Ellis, Jordan/24-CR-04821/Discovery/Production 1/Originals/dispatch-audio.mp3",
     },
   });
@@ -513,7 +517,7 @@ async function main() {
       originalFilename: "scene-photo-01.jpg",
       identifier: "ELLIS-P001",
       fileType: "PHOTO",
-      dropboxPathOriginal:
+      originalStorageKey:
         "/Frye Law Group/Clients/Ellis, Jordan/24-CR-04821/Discovery/Production 1/Originals/scene-photo-01.jpg",
     },
   });
@@ -524,7 +528,7 @@ async function main() {
       originalFilename: "scene-photo-02.jpg",
       identifier: "ELLIS-P002",
       fileType: "PHOTO",
-      dropboxPathOriginal:
+      originalStorageKey:
         "/Frye Law Group/Clients/Ellis, Jordan/24-CR-04821/Discovery/Production 1/Originals/scene-photo-02.jpg",
     },
   });
@@ -549,7 +553,7 @@ async function main() {
       identifier: "ELLIS000085",
       fileType: "PDF",
       pageCount: 5,
-      dropboxPathOriginal:
+      originalStorageKey:
         "/Frye Law Group/Clients/Ellis, Jordan/24-CR-04821/Discovery/Production 2/Originals/lab-report-amended.pdf",
     },
   });
@@ -561,7 +565,7 @@ async function main() {
       identifier: "ELLIS000090",
       fileType: "PDF",
       pageCount: 2,
-      dropboxPathOriginal:
+      originalStorageKey:
         "/Frye Law Group/Clients/Ellis, Jordan/24-CR-04821/Discovery/Production 2/Originals/property-inventory.pdf",
     },
   });
@@ -573,7 +577,7 @@ async function main() {
       identifier: "ELLIS000095",
       fileType: "PDF",
       pageCount: 3,
-      dropboxPathOriginal:
+      originalStorageKey:
         "/Frye Law Group/Clients/Ellis, Jordan/24-CR-04821/Discovery/Production 2/Originals/witness-statement-briggs.pdf",
     },
   });
@@ -584,7 +588,7 @@ async function main() {
       originalFilename: "bodycam-officer-diaz.mp4",
       identifier: "ELLIS-V002",
       fileType: "VIDEO",
-      dropboxPathOriginal:
+      originalStorageKey:
         "/Frye Law Group/Clients/Ellis, Jordan/24-CR-04821/Discovery/Production 2/Originals/bodycam-officer-diaz.mp4",
     },
   });
@@ -595,7 +599,7 @@ async function main() {
       originalFilename: "interview-jordan-ellis.mp3",
       identifier: "ELLIS-A002",
       fileType: "AUDIO",
-      dropboxPathOriginal:
+      originalStorageKey:
         "/Frye Law Group/Clients/Ellis, Jordan/24-CR-04821/Discovery/Production 2/Originals/interview-jordan-ellis.mp3",
     },
   });
@@ -683,7 +687,7 @@ async function main() {
         identifier: "ALVAREZ000001",
         fileType: "PDF",
         pageCount: 6,
-        dropboxPathOriginal:
+        originalStorageKey:
           "/Frye Law Group/Clients/Alvarez, Maria/24-CR-03190/Discovery/Production 1/Originals/arrest-report.pdf",
       },
       {
@@ -691,7 +695,7 @@ async function main() {
         originalFilename: "dashcam.mp4",
         identifier: "ALVAREZ-V001",
         fileType: "VIDEO",
-        dropboxPathOriginal:
+        originalStorageKey:
           "/Frye Law Group/Clients/Alvarez, Maria/24-CR-03190/Discovery/Production 1/Originals/dashcam.mp4",
       },
       {
@@ -699,7 +703,7 @@ async function main() {
         originalFilename: "911-call.mp3",
         identifier: "ALVAREZ-A001",
         fileType: "AUDIO",
-        dropboxPathOriginal:
+        originalStorageKey:
           "/Frye Law Group/Clients/Alvarez, Maria/24-CR-03190/Discovery/Production 1/Originals/911-call.mp3",
       },
       {
@@ -707,7 +711,7 @@ async function main() {
         originalFilename: "scene-photo.jpg",
         identifier: "ALVAREZ-P001",
         fileType: "PHOTO",
-        dropboxPathOriginal:
+        originalStorageKey:
           "/Frye Law Group/Clients/Alvarez, Maria/24-CR-03190/Discovery/Production 1/Originals/scene-photo.jpg",
       },
     ],
@@ -735,7 +739,7 @@ async function main() {
         identifier: "MARSH000001",
         fileType: "PDF",
         pageCount: 8,
-        dropboxPathOriginal:
+        originalStorageKey:
           "/Frye Law Group/Clients/Marsh, Devon/23-CR-09765/Discovery/Production 1/Originals/incident-report.pdf",
       },
       {
@@ -743,7 +747,7 @@ async function main() {
         originalFilename: "bodycam.mp4",
         identifier: "MARSH-V001",
         fileType: "VIDEO",
-        dropboxPathOriginal:
+        originalStorageKey:
           "/Frye Law Group/Clients/Marsh, Devon/23-CR-09765/Discovery/Production 1/Originals/bodycam.mp4",
       },
     ],
@@ -771,7 +775,7 @@ async function main() {
         identifier: "PATEL000001",
         fileType: "PDF",
         pageCount: 5,
-        dropboxPathOriginal:
+        originalStorageKey:
           "/Frye Law Group/Clients/Patel, Amara/25-CR-01044/Discovery/Production 1/Originals/arrest-report.pdf",
       },
       {
@@ -779,7 +783,7 @@ async function main() {
         originalFilename: "bodycam-officer-nguyen.mp4",
         identifier: "PATEL-V001",
         fileType: "VIDEO",
-        dropboxPathOriginal:
+        originalStorageKey:
           "/Frye Law Group/Clients/Patel, Amara/25-CR-01044/Discovery/Production 1/Originals/bodycam-officer-nguyen.mp4",
       },
     ],
