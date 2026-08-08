@@ -69,7 +69,9 @@ export function getMatterCalendarEvents(matterId: string) {
 export function getMatterDiscoveryProductions(matterId: string) {
   return prisma.discoveryProduction.findMany({
     where: { matterId },
-    include: { files: true },
+    include: {
+      files: { include: { registeredBy: true }, orderBy: { createdAt: "asc" } },
+    },
     orderBy: { receivedDate: "desc" },
   });
 }
@@ -80,6 +82,7 @@ export function getMatterDiscoveryComparisons(matterId: string) {
     include: {
       fromProduction: true,
       toProduction: true,
+      runBy: true,
       matches: { orderBy: { status: "asc" } },
     },
     orderBy: { runAt: "desc" },

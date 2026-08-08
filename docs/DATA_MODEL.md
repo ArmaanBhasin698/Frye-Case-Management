@@ -169,27 +169,42 @@ One batch of discovery received on a matter.
   `receivedDate`, `batesPrefix`, `batesStart`, `batesEnd`, `reviewStatus`
   (`not_started` | `in_review` | `complete`), `notes`, `createdAt`.
 
-### DiscoveryFile
+### DiscoveryFile — real Bates/hashing engine as of the fifth session
 One file within a production.
 - `id`, `productionId` (FK), `originalFilename`,
-  `identifier` (Bates number for paginated docs, or a consistent media ID
-  for video/audio/photo), `fileType`
-  (`pdf` | `video` | `audio` | `photo` | `other`), `contentHash` (for
-  duplicate/change detection), `dropboxPathOriginal` (preserved, untouched
-  original), `dropboxPathNumbered` (numbered/processed copy, nullable),
-  `pageCount` (nullable), `createdAt`.
+  `identifier` (Bates range for PDFs, e.g. "ELLIS000001-ELLIS000004", or a
+  sequential evidence ID for video/audio/photo/other, e.g. "ELLIS-0001" —
+  see `lib/discovery/bates.ts`), `fileType`
+  (`pdf` | `video` | `audio` | `photo` | `other`), `contentHash` (SHA-256 of
+  the original bytes, used for duplicate/change detection —
+  `lib/discovery/hash.ts`), `originalStorageKey` (preserved, untouched
+  original — see `lib/storage/DocumentStore`), `stampedStorageKey` (a
+  *separate* Bates-stamped derivative, PDFs only, nullable), `pageCount`
+  (PDFs only), `batesStart`/`batesEnd` (this file's own page range, PDFs
+  only), `sizeBytes`, `mimeType`, `registeredById` (FK → User, nullable),
+  `registeredAt`, `createdAt`.
+- **Implementation note:** registration (hashing, PDF page counting, Bates
+  stamping via `lib/discovery/pdf.ts`) is real for anything created through
+  the Discovery tab's "Register File" form. Files seeded before this
+  session (`prisma/seed.ts`) have no stored content behind
+  `originalStorageKey` — it's a fake path string kept only for continuity
+  with older demo data, not something `lib/storage/DocumentStore` can
+  actually read back.
 
-### DiscoveryComparison — implemented, but hand-seeded (not computed)
+### DiscoveryComparison — real as of the fifth session
 Result of comparing two productions.
 - `id`, `matterId` (FK), `fromProductionId` (FK →
   DiscoveryProduction), `toProductionId` (FK → DiscoveryProduction),
-  `runAt`.
-- **Implementation note:** this entity and `DiscoveryFileMatch` exist in
-  the schema ahead of their originally-planned Phase 4 slot, specifically
-  to back a visual mockup of the comparison feature for a firm demo. Rows
-  are seeded by hand (`prisma/seed.ts`) to look like a plausible result —
-  there is no content-hashing or diffing engine yet. Treat any comparison
-  shown in the UI as illustrative, not as real analysis of real files.
+  `runById` (FK → User, nullable), `runAt`.
+- **Implementation note:** `lib/discovery/compare.ts` classifies every file
+  in the "to" production against the "from" production by content hash
+  first (rename-proof duplicate detection), then filename (catches a
+  same-named file whose content changed), and persists the result as
+  `DiscoveryFileMatch` rows — see `lib/discovery/actions.ts`'s
+  `runDiscoveryComparison`. Comparisons created before this session were
+  seeded by hand (`runById` is null for those) and remain as illustrative
+  historical data; anything run through the "Compare" button in the UI is
+  a real result.
 
 ### DiscoveryFileMatch
 One line item of a comparison result.

@@ -134,12 +134,17 @@ yet:
   Note, Log a Call, Upload Document, New Task) show what the entry point
   will feel like but only display a "coming soon" message.
 - **No Dropbox, Vonage, Loop/HighLevel, MyCase, or QuickBooks integration.**
-  Documents/discovery show fake Dropbox paths as plain text; calls are
-  manually-seeded rows, not pulled from Vonage.
-- **No Bates numbering or real discovery comparison logic.** The Discovery
-  tab's production/file records and review status are real database rows,
-  but the New/Changed/Duplicate/Missing comparison view is backed by
-  hand-seeded rows, not a hashing/diffing engine.
+  General (non-discovery) documents show fake Dropbox paths as plain text;
+  calls are manually-seeded rows, not pulled from Vonage. Discovery files
+  are stored on local disk (`lib/storage/DocumentStore`) as a stand-in
+  behind the same interface Dropbox will eventually implement.
+- **Bates numbering and discovery comparison are real** for anything
+  created through the Discovery tab: registering a PDF hashes it, reads
+  its page count, and generates a separate Bates-stamped derivative
+  (original untouched); "Compare" classifies files as New/Changed/
+  Duplicate/Missing using stored hashes and filenames (`lib/discovery/`).
+  Productions/comparisons seeded before this feature existed remain as
+  illustrative historical demo data with no real stored files behind them.
 - **Tasks board drag-and-drop is UI-only.** Moving a card between columns
   updates the screen, not the database — there's no Task-update Server
   Action yet, so refreshing resets it.

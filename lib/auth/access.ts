@@ -33,10 +33,19 @@ export async function matterScopeFilterFor(user: AuthorizableUser) {
  * "access denied" message so an unauthorized user can't distinguish "this
  * matter doesn't exist" from "you can't see this matter."
  */
-export async function assertMatterAccess(user: AuthorizableUser, matterId: string): Promise<void> {
-  if (isAdmin(user)) return;
+/**
+ * Boolean form of the same access decision, for call sites that can't use
+ * `notFound()` (Server Actions invoked from client code, not a page
+ * render). Page renders should keep using `assertMatterAccess` below.
+ */
+export async function hasMatterAccess(user: AuthorizableUser, matterId: string): Promise<boolean> {
+  if (isAdmin(user)) return true;
   const assignedMatterIds = await getAssignedMatterIds(user.id);
-  if (!canAccessMatter(user, assignedMatterIds, matterId)) {
+  return canAccessMatter(user, assignedMatterIds, matterId);
+}
+
+export async function assertMatterAccess(user: AuthorizableUser, matterId: string): Promise<void> {
+  if (!(await hasMatterAccess(user, matterId))) {
     notFound();
   }
 }

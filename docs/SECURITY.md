@@ -21,10 +21,32 @@ following pieces of it are **actually implemented**, not just planned:
 - **Route-level login gating** via `proxy.ts` for every page except
   `/login`.
 
+Also now real:
+
+- **Write actions** for Task status changes, Notes, Tasks, attaching a Call
+  to a matter, and the Discovery/Bates engine (creating a production,
+  registering a file, running a comparison) — see `lib/matters/actions.ts`
+  and `lib/discovery/actions.ts`. Each independently re-checks
+  authentication and matter-level access rather than trusting that a page
+  already did (see "Authorization" below).
+- **Audit logging** for those same writes — `AuditEvent` rows are now
+  produced by real `CREATE`/`UPDATE`/`EXPORT` actions, not only seeded, and
+  the Timeline tab reflects them.
+- **A first (local-disk) `DocumentStore` implementation** — fictional/test
+  discovery files registered through the UI are actually hashed, stored,
+  and (for PDFs) Bates-stamped, not just represented as metadata. See
+  `lib/storage/DocumentStore.ts`.
+
 Still **not implemented** (tracked in `docs/ROADMAP.md`):
 
-- Audit logging is seeded demo data, not produced by real writes — there
-  are no create/edit/delete actions yet for it to log.
+- Client/Matter create-edit-delete, Deadline/CalendarEvent writes, Document
+  upload, logging a brand-new Call (only attaching an existing unfiled
+  one), Note/Task edit-delete, and Discovery production/file edit-delete —
+  none of those have a write path yet, so `AuditEvent` for them is still
+  only seeded demo data.
+- Dropbox itself. `DocumentStore`'s local-disk implementation is a dev/demo
+  stand-in behind the same interface a real Dropbox-backed one will use —
+  see docs/ARCHITECTURE.md's "Documents & Dropbox" section.
 - No MFA, no rate limiting on failed logins, no forced sign-out on
   role/assignment change.
 - No HTTPS enforcement (this is a local-dev prototype; see
@@ -95,40 +117,83 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
   (`prisma/schema.prisma`'s `UserRole` enum). **Implemented.**
 - **Matter-level access control**: being logged in is not enough. A user
   must be assigned to a matter (via `MatterAssignment`) or hold the
-  `ADMIN` role to view that matter's data — this mirrors ethical-wall and
-  confidentiality expectations in a law firm. **Implemented** for reads
-  (there are no write actions yet to gate — see docs/ROADMAP.md):
+  `ADMIN` role to view or write that matter's data — this mirrors
+  ethical-wall and confidentiality expectations in a law firm.
+  **Implemented** for reads and for the write actions that exist so far:
   - The decision logic is pure and unit-tested
     (`lib/auth/authorization.ts`, `tests/auth/authorization.test.ts`).
+  - `lib/auth/access.ts` exposes two DB-backed wrappers around that logic:
+    `assertMatterAccess` (throws `notFound()`, for page renders) and
+    `hasMatterAccess` (returns a boolean, for Server Actions that can't use
+    `notFound()` since they aren't rendering a page).
   - `app/(dashboard)/matters/[matterId]/layout.tsx` enforces it for a
-    single matter — an unassigned, non-admin user gets the same
-    `not-found` page as a nonexistent matter id, so access can't be
-    distinguished from "doesn't exist."
+    single matter's pages via `assertMatterAccess` — an unassigned,
+    non-admin user gets the same `not-found` page as a nonexistent matter
+    id, so access can't be distinguished from "doesn't exist."
   - Every cross-matter read (`lib/dashboard/queries.ts`,
     `lib/matters/queries.ts`'s `listMatters`) filters by the same rule, so
     the Dashboard and Matters list never leak the existence of matters a
     non-admin can't open.
+  - Every write action in `lib/matters/actions.ts` (`updateTaskStatus`,
+    `createNote`, `createTask`, `attachCallToMatter`) and
+    `lib/discovery/actions.ts` (`createDiscoveryProduction`,
+    `registerDiscoveryFile`, `runDiscoveryComparison`) calls
+    `hasMatterAccess` itself and returns the same generic
+    "not found or access denied" failure whether the matter doesn't exist
+    or the caller just isn't assigned to it — a denied write can't be used
+    to probe for what matters/records exist.
+  - `registerDiscoveryFile` and `runDiscoveryComparison` additionally
+    re-check that every `productionId` they're given actually belongs to
+    the given `matterId` (`prisma.discoveryProduction.findFirst({where:
+    {id, matterId}})`) before touching it — the same "scope every id by
+    matterId, not just the top-level check" pattern `updateTaskStatus` and
+    `attachCallToMatter` already use.
 - All authorization checks happen **server-side** — `proxy.ts` gates
   "is anyone logged in," and every Server Component that reads matter data
   re-checks independently rather than trusting the proxy alone (see
-  CLAUDE.md, section 4.4). There are no Server Actions/Route Handlers with
-  write access yet; when they're added, each one must repeat this same
-  check rather than relying on the page having already checked it.
+  CLAUDE.md, section 4.4). The Server Actions in `lib/matters/actions.ts`
+  and `lib/discovery/actions.ts` follow the same rule: each calls
+  `requireCurrentUser()` and `hasMatterAccess()` itself rather than
+  trusting that the page that rendered its form/button already checked —
+  Server Actions can be invoked directly, not just through a page render.
+  The discovery file download Route Handler
+  (`app/(dashboard)/matters/[matterId]/discovery/files/[fileId]/route.ts`)
+  does the same, since Route Handlers don't inherit a parent layout's
+  checks either — every failure mode (not logged in, no matter access,
+  wrong matter, file doesn't exist, content never stored) returns the same
+  generic 404. Future write actions must do the same.
 - Discovery, documents, notes, tasks, deadlines, and calls are scoped to
   the same per-matter check as the parent Matter record, since they only
   render inside a matter route the layout has already authorized —
   **implemented** by construction (there's no separate route for, say, a
   single Note that could be reached without going through the matter
-  layout first).
+  layout first). The discovery file download route is the one exception —
+  it isn't nested under the matter layout (Route Handlers don't render
+  through layouts), which is exactly why it repeats the matter-access and
+  matter-scoping checks itself instead of relying on that construction.
 
 ## Audit logging
 
 - Every create/update/delete on Client, Matter, Note, Task, Deadline,
   CalendarEvent, Communication, Call, Document, DiscoveryProduction, and
   DiscoveryFile produces an `AuditEvent` (see `docs/DATA_MODEL.md`).
+  **Implemented so far** for: Note create, Task create, Task status
+  update, Call attach-to-matter (`lib/matters/actions.ts`), and Discovery
+  production create, file registration, Bates generation, and comparison
+  (`lib/discovery/actions.ts`). Every other entity/action in that list
+  still has no write path at all, so there's nothing yet to log for them
+  (see `docs/ROADMAP.md`).
+  - Registering a PDF logs **two** events: a `CREATE` for the file itself
+    and a separate `UPDATE` carrying `metadata.event: "bates_generated"`
+    with the assigned range — Bates generation is its own auditable action,
+    not just a side effect of registration, per this document's original
+    intent.
 - Sensitive read actions that matter for accountability (e.g., viewing/
   exporting discovery, exporting a client's full file) should also be
-  logged, not just writes.
+  logged, not just writes. **Implemented** for discovery file downloads —
+  the download route logs an `EXPORT` event (`variant: "original" |
+  "stamped"`) for every successful download; other sensitive reads (e.g.
+  viewing a matter) are not logged yet.
 - Audit records are append-only. No feature should ever allow editing or
   deleting an `AuditEvent`, including for admins, through the application
   layer.
@@ -151,9 +216,12 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
   including hidden form fields or IDs.
 - Use parameterized queries via Prisma; never build raw SQL from string
   concatenation.
-- File uploads (once built) must validate file type/size server-side and
-  store them via the internal storage interface, never trusting a
-  client-supplied path.
+- File uploads validate type/size server-side and store bytes via the
+  internal storage interface, never a client-supplied path. **Implemented**
+  for discovery file registration (`lib/discovery/actions.ts`): file type
+  is a fixed enum, size is capped at 25MB, and storage keys are always
+  server-generated (`matters/<matterId>/discovery/<productionId>/<uuid>/...`)
+  — never taken from the client. Document upload isn't built yet.
 
 ## Data in transit / at rest
 

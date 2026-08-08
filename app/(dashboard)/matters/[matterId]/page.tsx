@@ -81,7 +81,7 @@ export default async function MatterOverviewPage({
           <CardTitle>Quick actions</CardTitle>
         </CardHeader>
         <CardContent>
-          <QuickActions />
+          <QuickActions matterId={matterId} />
         </CardContent>
       </Card>
 

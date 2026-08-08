@@ -6,10 +6,13 @@
 // docs/DATA_MODEL.md for the full target model and docs/ROADMAP.md for
 // when those land.
 //
-// DiscoveryComparison/DiscoveryFileMatch exist here ahead of their
-// originally-planned phase specifically to back a *visual, seeded* mockup
-// of production-to-production comparison for the demo — there is no real
-// diffing/hashing engine yet (see docs/ROADMAP.md, Phase 4).
+// DiscoveryProduction/DiscoveryFile/DiscoveryComparison/DiscoveryFileMatch
+// were seeded by hand ahead of their originally-planned phase to back a
+// visual mockup for a demo; the fifth session (see docs/ROADMAP.md) made
+// the Bates numbering, hashing, and comparison engine real — see
+// lib/discovery/. Older seeded productions/comparisons remain in the
+// database as illustrative historical data; anything created through the
+// UI now goes through the real engine.
 //
 // All schema changes must go through `prisma migrate dev` — never hand-edit
 // the database or the generated client (see CLAUDE.md, section 4).
@@ -128,12 +131,14 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  assignments       MatterAssignment[]
-  assignedTasks     Task[]             @relation("TaskAssignee")
-  authoredNotes     Note[]
-  uploadedDocuments Document[]
-  filedCalls        Call[]             @relation("CallFiledBy")
-  auditEvents       AuditEvent[]
+  assignments              MatterAssignment[]
+  assignedTasks            Task[]                @relation("TaskAssignee")
+  authoredNotes            Note[]
+  uploadedDocuments        Document[]
+  filedCalls               Call[]                @relation("CallFiledBy")
+  registeredDiscoveryFiles DiscoveryFile[]       @relation("DiscoveryFileRegisteredBy")
+  ranDiscoveryComparisons  DiscoveryComparison[] @relation("DiscoveryComparisonRunBy")
+  auditEvents              AuditEvent[]
 }
 
 /// A person or entity the firm represents. One Client can have multiple
@@ -262,11 +267,12 @@ model CalendarEvent {
   updatedAt DateTime          @updatedAt
 }
 
-/// One batch of discovery received on a Matter. File-level Bates numbering
-/// logic is not implemented yet (see docs/ROADMAP.md, Phase 4) — this and
-/// DiscoveryFile hold real records (production metadata, file listing,
-/// review status) so the Discovery tab can render an accurate picture;
-/// only the numbering/hashing *engine* is still a placeholder.
+/// One batch of discovery received on a Matter. `batesPrefix` is also used
+/// as the evidence-ID prefix for non-paginated files registered to it (see
+/// lib/discovery/bates.ts). `batesStart`/`batesEnd` are the production-wide
+/// Bates range, kept in sync with its files' individual ranges as PDFs are
+/// registered (lib/discovery/actions.ts) — they start null and are set once
+/// the first PDF is numbered.
 model DiscoveryProduction {
   id           String                @id @default(cuid())
   matterId     String
@@ -286,29 +292,45 @@ model DiscoveryProduction {
   comparisonsTo   DiscoveryComparison[] @relation("ComparisonToProduction")
 }
 
-/// One file within a DiscoveryProduction. `identifier` will eventually hold
-/// the assigned Bates number (PDFs) or consistent media ID (video/audio/
-/// photo) — for now it's just a plain field populated by seed data.
+/// One file within a DiscoveryProduction. `identifier` holds the assigned
+/// Bates range (PDFs, e.g. "ELLIS000001-ELLIS000004") or evidence ID
+/// (video/audio/photo/other, e.g. "ELLIS-0001") — see lib/discovery/bates.ts.
+/// `originalStorageKey` always points at the untouched original bytes;
+/// `stampedStorageKey` is set only for PDFs and points at a *separate*
+/// Bates-stamped derivative — the original is never modified in place (see
+/// docs/ARCHITECTURE.md's "Discovery management" section). Both keys are
+/// opaque to `lib/storage/DocumentStore`'s current local-disk
+/// implementation and will resolve the same way once that's swapped for a
+/// Dropbox-backed one.
 model DiscoveryFile {
-  id                  String              @id @default(cuid())
-  productionId        String
-  production          DiscoveryProduction @relation(fields: [productionId], references: [id], onDelete: Cascade)
-  originalFilename    String
-  identifier          String?
-  fileType            DiscoveryFileType
-  contentHash         String?
-  dropboxPathOriginal String?
-  dropboxPathNumbered String?
-  pageCount           Int?
-  createdAt           DateTime            @default(now())
+  id                 String              @id @default(cuid())
+  productionId       String
+  production         DiscoveryProduction @relation(fields: [productionId], references: [id], onDelete: Cascade)
+  originalFilename   String
+  identifier         String?
+  fileType           DiscoveryFileType
+  contentHash        String?
+  originalStorageKey String?
+  stampedStorageKey  String?
+  pageCount          Int?
+  batesStart         Int?
+  batesEnd           Int?
+  sizeBytes          Int?
+  mimeType           String?
+  registeredById     String?
+  registeredBy       User?               @relation("DiscoveryFileRegisteredBy", fields: [registeredById], references: [id], onDelete: SetNull)
+  registeredAt       DateTime?
+  createdAt          DateTime            @default(now())
 
   matches DiscoveryFileMatch[]
 }
 
-/// A production-to-production comparison run. In this milestone the result
-/// rows (DiscoveryFileMatch) are seeded by hand to demonstrate what the
-/// feature will look like — there is no real content-hash diffing yet (see
-/// docs/ROADMAP.md, Phase 4).
+/// A production-to-production comparison run — real as of the fifth
+/// session (see docs/ROADMAP.md): `lib/discovery/compare.ts` classifies
+/// each file by content hash and filename, and `lib/discovery/actions.ts`
+/// persists the result as DiscoveryFileMatch rows. Comparisons created
+/// before that session were seeded by hand and remain as illustrative
+/// historical data — `runById` is null for those.
 model DiscoveryComparison {
   id               String              @id @default(cuid())
   matterId         String
@@ -317,6 +339,8 @@ model DiscoveryComparison {
   fromProduction   DiscoveryProduction @relation("ComparisonFromProduction", fields: [fromProductionId], references: [id])
   toProductionId   String
   toProduction     DiscoveryProduction @relation("ComparisonToProduction", fields: [toProductionId], references: [id])
+  runById          String?
+  runBy            User?               @relation("DiscoveryComparisonRunBy", fields: [runById], references: [id], onDelete: SetNull)
   runAt            DateTime            @default(now())
 
   matches DiscoveryFileMatch[]
