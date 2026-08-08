@@ -1,0 +1,70 @@
+# --- Secrets & local environment ---
+.env
+.env.local
+.env.*.local
+.env.development
+.env.development.local
+.env.test
+.env.test.local
+.env.production
+.env.production.local
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials/
+
+# --- Node / JavaScript / TypeScript ---
+node_modules/
+.pnp
+.pnp.js
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# --- Next.js ---
+.next/
+out/
+build/
+dist/
+next-env.d.ts
+
+# --- Prisma ---
+# Do NOT ignore prisma/schema.prisma or prisma/migrations — they are source of truth.
+prisma/*.db
+prisma/dev.db*
+
+# --- Testing / coverage ---
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+# --- Editors / OS ---
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Logs ---
+*.log
+logs/
+
+# --- Misc local artifacts ---
+.turbo/
+.vercel/
+tmp/
+*.tsbuildinfo
+
+# --- Never commit real client/case data or exports ---
+# (Prisma migration SQL is source of truth and must NOT be ignored here —
+# see docs/ARCHITECTURE.md/CLAUDE.md section 4.3 — hence the negation.)
+*.sql
+!prisma/migrations/**/*.sql
+*.dump
+/uploads/
+/local-data/
