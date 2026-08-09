@@ -55,8 +55,18 @@ validation + audit logging on every write — see `docs/SECURITY.md`):
   role, not the stricter Client/Matter `ADMIN`/`ATTORNEY` rule above), and
   automatically show up in the Matter Overview's "Upcoming key dates" and
   the Dashboard's upcoming-dates widgets, which already read live data.
-- **Attaching an unfiled call to a matter** — persists `Call.matterId`,
-  survives a refresh.
+- **Manual Call logging, filing, and a firm-wide Communications view** —
+  Log a Call (`lib/matters/actions.ts#createCall`) persists a brand-new
+  Call, filed to a matter or left unfiled, from the Matter Calls tab, the
+  Matter Overview's "Log a Call" quick action, or the firm-wide
+  Communications page; attaching an already-existing unfiled call to a
+  matter (`attachCallToMatter`) still persists `Call.matterId` the same
+  way it always has. The sidebar's "Communications" item is now a real,
+  authorized, Calls-first aggregate view (`app/(dashboard)/communications`,
+  `lib/communications/queries.ts`) over those same `Call` rows — not a
+  second record. **No Vonage integration exists yet** — every Call is
+  manually logged or seeded; see "Who can see an unfiled call" below for
+  the conservative visibility rule unfiled calls get on that page.
 - **The audit Timeline** — reflects real `AuditEvent` rows produced by the
   writes above, not just seed data.
 - **Discovery/Bates engine** — creating a production, registering a file
@@ -122,6 +132,32 @@ conservative rule and wrote it down:
   `PARALEGAL`/`STAFF` as a UI convenience — the actual enforcement is
   server-side in every `/clients*` and `/matters/new`, `/matters/*/edit`
   page and Server Action, independent of what the sidebar shows.
+
+### Who can see an unfiled call
+
+`Call.matterId` is nullable to represent an unfiled call — one not yet
+attached to any matter (see `docs/DATA_MODEL.md`). Unlike every filed
+sub-resource, an unfiled call has no `MatterAssignment` to check access
+against, and `Call` carries no "logged by" column of its own (only
+`filedById`/`filedAt`, which stay null until it's filed). Rather than
+invent a new scoping concept or show every unfiled call's phone
+numbers/notes to every authenticated user firm-wide, the firm-wide
+Communications page reuses the rule directly above:
+
+- **Only `ADMIN` and `ATTORNEY` can see unfiled calls**, on the
+  Communications page (`lib/communications/queries.ts#getFirmWideCalls`) —
+  the same `canManageClientsAndMatters` gate, for the same "no assignment
+  to check against" reason.
+- Filed calls are unaffected: everyone sees calls on matters they're
+  assigned to, same as Notes/Tasks/Deadlines/Documents.
+- **Known limitation:** a `PARALEGAL`/`STAFF` user who logs an unfiled
+  call themselves can't see it again on this page — not even their own —
+  to check on it or file it later. They'd need an `ADMIN`/`ATTORNEY` to do
+  that, or file it directly to a matter at creation time instead of
+  leaving it unfiled. The existing per-matter "attach an unfiled call to
+  this matter" workflow (`components/shared/attach-call-list.tsx`,
+  `getUnfiledCalls`) is unrelated and unchanged — it has no role gate of
+  its own, and was preserved as-is rather than modified.
 
 See `docs/SECURITY.md`'s Authorization section for the full writeup.
 
@@ -276,24 +312,24 @@ this password anywhere real** — see `docs/SECURITY.md`.
   production integration: no firm-owned Dropbox app, no per-matter folder
   convention, no encrypted-at-rest token storage — see
   `docs/ARCHITECTURE.md`'s "Documents & Dropbox" section for the full
-  list; calls are manually-seeded/attached rows, not pulled from Vonage.
+  list; calls are manually-logged/seeded/attached rows, not pulled from
+  Vonage — see "Current status" above for what's real about Call logging.
 - **The Matter Overview's "Quick actions"** — Add Note, New Task, New
-  Deadline, and Upload Document all link to the tab with the real form;
-  "Log a Call" (logging a *new* call, as opposed to attaching an
-  already-existing unfiled one) still has no write path — no Vonage
-  integration exists.
+  Deadline, Upload Document, and (as of the fourteenth session) Log a Call
+  all link to the tab with the real form. None are mocked anymore.
 - **Discovery productions/comparisons seeded before the Bates engine
   existed** (see `prisma/seed.ts`) remain in the database as illustrative
   historical data with no real stored files behind them — anything created
   through the Discovery tab's UI is real.
-- **Sidebar items other than Dashboard/Matters/Clients/Tasks/Calendar**
-  (Discovery, Communications, Reports) are shown but disabled ("Soon") —
+- **Sidebar items other than Dashboard/Matters/Clients/Tasks/Calendar/
+  Communications** (Discovery, Reports) are shown but disabled ("Soon") —
   present for layout/orientation, not yet functional as their own
   firm-wide sections (Discovery exists per-matter, under a Matter's tabs).
   Tasks and Calendar are real firm-wide aggregate views as of the
-  thirteenth session (see "Current status" above). Clients is real but
-  shown as "Restricted" for `PARALEGAL`/`STAFF` accounts (see "Who can
-  create/edit a Client or Matter" above).
+  thirteenth session, and Communications as of the fourteenth (see
+  "Current status" above). Clients is real but shown as "Restricted" for
+  `PARALEGAL`/`STAFF` accounts (see "Who can create/edit a Client or
+  Matter" above).
 - **Authentication is real, but incomplete for production use:** no MFA,
   no rate-limiting/lockout on failed logins, no forced sign-out when a
   user's role or assignments change mid-session, no HTTPS enforcement, and
@@ -303,11 +339,11 @@ this password anywhere real** — see `docs/SECURITY.md`.
 - **Audit logging covers every write listed in "Current status" above**
   (Client/Matter create/update, MatterAssignment add/remove, Deadline
   create/update/status-change, CalendarEvent create/update, Document
-  upload/metadata-edit, and Note/Task update all included, plus file
-  downloads — Discovery and general Documents both — logged as `EXPORT`),
-  but login/logout and permission-denial events aren't logged yet, and
-  neither are the not-yet-built writes (Note/Task deletion, etc.) — see
-  `docs/SECURITY.md`.
+  upload/metadata-edit, Note/Task update, and Call create/attach all
+  included, plus file downloads — Discovery and general Documents both —
+  logged as `EXPORT`), but login/logout and permission-denial events
+  aren't logged yet, and neither are the not-yet-built writes (Note/Task
+  deletion, etc.) — see `docs/SECURITY.md`.
 
 ### Known limitations to address in the next phase
 

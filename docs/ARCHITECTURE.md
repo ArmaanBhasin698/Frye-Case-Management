@@ -150,14 +150,30 @@ browser/integration testing until that happens.
 
 ## Calls & Vonage
 
-Similarly deferred, but planned for behind an interface
-(e.g. `lib/telephony/CallProvider`) so that, when built, staff can:
+The actual Vonage API integration is still deferred, but as of the
+fourteenth session (see `docs/ROADMAP.md`) the internal side of this is
+real: manually logging a Call (`lib/matters/actions.ts#createCall`),
+filing an already-existing unfiled one to a matter
+(`attachCallToMatter`), and a firm-wide Communications aggregate view
+(`app/(dashboard)/communications`, `lib/communications/queries.ts`) all
+work against the same `Call` model Vonage would eventually feed. Nothing
+about these write/read paths is Vonage-specific — a future sync only ever
+needs to call `prisma.call.create` (or an equivalent insert) the same way
+`createCall` already does, and every existing UI (Matter Calls tab,
+Communications) reads live from Postgres, so none of it needs to change
+shape when that integration lands.
 
-- View/search call and SMS activity.
-- Flag a call and attach it to the correct client/matter.
-- Add notes to a call.
+Still planned for behind an interface (e.g. `lib/telephony/CallProvider`,
+`lib/telephony/` currently only scaffolding) so that, when built, staff
+can:
+
+- View/search call and SMS activity pulled automatically from Vonage,
+  rather than typed in by hand.
+- Flag a call and attach it to the correct client/matter (the flagging
+  and attaching mechanics already exist — `Call.flagged`,
+  `attachCallToMatter` — only the automatic ingestion is missing).
 - Save the recording into the matter's Dropbox structure and create a
-  corresponding `Call` record in Postgres.
+  corresponding `Call` record in Postgres automatically.
 
 ## Discovery management (core differentiator)
 

@@ -12,7 +12,7 @@ const { requireCurrentUserMock, hasMatterAccessMock, canEditMatterMock, prismaMo
     prismaMock: {
       note: { create: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
       task: { create: vi.fn(), updateMany: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
-      call: { updateMany: vi.fn() },
+      call: { updateMany: vi.fn(), create: vi.fn() },
       client: { findUnique: vi.fn() },
       user: { findMany: vi.fn(), findUnique: vi.fn() },
       matter: { create: vi.fn(), update: vi.fn(), findUnique: vi.fn() },
@@ -36,6 +36,7 @@ const {
   addMatterAssignment,
   attachCallToMatter,
   createCalendarEvent,
+  createCall,
   createDeadline,
   createMatter,
   createNote,
@@ -456,6 +457,126 @@ describe("updateTaskStatus", () => {
         metadata: { status: "DONE" },
       },
     });
+  });
+});
+
+describe("createCall", () => {
+  const validFields = {
+    matterId,
+    direction: "OUTBOUND",
+    contactName: "Jordan Ellis",
+    fromNumber: "555-0100",
+    toNumber: "555-0142",
+    occurredAt: "2026-08-09T10:00",
+    durationSeconds: "180",
+    notes: "Checked in about discovery status — client called back within the hour.",
+  };
+
+  it("rejects an invalid direction before touching the database", async () => {
+    const result = await createCall({ error: null }, formData({ ...validFields, direction: "SIDEWAYS" }));
+    expect(result?.error).toBeTruthy();
+    expect(prismaMock.call.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a malformed phone number", async () => {
+    const result = await createCall({ error: null }, formData({ ...validFields, fromNumber: "not a number!" }));
+    expect(result?.error).toBeTruthy();
+    expect(prismaMock.call.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a negative duration", async () => {
+    const result = await createCall({ error: null }, formData({ ...validFields, durationSeconds: "-5" }));
+    expect(result?.error).toBeTruthy();
+    expect(prismaMock.call.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid occurredAt value", async () => {
+    const result = await createCall({ error: null }, formData({ ...validFields, occurredAt: "not-a-date" }));
+    expect(result?.error).toBeTruthy();
+    expect(prismaMock.call.create).not.toHaveBeenCalled();
+  });
+
+  it("denies filing to a matter the user lacks access to, with a generic error", async () => {
+    hasMatterAccessMock.mockResolvedValue(false);
+    const result = await createCall({ error: null }, formData(validFields));
+    expect(result?.error).toBe("Not found or access denied.");
+    expect(prismaMock.call.create).not.toHaveBeenCalled();
+    expect(prismaMock.auditEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("never checks matter access for an unfiled call (no matterId submitted)", async () => {
+    prismaMock.call.create.mockResolvedValue({ id: "call-new" });
+    const fieldsWithNoMatter: Record<string, string> = { ...validFields };
+    delete fieldsWithNoMatter.matterId;
+    const result = await createCall({ error: null }, formData(fieldsWithNoMatter));
+    expect(result.error).toBeNull();
+    expect(hasMatterAccessMock).not.toHaveBeenCalled();
+    expect(prismaMock.call.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        matterId: null,
+        filedById: null,
+        filedAt: null,
+      }),
+    });
+  });
+
+  it("creates a filed call, setting filedById/filedAt, and writes an audit event", async () => {
+    prismaMock.call.create.mockResolvedValue({ id: "call-new" });
+    const result = await createCall({ error: null }, formData(validFields));
+    expect(result.error).toBeNull();
+    expect(prismaMock.call.create).toHaveBeenCalledWith({
+      data: {
+        matterId,
+        contactName: "Jordan Ellis",
+        direction: "OUTBOUND",
+        fromNumber: "555-0100",
+        toNumber: "555-0142",
+        occurredAt: new Date("2026-08-09T10:00"),
+        durationSeconds: 180,
+        notes: validFields.notes,
+        flagged: false,
+        filedById: user.id,
+        filedAt: expect.any(Date),
+      },
+    });
+    expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
+      data: {
+        actorId: user.id,
+        action: "CREATE",
+        entityType: "Call",
+        entityId: "call-new",
+        matterId,
+        metadata: { direction: "OUTBOUND", filed: true, flagged: false, notesProvided: true },
+      },
+    });
+  });
+
+  it("never copies the notes text into the audit event", async () => {
+    prismaMock.call.create.mockResolvedValue({ id: "call-new" });
+    await createCall({ error: null }, formData(validFields));
+    const auditCall = prismaMock.auditEvent.create.mock.calls[0]?.[0];
+    expect(JSON.stringify(auditCall)).not.toContain("discovery status");
+    expect(JSON.stringify(auditCall)).not.toContain("555-0100");
+  });
+
+  it("records notesProvided: false when no notes are given", async () => {
+    prismaMock.call.create.mockResolvedValue({ id: "call-new" });
+    const fieldsWithNoNotes: Record<string, string> = { ...validFields };
+    delete fieldsWithNoNotes.notes;
+    await createCall({ error: null }, formData(fieldsWithNoNotes));
+    expect(prismaMock.auditEvent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ metadata: expect.objectContaining({ notesProvided: false }) }),
+      }),
+    );
+  });
+
+  it("reads the flagged checkbox as true only when checked", async () => {
+    prismaMock.call.create.mockResolvedValue({ id: "call-new" });
+    await createCall({ error: null }, formData({ ...validFields, flagged: "on" }));
+    expect(prismaMock.call.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ flagged: true }) }),
+    );
   });
 });
 

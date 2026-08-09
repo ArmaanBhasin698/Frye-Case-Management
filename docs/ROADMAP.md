@@ -757,6 +757,126 @@ firm-wide Reports section (Phase 7, below — this pass only covers Tasks
 and Calendar), and any Dropbox/Vonage/Loop/MyCase/QuickBooks integration
 work.
 
+## Milestone — Manual Call logging & firm-wide Communications (fourteenth session)
+
+Closes Phase 5's long-standing gap: logging a *brand-new* Call (not just
+attaching an already-existing unfiled one) is now real, and the sidebar's
+long-disabled "Communications" item is now a real, authorized, Calls-first
+aggregate view — the same pattern the thirteenth session's firm-wide
+Tasks/Calendar established for their entities. This is explicitly **not**
+the Vonage integration — no telephony API is called, no credentials were
+added — it's the internal write/read path a future Vonage sync should feed
+instead of a human filling out a form, per this session's own scope. No
+Prisma migration was needed: every field a manually logged call needs
+(`direction`, `fromNumber`, `toNumber`, `occurredAt`, `durationSeconds`,
+`notes`, `flagged`, `matterId`) already existed on `Call` — see
+`docs/DATA_MODEL.md`.
+
+- **Log a Call** (`lib/matters/actions.ts#createCall`,
+  `components/shared/log-call-form.tsx`) — a real form usable three places:
+  the Matter Calls tab (matter-scoped, hidden `matterId`), the Matter
+  Overview's "Log a Call" quick action (the last of that row's mocked
+  actions, now just a `Link` to the real Calls tab like every other quick
+  action), and the firm-wide Communications page (a matter picker,
+  including an explicit "Unfiled (file later)" option). Submitting a
+  `matterId` creates the call already filed (`filedById`/`filedAt` set,
+  same meaning `attachCallToMatter` already gives those columns);
+  submitting none creates it unfiled, exactly like a call a future Vonage
+  sync would drop into the unfiled pool for later review.
+- **Authorization**: no stricter Client/Matter-management role gate —
+  logging a call is treated the same as Notes/Tasks/Calls always have been
+  (any assigned role, via `hasMatterAccess`), not the stricter
+  `ADMIN`/`ATTORNEY` rule that gates originating a Client/Matter. A
+  submitted `matterId` is independently re-verified against
+  `hasMatterAccess` regardless of what the form's picker offered — a
+  forged, inaccessible `matterId` fails with the same generic
+  "Not found or access denied." every other write action uses, rather than
+  silently creating the call unfiled instead (that would hide a real
+  authorization denial behind an apparently-successful submission).
+- **Audit**: every manually logged call produces a `CREATE` `AuditEvent`
+  with restrained metadata (`direction`, `filed`, `flagged`,
+  `notesProvided`) — never the notes text itself (same restraint
+  `Note.body`/`Task.description`/`Client.notes` already get) and never the
+  raw phone numbers either, since those alone can identify a client or
+  witness even without a matter attached. `attachCallToMatter`'s existing
+  `UPDATE` audit behavior for filing an already-existing unfiled call is
+  unchanged.
+- **`lib/communications/queries.ts#getFirmWideCalls`** — the query behind
+  `app/(dashboard)/communications`. Filed calls (`matterId` set) are scoped
+  with `matterScopeFilterFor` (`lib/auth/access.ts`), the exact helper the
+  thirteenth session's Tasks/Calendar queries already use. **Unfiled calls
+  are a separate, deliberately conservative decision**: `Call` has no
+  "logged by" column of its own (only `filedById`/`filedAt`, which stay
+  null until filed — see `docs/DATA_MODEL.md`), so there's no per-row
+  ownership to scope by. Rather than invent a new scoping concept or show
+  every unfiled call's phone numbers/notes to every authenticated user
+  firm-wide, this reuses the existing `canManageClientsAndMatters`
+  (`ADMIN`/`ATTORNEY`) gate already documented for "no assignment to check
+  against" scenarios (originating a Client/Matter, ninth session) — see
+  `docs/SECURITY.md`'s Authorization section for the full write-up.
+  **Known limitation**: a `PARALEGAL`/`STAFF` user who logs an unfiled call
+  themselves cannot see it again on this page to check on it later or file
+  it themselves — they'd need an `ADMIN`/`ATTORNEY` to do that, or file it
+  directly to a matter at creation time instead of leaving it unfiled. The
+  existing per-matter "attach an unfiled call" workflow
+  (`components/shared/attach-call-list.tsx`, `getUnfiledCalls`) is
+  unchanged by this session and still has no role gate of its own — it was
+  explicitly preserved, not modified, per this session's scope.
+- The Communications page supports filtering (direction, matter, filed
+  state — the last one only rendered for `ADMIN`/`ATTORNEY`, who are the
+  only roles it can ever mean anything for — and recent/oldest sort), same
+  URL-driven, server-scoped-before-render convention as the firm-wide
+  Tasks/Calendar filter bars.
+- Sidebar: `components/shared/app-shell.tsx`'s "Communications" item is no
+  longer `disabled` — same active-state/navigation styling as
+  Dashboard/Matters/Clients/Tasks/Calendar, no shell redesign. Discovery
+  and Reports remain disabled/"Soon," unchanged.
+- 27 new focused tests (`tests/matters/actions.test.ts`'s `createCall`
+  block, `tests/communications/queries.test.ts`) covering field validation
+  (direction, phone-number shape, nonnegative duration, valid
+  date/time), matter-access authorization and its generic denial, unfiled
+  creation skipping the matter-access check entirely, audit-event content
+  restraint (a `JSON.stringify` assertion that neither the notes text nor
+  a raw phone number appears anywhere in the audit payload), the
+  flagged-checkbox read, ADMIN/ATTORNEY/PARALEGAL/STAFF visibility scoping
+  for `getFirmWideCalls` (including a simulated-Prisma-filtering case that
+  a `STAFF` caller's result never contains an unfiled row or another
+  matter's confidential detail), filter/sort combination, and empty-result
+  handling.
+- Browser-verified against the local dev server (fictional seed data,
+  `STORAGE_PROVIDER=local`) using the real Auth.js credentials flow via
+  `curl` (session cookie from `/api/auth/callback/credentials`, no browser
+  automation tool was available in this pass): unauthenticated access to
+  `/communications` redirects to `/login`; `alex.rivera` (`ADMIN`) sees
+  both filed and unfiled calls there, including the "Filed state" filter;
+  `taylor.brooks` (`STAFF`, assigned only to State v. Patel) sees calls on
+  only that matter, sees zero unfiled calls and the explanatory limitation
+  text instead, and never sees the "Filed state" filter at all; a direct
+  request for a matter Taylor isn't assigned to still 404s; Taylor's own
+  matter's Calls tab renders a working "Log a Call" button and her Matter
+  Overview's quick action links to it instead of showing mocked text; and
+  Notes/Tasks/Documents/Discovery/Deadlines & Calendar/firm-wide
+  Tasks/Calendar/Clients/Matters/Dashboard/Timeline all continued to render
+  for both accounts afterward. **Not exercised in this pass**: an actual
+  click-through submission of the "Log a Call" form itself — it's a
+  client-toggled form (like every other "New X" form in this app) that
+  doesn't exist in server-rendered HTML until JS opens it, so it can't be
+  driven by `curl` alone, and no browser-automation tool (Playwright,
+  `chromium-cli`) was available/installed in this pass. The creation
+  write path itself is covered by the automated tests described above;
+  a real click-through is recommended before treating this as fully
+  verified end-to-end.
+
+**Deliberately not done here:** the Vonage integration itself (no API
+call, no credentials, no SDK — see "Vonage future-proofing" in this
+session's own instructions), a generic `Communication` entity for
+email/SMS/letters (still just `Call`, per Phase 5's first bullet below),
+toggling `Call.flagged` from the Communications page itself (only settable
+at creation time), and a `loggedById`/"logged by" column on `Call` (the
+audit trail already records who logged every call; adding a column was
+judged unnecessary for this pass's conservative unfiled-visibility rule —
+see the known limitation above).
+
 ## Phase 4 — Discovery management (core differentiator)
 
 - [x] `DiscoveryProduction` and `DiscoveryFile` create. *Real as of the
@@ -797,14 +917,19 @@ storage stand-in.
       `Communication` entity from `docs/DATA_MODEL.md`; add it if/when
       email/SMS/letter logging is needed.
 - [x] `Call` entity and UI for manually logging/filing a call to a matter,
-      as a stand-in for the eventual Vonage sync. *`Call` model and a
-      Calls tab shipped; attaching an unfiled call to a matter now persists
-      (`attachCallToMatter`, fifth-session milestone above). There's still
-      no UI to log a brand-new call (only to attach an existing unfiled
-      one) or to toggle the `flagged` field.*
+      as a stand-in for the eventual Vonage sync. *Real as of the
+      fourteenth session (see milestone above): `createCall` logs a
+      brand-new call (filed or unfiled), and `attachCallToMatter` (fifth
+      session) still files an already-existing unfiled one. A firm-wide
+      Communications page (`app/(dashboard)/communications`) now
+      aggregates Calls across matters too — see the milestone above for
+      its conservative unfiled-call visibility rule. There's still no UI
+      to toggle `flagged` after creation.*
 
 **Exit criteria:** the data model and UI for communications are proven out
-manually before any Vonage API work begins.
+manually before any Vonage API work begins. **Met as of the fourteenth
+session** for manual logging, filing, and firm-wide viewing — the actual
+Vonage sync remains Phase 6 below.
 
 ## Phase 6 — Integrations (Dropbox, Vonage)
 

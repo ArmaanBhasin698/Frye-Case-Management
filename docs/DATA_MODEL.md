@@ -152,15 +152,29 @@ the dedicated Call record).
   (`inbound` | `outbound`), `occurredAt`, `summary`, `createdBy` (FK → User),
   `createdAt`.
 
-### Call
+### Call — real manual logging as of the fourteenth session
 Phone call — designed around future Vonage sync.
-- `id`, `matterId` (FK, nullable until filed), `contactId` (FK, nullable),
-  `vonageCallId` (nullable until integration exists), `direction`,
-  `fromNumber`, `toNumber`, `occurredAt`, `durationSeconds`,
+- `id`, `matterId` (FK, nullable until filed), `contactName` (free text,
+  nullable — no `Contact` entity exists yet, see "Notes on design
+  choices" below), `vonageCallId` (nullable until integration exists),
+  `direction`, `fromNumber`, `toNumber`, `occurredAt`, `durationSeconds`,
   `recordingDropboxPath` (nullable), `flagged` (boolean), `notes`,
   `filedBy` (FK → User, nullable), `filedAt` (nullable), `createdAt`.
 - Unfiled calls (no `matterId`) represent the "search/flag/attach to a
   matter" workflow described in the project goals.
+- **Implementation note:** manually logging a brand-new Call (filed or
+  unfiled) is real — `lib/matters/actions.ts#createCall`, used from the
+  Matter Calls tab, the Matter Overview's "Log a Call" quick action, and
+  the firm-wide Communications page (`app/(dashboard)/communications`).
+  Filing an already-existing unfiled call to a matter
+  (`attachCallToMatter`) predates this and is unchanged. No column was
+  added for "who logged this call" when it's created unfiled — the audit
+  trail (`AuditEvent.actorId` on the `CREATE` event) already records that,
+  and adding one wasn't judged essential just to widen who can *see* an
+  unfiled call later (see `docs/SECURITY.md`'s Authorization section for
+  the resulting conservative visibility rule). `vonageCallId` and
+  `recordingDropboxPath` stay null for every manually logged call, same
+  as before — only a real telephony sync would ever populate those.
 
 ### DiscoveryProduction
 One batch of discovery received on a matter.
