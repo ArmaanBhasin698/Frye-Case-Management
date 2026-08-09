@@ -10,8 +10,8 @@ const { requireCurrentUserMock, hasMatterAccessMock, canEditMatterMock, prismaMo
       throw new Error("NEXT_REDIRECT");
     }),
     prismaMock: {
-      note: { create: vi.fn() },
-      task: { create: vi.fn(), updateMany: vi.fn() },
+      note: { create: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
+      task: { create: vi.fn(), updateMany: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
       call: { updateMany: vi.fn() },
       client: { findUnique: vi.fn() },
       user: { findMany: vi.fn(), findUnique: vi.fn() },
@@ -45,6 +45,8 @@ const {
   updateCalendarEvent,
   updateDeadline,
   updateMatter,
+  updateNote,
+  updateTask,
   updateTaskStatus,
 } = await import("@/lib/matters/actions");
 
@@ -96,6 +98,87 @@ describe("createNote", () => {
   });
 });
 
+describe("updateNote", () => {
+  const noteId = "note-1";
+  const validFields = { matterId, noteId, body: "Client confirmed the amended timeline." };
+
+  beforeEach(() => {
+    prismaMock.note.findFirst.mockResolvedValue({ body: "Original note text.", pinned: false });
+  });
+
+  it("rejects an empty body before touching the database", async () => {
+    const result = await updateNote({ error: null }, formData({ ...validFields, body: "   " }));
+    expect(result?.error).toBeTruthy();
+    expect(prismaMock.note.update).not.toHaveBeenCalled();
+  });
+
+  it("denies the edit when the user lacks matter access", async () => {
+    hasMatterAccessMock.mockResolvedValue(false);
+    const result = await updateNote({ error: null }, formData(validFields));
+    expect(result?.error).toBe("Not found or access denied.");
+    expect(prismaMock.note.update).not.toHaveBeenCalled();
+  });
+
+  it("scopes the lookup to the given matter, denying a cross-matter note id", async () => {
+    prismaMock.note.findFirst.mockResolvedValue(null);
+    const result = await updateNote({ error: null }, formData(validFields));
+    expect(result?.error).toBe("Not found or access denied.");
+    expect(prismaMock.note.findFirst).toHaveBeenCalledWith({
+      where: { id: noteId, matterId },
+      select: { body: true, pinned: true },
+    });
+    expect(prismaMock.note.update).not.toHaveBeenCalled();
+  });
+
+  it("updates the note body/pinned and preserves author/createdAt (never touched)", async () => {
+    prismaMock.note.update.mockResolvedValue({});
+    const result = await updateNote({ error: null }, formData({ ...validFields, pinned: "on" }));
+    expect(result.error).toBeNull();
+    expect(prismaMock.note.update).toHaveBeenCalledWith({
+      where: { id: noteId },
+      data: { body: "Client confirmed the amended timeline.", pinned: true },
+    });
+  });
+
+  it("records only that the note content changed, never the before/after text, in the audit event", async () => {
+    prismaMock.note.update.mockResolvedValue({});
+    await updateNote({ error: null }, formData(validFields));
+    expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "UPDATE",
+        entityType: "Note",
+        entityId: noteId,
+        matterId,
+        metadata: { contentChanged: true },
+      }),
+    });
+    const call = prismaMock.auditEvent.create.mock.calls.at(0)?.[0];
+    expect(JSON.stringify(call)).not.toContain("Original note text.");
+    expect(JSON.stringify(call)).not.toContain("Client confirmed the amended timeline.");
+  });
+
+  it("records a pinned change via the normal before/after diff (not sensitive content)", async () => {
+    prismaMock.note.findFirst.mockResolvedValue({ body: "Original note text.", pinned: false });
+    prismaMock.note.update.mockResolvedValue({});
+    await updateNote(
+      { error: null },
+      formData({ matterId, noteId, body: "Original note text.", pinned: "on" }),
+    );
+    expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        metadata: { changed: { pinned: { before: false, after: true } } },
+      }),
+    });
+  });
+
+  it("writes no audit event for a true no-op edit", async () => {
+    prismaMock.note.findFirst.mockResolvedValue({ body: "Same text.", pinned: false });
+    prismaMock.note.update.mockResolvedValue({});
+    await updateNote({ error: null }, formData({ matterId, noteId, body: "Same text." }));
+    expect(prismaMock.auditEvent.create).not.toHaveBeenCalled();
+  });
+});
+
 describe("createTask", () => {
   it("rejects a missing title before touching the database", async () => {
     const result = await createTask({ error: null }, formData({ matterId, title: "" }));
@@ -128,6 +211,214 @@ describe("createTask", () => {
     });
     expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
       data: { actorId: user.id, action: "CREATE", entityType: "Task", entityId: "task-1", matterId },
+    });
+  });
+});
+
+describe("updateTask", () => {
+  const taskId = "task-1";
+  const validFields = {
+    matterId,
+    taskId,
+    title: "Draft motion to suppress (revised)",
+    priority: "HIGH",
+    status: "IN_PROGRESS",
+  };
+
+  beforeEach(() => {
+    prismaMock.task.findFirst.mockResolvedValue({
+      title: "Draft motion to suppress",
+      description: null,
+      dueDate: null,
+      priority: "NORMAL",
+      status: "OPEN",
+      assignedToId: null,
+    });
+  });
+
+  it("rejects a missing title before touching the database", async () => {
+    const result = await updateTask({ error: null }, formData({ ...validFields, title: "" }));
+    expect(result?.error).toBeTruthy();
+    expect(prismaMock.task.update).not.toHaveBeenCalled();
+  });
+
+  it("denies the edit when the user lacks matter access", async () => {
+    hasMatterAccessMock.mockResolvedValue(false);
+    const result = await updateTask({ error: null }, formData(validFields));
+    expect(result?.error).toBe("Not found or access denied.");
+    expect(prismaMock.task.update).not.toHaveBeenCalled();
+  });
+
+  it("scopes the lookup to the given matter, denying a cross-matter task id", async () => {
+    prismaMock.task.findFirst.mockResolvedValue(null);
+    const result = await updateTask({ error: null }, formData(validFields));
+    expect(result?.error).toBe("Not found or access denied.");
+    expect(prismaMock.task.findFirst).toHaveBeenCalledWith({
+      where: { id: taskId, matterId },
+      select: {
+        title: true,
+        description: true,
+        dueDate: true,
+        priority: true,
+        status: true,
+        assignedToId: true,
+      },
+    });
+    expect(prismaMock.task.update).not.toHaveBeenCalled();
+  });
+
+  it("updates the task and writes an audit event with a before/after diff", async () => {
+    prismaMock.task.update.mockResolvedValue({});
+    const result = await updateTask({ error: null }, formData(validFields));
+    expect(result.error).toBeNull();
+    expect(prismaMock.task.update).toHaveBeenCalledWith({
+      where: { id: taskId },
+      data: {
+        title: "Draft motion to suppress (revised)",
+        description: null,
+        dueDate: null,
+        priority: "HIGH",
+        status: "IN_PROGRESS",
+        assignedToId: null,
+      },
+    });
+    expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "UPDATE",
+        entityType: "Task",
+        entityId: taskId,
+        matterId,
+        metadata: {
+          changed: expect.objectContaining({
+            title: { before: "Draft motion to suppress", after: "Draft motion to suppress (revised)" },
+            priority: { before: "NORMAL", after: "HIGH" },
+            status: { before: "OPEN", after: "IN_PROGRESS" },
+          }),
+        },
+      }),
+    });
+  });
+
+  it("writes the same status column updateTaskStatus (Kanban) does, so a form edit and a drag never disagree", async () => {
+    prismaMock.task.update.mockResolvedValue({});
+    await updateTask({ error: null }, formData({ ...validFields, status: "DONE" }));
+    expect(prismaMock.task.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "DONE" }) }),
+    );
+  });
+
+  it("records only that the description changed, never its content, in the audit event", async () => {
+    prismaMock.task.findFirst.mockResolvedValue({
+      title: "Draft motion to suppress",
+      description: "Client disclosed a prior unrelated arrest — do not raise unprompted.",
+      dueDate: null,
+      priority: "NORMAL",
+      status: "OPEN",
+      assignedToId: null,
+    });
+    prismaMock.task.update.mockResolvedValue({});
+    await updateTask(
+      { error: null },
+      formData({ ...validFields, description: "Updated strategy notes for the motion." }),
+    );
+    const call = prismaMock.auditEvent.create.mock.calls.at(0)?.[0];
+    expect(call.data.metadata.descriptionChanged).toBe(true);
+    expect(JSON.stringify(call)).not.toContain("prior unrelated arrest");
+    expect(JSON.stringify(call)).not.toContain("Updated strategy notes");
+  });
+
+  it("writes no audit event for a true no-op edit", async () => {
+    prismaMock.task.findFirst.mockResolvedValue({
+      title: "Same title",
+      description: null,
+      dueDate: null,
+      priority: "NORMAL",
+      status: "OPEN",
+      assignedToId: null,
+    });
+    prismaMock.task.update.mockResolvedValue({});
+    await updateTask(
+      { error: null },
+      formData({ matterId, taskId, title: "Same title", priority: "NORMAL", status: "OPEN" }),
+    );
+    expect(prismaMock.auditEvent.create).not.toHaveBeenCalled();
+  });
+
+  describe("assignee validation", () => {
+    const assigneeId = "user-assignee";
+
+    it("rejects an assignee that doesn't exist or isn't active", async () => {
+      prismaMock.user.findUnique.mockResolvedValue(null);
+      const result = await updateTask(
+        { error: null },
+        formData({ ...validFields, assignedToId: assigneeId }),
+      );
+      expect(result.error).toBe("Selected assignee is invalid.");
+      expect(prismaMock.task.update).not.toHaveBeenCalled();
+    });
+
+    it("rejects an inactive assignee even if the id is otherwise valid", async () => {
+      prismaMock.user.findUnique.mockResolvedValue({ id: assigneeId, role: "STAFF", active: false });
+      const result = await updateTask(
+        { error: null },
+        formData({ ...validFields, assignedToId: assigneeId }),
+      );
+      expect(result.error).toBe("Selected assignee is invalid.");
+      expect(prismaMock.task.update).not.toHaveBeenCalled();
+    });
+
+    it("rejects an active user who has no access to this matter (not assigned, not admin) — a forged assignedToId can't assign an outsider", async () => {
+      prismaMock.user.findUnique.mockResolvedValue({ id: assigneeId, role: "STAFF", active: true });
+      // The caller's own matter access (checked first) succeeds; the
+      // candidate assignee's matter access (checked second, against the
+      // *candidate's* id/role) fails — hasMatterAccess is called with two
+      // different user objects in the same request.
+      hasMatterAccessMock.mockImplementation(async (candidate: { id: string }) =>
+        candidate.id === user.id,
+      );
+      const result = await updateTask(
+        { error: null },
+        formData({ ...validFields, assignedToId: assigneeId }),
+      );
+      expect(result.error).toBe("Selected assignee does not have access to this matter.");
+      expect(prismaMock.task.update).not.toHaveBeenCalled();
+    });
+
+    it("allows an active user who is genuinely assigned to the matter", async () => {
+      prismaMock.user.findUnique.mockResolvedValue({ id: assigneeId, role: "STAFF", active: true });
+      hasMatterAccessMock.mockResolvedValue(true);
+      prismaMock.task.update.mockResolvedValue({});
+      const result = await updateTask(
+        { error: null },
+        formData({ ...validFields, assignedToId: assigneeId }),
+      );
+      expect(result.error).toBeNull();
+      expect(prismaMock.task.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ assignedToId: assigneeId }) }),
+      );
+    });
+
+    it("allows an ADMIN assignee regardless of matter assignment", async () => {
+      prismaMock.user.findUnique.mockResolvedValue({ id: assigneeId, role: "ADMIN", active: true });
+      hasMatterAccessMock.mockImplementation(async (candidate: { id: string; role: string }) =>
+        candidate.id === user.id || candidate.role === "ADMIN",
+      );
+      prismaMock.task.update.mockResolvedValue({});
+      const result = await updateTask(
+        { error: null },
+        formData({ ...validFields, assignedToId: assigneeId }),
+      );
+      expect(result.error).toBeNull();
+    });
+
+    it("allows clearing an assignee (empty selection) without any user lookup", async () => {
+      prismaMock.task.update.mockResolvedValue({});
+      const result = await updateTask({ error: null }, formData({ ...validFields, assignedToId: "" }));
+      expect(result.error).toBeNull();
+      expect(prismaMock.user.findUnique).not.toHaveBeenCalled();
+      expect(prismaMock.task.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ assignedToId: null }) }),
+      );
     });
   });
 });

@@ -39,9 +39,14 @@ validation + audit logging on every write — see `docs/SECURITY.md`):
   Matter's assignments from its Edit page all persist to Postgres.
   Restricted to `ADMIN`/`ATTORNEY` — see "Who can create/edit a Client or
   Matter" below for why and `docs/SECURITY.md` for the full rule.
-- **Notes, tasks, and task status** — Add Note and New Task persist to
-  Postgres; the Kanban board's drag-and-drop persists a task's status and
-  survives a refresh (optimistic UI, reverts if the write fails).
+- **Notes, tasks, and task status** — Add Note/Edit Note and New Task/Edit
+  Task all persist to Postgres; the Kanban board's drag-and-drop persists a
+  task's status and survives a refresh (optimistic UI, reverts if the
+  write fails), and stays consistent with status changes made through the
+  edit form since both write the same column. Editing a Task's assignee is
+  restricted server-side to an active user who is either assigned to that
+  matter or an `ADMIN` — see `docs/SECURITY.md`'s "Authorization" section
+  for the full rule.
 - **Deadlines and Calendar Events** — New Deadline, Edit Deadline, and a
   Mark complete/incomplete toggle (`Deadline.satisfied`/`satisfiedAt`) all
   persist; New Event and Edit Event persist too (end time is validated to
@@ -246,9 +251,10 @@ this password anywhere real** — see `docs/SECURITY.md`.
   the existing architecture has no defined safe archival/deactivation
   pattern to build it on yet (a closed `Matter` just gets `status: CLOSED`,
   which already existed).
-- **No Note/Task edit or delete.** Deadline and CalendarEvent create/edit
-  are real as of the tenth session (see "Current status" above); their
-  *deletion* wasn't built, same reasoning as Client/Matter above.
+- **No Note/Task deletion.** Create and edit are real (Note edit as of the
+  twelfth session, Task edit as of the twelfth session — see "Current
+  status" above); deletion wasn't built, same reasoning as Client/Matter
+  above.
 - **No Document *deletion*.** Upload and metadata edit are real as of the
   eleventh session (see "Current status" above); same reasoning as
   Client/Matter/Deadline/CalendarEvent above.
@@ -283,11 +289,12 @@ this password anywhere real** — see `docs/SECURITY.md`.
   `docs/SECURITY.md`'s "Implementation status" section for the full list.
 - **Audit logging covers every write listed in "Current status" above**
   (Client/Matter create/update, MatterAssignment add/remove, Deadline
-  create/update/status-change, CalendarEvent create/update, and Document
-  upload/metadata-edit all included, plus file downloads — Discovery and
-  general Documents both — logged as `EXPORT`), but login/logout and
-  permission-denial events aren't logged yet, and neither are the
-  not-yet-built writes (Note/Task edit, etc.) — see `docs/SECURITY.md`.
+  create/update/status-change, CalendarEvent create/update, Document
+  upload/metadata-edit, and Note/Task update all included, plus file
+  downloads — Discovery and general Documents both — logged as `EXPORT`),
+  but login/logout and permission-denial events aren't logged yet, and
+  neither are the not-yet-built writes (Note/Task deletion, etc.) — see
+  `docs/SECURITY.md`.
 
 ### Known limitations to address in the next phase
 

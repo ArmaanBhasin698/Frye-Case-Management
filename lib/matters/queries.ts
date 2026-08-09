@@ -50,6 +50,33 @@ export function listAssignableUsers() {
   });
 }
 
+/**
+ * Candidate Task assignees for a matter: staff genuinely assigned to it,
+ * plus every active ADMIN (who can see every matter regardless of
+ * assignment — see lib/auth/authorization.ts#isAdmin). Mirrors exactly
+ * the server-side rule `lib/matters/actions.ts#updateTask` enforces for a
+ * submitted `assignedToId`, so the picker never offers a choice the
+ * action would reject.
+ */
+export async function getMatterAssignableUsers(matterId: string) {
+  const [assignments, admins] = await Promise.all([
+    prisma.matterAssignment.findMany({
+      where: { matterId, user: { active: true } },
+      select: { user: { select: { id: true, name: true } } },
+    }),
+    prisma.user.findMany({
+      where: { role: "ADMIN", active: true },
+      select: { id: true, name: true },
+    }),
+  ]);
+
+  const byId = new Map<string, { id: string; name: string }>();
+  for (const { user } of assignments) byId.set(user.id, user);
+  for (const admin of admins) byId.set(admin.id, admin);
+
+  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export function getMatterNotes(matterId: string) {
   return prisma.note.findMany({
     where: { matterId },

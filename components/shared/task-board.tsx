@@ -1,14 +1,20 @@
 "use client";
 
 import * as React from "react";
+import { useActionState } from "react";
 import { format, isPast, isToday } from "date-fns";
 import type { TaskPriority, TaskStatus } from "@prisma/client";
 
 import { cn } from "@/lib/utils";
 import { taskPriorityLabel } from "@/lib/matters/format";
-import { updateTaskStatus } from "@/lib/matters/actions";
+import { updateTask, updateTaskStatus, type FormActionState } from "@/lib/matters/actions";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import type { BadgeProps } from "@/components/ui/badge";
 
 export type BoardTask = {
@@ -18,8 +24,10 @@ export type BoardTask = {
   status: TaskStatus;
   priority: TaskPriority;
   dueDate: Date | null;
-  assignedTo: { name: string } | null;
+  assignedTo: { id: string; name: string } | null;
 };
+
+export type AssignableUser = { id: string; name: string };
 
 const COLUMNS: { status: TaskStatus; label: string }[] = [
   { status: "OPEN", label: "Open" },
@@ -34,14 +42,26 @@ const PRIORITY_VARIANT: Record<TaskPriority, BadgeProps["variant"]> = {
   HIGH: "destructive",
 };
 
+const INITIAL_STATE: FormActionState = { error: null };
+
 /**
  * Kanban-style task board — the "replace monday.com" visual. Dropping a
  * card updates local state immediately (optimistic) and persists via the
  * `updateTaskStatus` Server Action; a failed write reverts the card to its
  * previous column so the board never shows a move that didn't actually
- * save.
+ * save. Editing a card's other fields (or its status, from the form) goes
+ * through `updateTask` instead — both actions write the same `Task.status`
+ * column, so a drag and a form edit can never disagree with each other.
  */
-export function TaskBoard({ tasks: initialTasks, matterId }: { tasks: BoardTask[]; matterId: string }) {
+export function TaskBoard({
+  tasks: initialTasks,
+  matterId,
+  assignableUsers,
+}: {
+  tasks: BoardTask[];
+  matterId: string;
+  assignableUsers: AssignableUser[];
+}) {
   const [tasks, setTasks] = React.useState(initialTasks);
   const [prevInitialTasks, setPrevInitialTasks] = React.useState(initialTasks);
   const [dragOverColumn, setDragOverColumn] = React.useState<TaskStatus | null>(null);
@@ -100,7 +120,7 @@ export function TaskBoard({ tasks: initialTasks, matterId }: { tasks: BoardTask[
 
               <div className="flex flex-1 flex-col gap-2">
                 {columnTasks.map((task) => (
-                  <TaskCard key={task.id} task={task} />
+                  <TaskCard key={task.id} task={task} matterId={matterId} assignableUsers={assignableUsers} />
                 ))}
               </div>
             </div>
@@ -114,13 +134,156 @@ export function TaskBoard({ tasks: initialTasks, matterId }: { tasks: BoardTask[
   );
 }
 
-function TaskCard({ task }: { task: BoardTask }) {
+function TaskEditForm({
+  matterId,
+  task,
+  assignableUsers,
+  onDone,
+}: {
+  matterId: string;
+  task: BoardTask;
+  assignableUsers: AssignableUser[];
+  onDone: () => void;
+}) {
+  const [state, formAction, isPending] = useActionState(updateTask, INITIAL_STATE);
+  const [prevState, setPrevState] = React.useState(state);
+
+  if (state !== prevState) {
+    setPrevState(state);
+    if (!state.error) onDone();
+  }
+
+  return (
+    <form
+      action={formAction}
+      className="space-y-2"
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      <input type="hidden" name="matterId" value={matterId} />
+      <input type="hidden" name="taskId" value={task.id} />
+
+      <div className="space-y-1">
+        <Label htmlFor={`task-title-${task.id}`} className="text-xs">
+          Title
+        </Label>
+        <Input id={`task-title-${task.id}`} name="title" required defaultValue={task.title} />
+      </div>
+
+      <div className="space-y-1">
+        <Label htmlFor={`task-description-${task.id}`} className="text-xs">
+          Description
+        </Label>
+        <Textarea
+          id={`task-description-${task.id}`}
+          name="description"
+          rows={2}
+          defaultValue={task.description ?? ""}
+        />
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-1">
+          <Label htmlFor={`task-dueDate-${task.id}`} className="text-xs">
+            Due date
+          </Label>
+          <Input
+            id={`task-dueDate-${task.id}`}
+            name="dueDate"
+            type="date"
+            defaultValue={task.dueDate ? format(task.dueDate, "yyyy-MM-dd") : ""}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor={`task-priority-${task.id}`} className="text-xs">
+            Priority
+          </Label>
+          <Select id={`task-priority-${task.id}`} name="priority" defaultValue={task.priority}>
+            <option value="LOW">Low</option>
+            <option value="NORMAL">Normal</option>
+            <option value="HIGH">High</option>
+          </Select>
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor={`task-status-${task.id}`} className="text-xs">
+            Status
+          </Label>
+          <Select id={`task-status-${task.id}`} name="status" defaultValue={task.status}>
+            {COLUMNS.map((c) => (
+              <option key={c.status} value={c.status}>
+                {c.label}
+              </option>
+            ))}
+          </Select>
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor={`task-assignedToId-${task.id}`} className="text-xs">
+            Assignee
+          </Label>
+          <Select
+            id={`task-assignedToId-${task.id}`}
+            name="assignedToId"
+            defaultValue={task.assignedTo?.id ?? ""}
+          >
+            <option value="">Unassigned</option>
+            {assignableUsers.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.name}
+              </option>
+            ))}
+          </Select>
+        </div>
+      </div>
+
+      {state.error && (
+        <p className="text-xs font-medium text-destructive" role="alert">
+          {state.error}
+        </p>
+      )}
+
+      <div className="flex justify-end gap-2">
+        <Button type="submit" size="sm" disabled={isPending}>
+          {isPending ? "Saving…" : "Save"}
+        </Button>
+        <Button type="button" variant="ghost" size="sm" onClick={onDone}>
+          Cancel
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function TaskCard({
+  task,
+  matterId,
+  assignableUsers,
+}: {
+  task: BoardTask;
+  matterId: string;
+  assignableUsers: AssignableUser[];
+}) {
+  const [editing, setEditing] = React.useState(false);
+
   const overdue =
     task.dueDate &&
     task.status !== "DONE" &&
     task.status !== "CANCELLED" &&
     isPast(task.dueDate) &&
     !isToday(task.dueDate);
+
+  if (editing) {
+    return (
+      <Card className="bg-card shadow-sm">
+        <CardContent className="p-3">
+          <TaskEditForm
+            matterId={matterId}
+            task={task}
+            assignableUsers={assignableUsers}
+            onDone={() => setEditing(false)}
+          />
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card
@@ -140,7 +303,18 @@ function TaskCard({ task }: { task: BoardTask }) {
       }}
     >
       <CardContent className="space-y-2 p-3">
-        <p className="text-sm font-medium leading-snug text-foreground">{task.title}</p>
+        <div className="flex items-start justify-between gap-1.5">
+          <p className="text-sm font-medium leading-snug text-foreground">{task.title}</p>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 shrink-0 px-1.5 text-xs"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={() => setEditing(true)}
+          >
+            Edit
+          </Button>
+        </div>
         {task.description && (
           <p className="line-clamp-2 text-xs text-muted-foreground">{task.description}</p>
         )}
