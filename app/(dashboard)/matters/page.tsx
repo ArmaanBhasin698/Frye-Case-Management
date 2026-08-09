@@ -4,7 +4,9 @@ import { format } from "date-fns";
 import { listMatters } from "@/lib/matters/queries";
 import { formatClientName, matterStatusLabel, matterStatusVariant, matterTitle } from "@/lib/matters/format";
 import { requireCurrentUser } from "@/lib/auth/session";
+import { canManageClientsAndMatters } from "@/lib/auth/authorization";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Table,
@@ -21,11 +23,18 @@ export default async function MattersPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Matters</h1>
-        <p className="text-sm text-muted-foreground">
-          {matters.length} {matters.length === 1 ? "matter" : "matters"} on file.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Matters</h1>
+          <p className="text-sm text-muted-foreground">
+            {matters.length} {matters.length === 1 ? "matter" : "matters"} on file.
+          </p>
+        </div>
+        {canManageClientsAndMatters(user) && (
+          <Button size="sm" asChild>
+            <Link href="/matters/new">New Matter</Link>
+          </Button>
+        )}
       </div>
 
       <Card>

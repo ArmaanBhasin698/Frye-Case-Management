@@ -21,6 +21,22 @@ export function isAdmin(user: AuthorizableUser): boolean {
 }
 
 /**
+ * Can `user` originate a brand-new Client or Matter? Neither docs/SECURITY.md
+ * nor docs/DATA_MODEL.md previously specified who may do this — creating a
+ * new case record has no existing MatterAssignment to check against, unlike
+ * every other write path in the app. Conservative rule, chosen deliberately
+ * rather than defaulting to "any logged-in user": only ADMIN and ATTORNEY
+ * may create or edit the core fields of a Client or Matter, mirroring how a
+ * real firm decides to take on a new client/case. PARALEGAL/STAFF keep full
+ * read/write access to sub-resources (Notes, Tasks, Calls, Discovery) on
+ * matters they're assigned to — this rule only gates Client/Matter records
+ * and MatterAssignment membership themselves. See docs/SECURITY.md.
+ */
+export function canManageClientsAndMatters(user: AuthorizableUser): boolean {
+  return isAdmin(user) || user.role === "ATTORNEY";
+}
+
+/**
  * Can `user` access a specific matter, given the ids of matters they're
  * assigned to? Admins bypass the assignment check entirely.
  */

@@ -36,6 +36,20 @@ export function getMatterHeader(matterId: string) {
   });
 }
 
+/** Same shape as `getMatterHeader` — kept as its own named query for the Edit Matter page's clarity. */
+export function getMatterForEdit(matterId: string) {
+  return getMatterHeader(matterId);
+}
+
+/** Active staff, for the assignment picker on New/Edit Matter. */
+export function listAssignableUsers() {
+  return prisma.user.findMany({
+    where: { active: true },
+    select: { id: true, name: true, role: true },
+    orderBy: { name: "asc" },
+  });
+}
+
 export function getMatterNotes(matterId: string) {
   return prisma.note.findMany({
     where: { matterId },

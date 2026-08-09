@@ -32,6 +32,12 @@ validation + audit logging on every write — see `docs/SECURITY.md`):
   fictional dev users); admins see every matter, everyone else only what
   they're assigned to, including on a direct URL to a matter they don't
   have (a 404, not a distinguishable "access denied").
+- **Client and Matter create/edit, including staff assignments** — New
+  Client, Edit Client, New Matter (linked to an existing client, with its
+  initial staff assignment(s)), Edit Matter, and adding/removing a
+  Matter's assignments from its Edit page all persist to Postgres.
+  Restricted to `ADMIN`/`ATTORNEY` — see "Who can create/edit a Client or
+  Matter" below for why and `docs/SECURITY.md` for the full rule.
 - **Notes, tasks, and task status** — Add Note and New Task persist to
   Postgres; the Kanban board's drag-and-drop persists a task's status and
   survives a refresh (optimistic UI, reverts if the write fails).
@@ -58,6 +64,32 @@ See "Demo login credentials" below to sign in, "What's mocked / not
 implemented yet" below for exactly what still isn't real, and
 [`docs/ROADMAP.md`](./docs/ROADMAP.md) for the full session-by-session
 history of what's built vs. planned.
+
+### Who can create/edit a Client or Matter
+
+Neither `docs/SECURITY.md` nor `docs/DATA_MODEL.md` previously said who may
+originate a brand-new Client or Matter — every other write path in the app
+(Notes, Tasks, Calls, Discovery) checks an *existing* `MatterAssignment`,
+but creating the very first record for a case has nothing to check yet.
+Rather than default to "any logged-in user," this session picked a
+conservative rule and wrote it down:
+
+- **Only `ADMIN` and `ATTORNEY` may create a Client or Matter, edit a
+  Client's fields, or edit a Matter's own fields
+  (`lib/auth/authorization.ts#canManageClientsAndMatters`).**
+- Editing an *existing* Matter additionally requires the normal
+  matter-level check — an `ATTORNEY` must actually be assigned to that
+  matter, not just hold the role (`lib/auth/access.ts#canEditMatter`).
+- `PARALEGAL`/`STAFF` keep everything they already had: full read/write
+  access to Notes, Tasks, Calls, and Discovery on matters they're assigned
+  to. This rule only gates the Client/Matter records themselves and
+  `MatterAssignment` membership.
+- The Clients section of the sidebar is grayed out ("Restricted") for
+  `PARALEGAL`/`STAFF` as a UI convenience — the actual enforcement is
+  server-side in every `/clients*` and `/matters/new`, `/matters/*/edit`
+  page and Server Action, independent of what the sidebar shows.
+
+See `docs/SECURITY.md`'s Authorization section for the full writeup.
 
 ## Tech stack
 
@@ -191,11 +223,12 @@ this password anywhere real** — see `docs/SECURITY.md`.
 
 ## What's mocked / not implemented yet
 
-- **No Client/Matter create-edit-delete.** You can't add a client or
-  matter, or edit/delete one, through the UI yet — only the writes listed
-  in "Current status" above exist (Notes, Tasks, Task status, Call attach,
-  Discovery production/file/comparison). `MatterAssignment` (who's staffed
-  on a matter) is display-only, no UI to change it.
+- **No Client/Matter *deletion*, archival, or deactivation.** Create and
+  edit are real (see "Current status" and "Who can create/edit a Client or
+  Matter" above) — deletion was explicitly out of scope for this pass, and
+  the existing architecture has no defined safe archival/deactivation
+  pattern to build it on yet (a closed `Matter` just gets `status: CLOSED`,
+  which already existed).
 - **No Note/Task edit or delete**, no Deadline or CalendarEvent writes —
   those tabs are still read-only views over seed data.
 - **No production Dropbox, Vonage, Loop/HighLevel, MyCase, or QuickBooks
@@ -217,11 +250,13 @@ this password anywhere real** — see `docs/SECURITY.md`.
   existed** (see `prisma/seed.ts`) remain in the database as illustrative
   historical data with no real stored files behind them — anything created
   through the Discovery tab's UI is real.
-- **Sidebar items other than Dashboard/Matters** (Clients, Tasks, Calendar,
+- **Sidebar items other than Dashboard/Matters/Clients** (Tasks, Calendar,
   Discovery, Communications, Reports) are shown but disabled ("Soon") —
   present for layout/orientation, not yet functional as their own
   firm-wide sections (Tasks and Discovery both exist per-matter, under a
-  Matter's tabs).
+  Matter's tabs). Clients is real but shown as "Restricted" for
+  `PARALEGAL`/`STAFF` accounts (see "Who can create/edit a Client or
+  Matter" above).
 - **Authentication is real, but incomplete for production use:** no MFA,
   no rate-limiting/lockout on failed logins, no forced sign-out when a
   user's role or assignments change mid-session, no HTTPS enforcement, and
@@ -229,9 +264,10 @@ this password anywhere real** — see `docs/SECURITY.md`.
   once real staff accounts or real case data are involved — see
   `docs/SECURITY.md`'s "Implementation status" section for the full list.
 - **Audit logging covers every write listed in "Current status" above**
-  (plus file downloads, logged as `EXPORT`), but login/logout and
+  (Client/Matter create/update and MatterAssignment add/remove included,
+  plus file downloads, logged as `EXPORT`), but login/logout and
   permission-denial events aren't logged yet, and neither are the
-  not-yet-built writes (Client/Matter/Deadline/etc.) — see
+  not-yet-built writes (Deadline/CalendarEvent/etc.) — see
   `docs/SECURITY.md`.
 
 ### Known limitations to address in the next phase

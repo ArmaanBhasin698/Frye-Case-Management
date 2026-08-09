@@ -13,7 +13,9 @@ import {
 } from "@/lib/matters/format";
 import { assertMatterAccess } from "@/lib/auth/access";
 import { requireCurrentUser } from "@/lib/auth/session";
+import { canManageClientsAndMatters } from "@/lib/auth/authorization";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { MatterTabs } from "@/components/shared/matter-tabs";
 
 export default async function MatterLayout({
@@ -56,6 +58,11 @@ export default async function MatterLayout({
               <Badge variant={matterStatusVariant(matter.status)}>
                 {matterStatusLabel(matter.status)}
               </Badge>
+              {canManageClientsAndMatters(user) && (
+                <Button variant="outline" size="sm" asChild>
+                  <Link href={`/matters/${matter.id}/edit`}>Edit Matter</Link>
+                </Button>
+              )}
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
               {matter.caseNumber} &middot; {matter.charges} &middot; {matter.court}
