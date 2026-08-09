@@ -4,6 +4,7 @@ import {
   buildMatterIdFilter,
   buildMatterScopeFilter,
   canAccessMatter,
+  canManageClientsAndMatters,
   isAdmin,
 } from "@/lib/auth/authorization";
 
@@ -59,6 +60,18 @@ describe("buildMatterIdFilter", () => {
 
   it("restricts to an empty set (matches nothing) for a non-admin with no assignments", () => {
     expect(buildMatterIdFilter(paralegal, [])).toEqual({ id: { in: [] } });
+  });
+});
+
+describe("canManageClientsAndMatters", () => {
+  it("allows ADMIN and ATTORNEY", () => {
+    expect(canManageClientsAndMatters(admin)).toBe(true);
+    expect(canManageClientsAndMatters(attorney)).toBe(true);
+  });
+
+  it("denies PARALEGAL and STAFF", () => {
+    expect(canManageClientsAndMatters(paralegal)).toBe(false);
+    expect(canManageClientsAndMatters(staff)).toBe(false);
   });
 });
 

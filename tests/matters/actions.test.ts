@@ -1,27 +1,48 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { requireCurrentUserMock, hasMatterAccessMock, prismaMock, revalidatePathMock } = vi.hoisted(() => ({
-  requireCurrentUserMock: vi.fn(),
-  hasMatterAccessMock: vi.fn(),
-  revalidatePathMock: vi.fn(),
-  prismaMock: {
-    note: { create: vi.fn() },
-    task: { create: vi.fn(), updateMany: vi.fn() },
-    call: { updateMany: vi.fn() },
-    auditEvent: { create: vi.fn() },
-  },
-}));
+const { requireCurrentUserMock, hasMatterAccessMock, canEditMatterMock, prismaMock, revalidatePathMock, redirectMock } =
+  vi.hoisted(() => ({
+    requireCurrentUserMock: vi.fn(),
+    hasMatterAccessMock: vi.fn(),
+    canEditMatterMock: vi.fn(),
+    revalidatePathMock: vi.fn(),
+    redirectMock: vi.fn(() => {
+      throw new Error("NEXT_REDIRECT");
+    }),
+    prismaMock: {
+      note: { create: vi.fn() },
+      task: { create: vi.fn(), updateMany: vi.fn() },
+      call: { updateMany: vi.fn() },
+      client: { findUnique: vi.fn() },
+      user: { findMany: vi.fn(), findUnique: vi.fn() },
+      matter: { create: vi.fn(), update: vi.fn(), findUnique: vi.fn() },
+      matterAssignment: { create: vi.fn(), deleteMany: vi.fn() },
+      auditEvent: { create: vi.fn() },
+    },
+  }));
 
 vi.mock("next/cache", () => ({ revalidatePath: revalidatePathMock }));
+vi.mock("next/navigation", () => ({ redirect: redirectMock }));
 vi.mock("@/lib/auth/session", () => ({ requireCurrentUser: requireCurrentUserMock }));
-vi.mock("@/lib/auth/access", () => ({ hasMatterAccess: hasMatterAccessMock }));
+vi.mock("@/lib/auth/access", () => ({
+  hasMatterAccess: hasMatterAccessMock,
+  canEditMatter: canEditMatterMock,
+}));
 vi.mock("@/lib/db", () => ({ prisma: prismaMock }));
 
-const { attachCallToMatter, createNote, createTask, updateTaskStatus } = await import(
-  "@/lib/matters/actions"
-);
+const {
+  addMatterAssignment,
+  attachCallToMatter,
+  createMatter,
+  createNote,
+  createTask,
+  removeMatterAssignment,
+  updateMatter,
+  updateTaskStatus,
+} = await import("@/lib/matters/actions");
 
 const user = { id: "user-1", role: "STAFF" as const };
+const attorney = { id: "user-2", role: "ATTORNEY" as const };
 const matterId = "matter-1";
 
 function formData(fields: Record<string, string>) {
@@ -34,6 +55,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   requireCurrentUserMock.mockResolvedValue(user);
   hasMatterAccessMock.mockResolvedValue(true);
+  canEditMatterMock.mockResolvedValue(true);
+  redirectMock.mockImplementation(() => {
+    throw new Error("NEXT_REDIRECT");
+  });
 });
 
 describe("createNote", () => {
@@ -168,6 +193,253 @@ describe("attachCallToMatter", () => {
         matterId,
         metadata: { attached: true },
       },
+    });
+  });
+});
+
+function matterFormData(fields: Record<string, string | string[]>) {
+  const fd = new FormData();
+  for (const [key, value] of Object.entries(fields)) {
+    if (Array.isArray(value)) {
+      for (const v of value) fd.append(key, v);
+    } else {
+      fd.set(key, value);
+    }
+  }
+  return fd;
+}
+
+describe("createMatter", () => {
+  const validFields = {
+    clientId: "client-1",
+    caseNumber: "26-CR-00001",
+    court: "Fulton County Superior Court (fictional)",
+    charges: "Trespassing",
+    status: "OPEN",
+    openedDate: "2026-08-01",
+    assignmentUserId: ["staff-1"],
+    assignmentRole: ["LEAD_ATTORNEY"],
+  };
+
+  it("denies creation for a role that isn't ADMIN or ATTORNEY", async () => {
+    requireCurrentUserMock.mockResolvedValue(user); // STAFF
+    const result = await createMatter({ error: null }, matterFormData(validFields));
+    expect(result?.error).toBe("Not found or access denied.");
+    expect(prismaMock.matter.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a submission with no staff assignments before touching the database", async () => {
+    requireCurrentUserMock.mockResolvedValue(attorney);
+    const fieldsWithNoAssignments: Record<string, string | string[]> = { ...validFields };
+    delete fieldsWithNoAssignments.assignmentUserId;
+    delete fieldsWithNoAssignments.assignmentRole;
+    const result = await createMatter({ error: null }, matterFormData(fieldsWithNoAssignments));
+    expect(result?.error).toBeTruthy();
+    expect(prismaMock.matter.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid opened date", async () => {
+    requireCurrentUserMock.mockResolvedValue(attorney);
+    const result = await createMatter(
+      { error: null },
+      matterFormData({ ...validFields, openedDate: "not-a-date" }),
+    );
+    expect(result?.error).toBeTruthy();
+    expect(prismaMock.matter.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unknown client id without touching matter.create", async () => {
+    requireCurrentUserMock.mockResolvedValue(attorney);
+    prismaMock.client.findUnique.mockResolvedValue(null);
+    const result = await createMatter({ error: null }, matterFormData(validFields));
+    expect(result?.error).toBe("Selected client not found.");
+    expect(prismaMock.matter.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects an assignment referencing an inactive or nonexistent user", async () => {
+    requireCurrentUserMock.mockResolvedValue(attorney);
+    prismaMock.client.findUnique.mockResolvedValue({ id: "client-1" });
+    prismaMock.user.findMany.mockResolvedValue([]); // "staff-1" not found/active
+    const result = await createMatter({ error: null }, matterFormData(validFields));
+    expect(result?.error).toBe("One or more selected staff members are invalid.");
+    expect(prismaMock.matter.create).not.toHaveBeenCalled();
+  });
+
+  it("creates the matter with its initial assignment and audit events, then redirects", async () => {
+    requireCurrentUserMock.mockResolvedValue(attorney);
+    prismaMock.client.findUnique.mockResolvedValue({ id: "client-1" });
+    prismaMock.user.findMany.mockResolvedValue([{ id: "staff-1" }]);
+    prismaMock.matter.create.mockResolvedValue({
+      id: "matter-new",
+      assignments: [{ id: "assignment-1", userId: "staff-1", role: "LEAD_ATTORNEY" }],
+    });
+
+    await expect(createMatter({ error: null }, matterFormData(validFields))).rejects.toThrow(
+      "NEXT_REDIRECT",
+    );
+
+    expect(prismaMock.matter.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          clientId: "client-1",
+          caseNumber: "26-CR-00001",
+          assignments: { create: [{ userId: "staff-1", role: "LEAD_ATTORNEY" }] },
+        }),
+      }),
+    );
+    expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ action: "CREATE", entityType: "Matter", entityId: "matter-new" }),
+    });
+    expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "CREATE",
+        entityType: "MatterAssignment",
+        entityId: "assignment-1",
+      }),
+    });
+    expect(redirectMock).toHaveBeenCalledWith("/matters/matter-new");
+  });
+});
+
+describe("updateMatter", () => {
+  const validFields = {
+    matterId,
+    caseNumber: "26-CR-00001",
+    court: "Fulton County Superior Court (fictional)",
+    charges: "Trespassing",
+    status: "OPEN",
+    openedDate: "2026-08-01",
+  };
+
+  beforeEach(() => {
+    requireCurrentUserMock.mockResolvedValue(attorney);
+    prismaMock.matter.findUnique.mockResolvedValue({
+      caseNumber: "26-CR-00000",
+      court: "Old Court",
+      charges: "Old charge",
+      status: "OPEN",
+      openedDate: new Date("2026-07-01"),
+      closedDate: null,
+    });
+  });
+
+  it("denies the update when the caller can't edit this matter (ID scoping)", async () => {
+    canEditMatterMock.mockResolvedValue(false);
+    const result = await updateMatter({ error: null }, matterFormData(validFields));
+    expect(result?.error).toBe("Not found or access denied.");
+    expect(prismaMock.matter.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a missing case number before touching the database", async () => {
+    const result = await updateMatter(
+      { error: null },
+      matterFormData({ ...validFields, caseNumber: "" }),
+    );
+    expect(result?.error).toBeTruthy();
+    expect(prismaMock.matter.update).not.toHaveBeenCalled();
+  });
+
+  it("updates the matter and writes an audit event with a before/after diff, then redirects", async () => {
+    prismaMock.matter.update.mockResolvedValue({});
+    await expect(updateMatter({ error: null }, matterFormData(validFields))).rejects.toThrow(
+      "NEXT_REDIRECT",
+    );
+
+    expect(prismaMock.matter.update).toHaveBeenCalledWith({
+      where: { id: matterId },
+      data: expect.objectContaining({ caseNumber: "26-CR-00001", court: "Fulton County Superior Court (fictional)" }),
+    });
+    expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "UPDATE",
+        entityType: "Matter",
+        entityId: matterId,
+        metadata: expect.objectContaining({
+          changed: expect.objectContaining({
+            caseNumber: { before: "26-CR-00000", after: "26-CR-00001" },
+          }),
+        }),
+      }),
+    });
+    expect(redirectMock).toHaveBeenCalledWith(`/matters/${matterId}`);
+  });
+
+  it("writes no audit event when nothing actually changed", async () => {
+    prismaMock.matter.update.mockResolvedValue({});
+    const unchanged = {
+      matterId,
+      caseNumber: "26-CR-00000",
+      court: "Old Court",
+      charges: "Old charge",
+      status: "OPEN",
+      openedDate: "2026-07-01",
+    };
+    await expect(updateMatter({ error: null }, matterFormData(unchanged))).rejects.toThrow("NEXT_REDIRECT");
+    expect(prismaMock.auditEvent.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("addMatterAssignment", () => {
+  it("denies adding an assignment when the caller can't edit this matter", async () => {
+    canEditMatterMock.mockResolvedValue(false);
+    const result = await addMatterAssignment({ matterId, userId: "staff-2", role: "PARALEGAL" });
+    expect(result).toEqual({ ok: false, error: "Not found or access denied." });
+    expect(prismaMock.matterAssignment.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects an inactive or nonexistent user", async () => {
+    prismaMock.user.findUnique.mockResolvedValue(null);
+    const result = await addMatterAssignment({ matterId, userId: "staff-2", role: "PARALEGAL" });
+    expect(result).toEqual({ ok: false, error: "Selected staff member is invalid." });
+    expect(prismaMock.matterAssignment.create).not.toHaveBeenCalled();
+  });
+
+  it("adds the assignment and writes an audit event on success", async () => {
+    prismaMock.user.findUnique.mockResolvedValue({ active: true });
+    prismaMock.matterAssignment.create.mockResolvedValue({ id: "assignment-2" });
+    const result = await addMatterAssignment({ matterId, userId: "staff-2", role: "PARALEGAL" });
+    expect(result).toEqual({ ok: true, data: undefined });
+    expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "CREATE",
+        entityType: "MatterAssignment",
+        entityId: "assignment-2",
+        matterId,
+        metadata: { userId: "staff-2", role: "PARALEGAL" },
+      }),
+    });
+  });
+});
+
+describe("removeMatterAssignment", () => {
+  it("denies removal when the caller can't edit this matter", async () => {
+    canEditMatterMock.mockResolvedValue(false);
+    const result = await removeMatterAssignment({ matterId, assignmentId: "assignment-1" });
+    expect(result).toEqual({ ok: false, error: "Not found or access denied." });
+    expect(prismaMock.matterAssignment.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("scopes deletion to the given matter, so an assignment from another matter can't be removed", async () => {
+    prismaMock.matterAssignment.deleteMany.mockResolvedValue({ count: 0 });
+    const result = await removeMatterAssignment({ matterId, assignmentId: "assignment-in-other-matter" });
+    expect(result.ok).toBe(false);
+    expect(prismaMock.matterAssignment.deleteMany).toHaveBeenCalledWith({
+      where: { id: "assignment-in-other-matter", matterId },
+    });
+    expect(prismaMock.auditEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("removes the assignment and writes an audit event on success", async () => {
+    prismaMock.matterAssignment.deleteMany.mockResolvedValue({ count: 1 });
+    const result = await removeMatterAssignment({ matterId, assignmentId: "assignment-1" });
+    expect(result).toEqual({ ok: true, data: undefined });
+    expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "DELETE",
+        entityType: "MatterAssignment",
+        entityId: "assignment-1",
+        matterId,
+      }),
     });
   });
 });

@@ -19,9 +19,12 @@ vi.mock("next/navigation", () => ({
   },
 }));
 
-const { assertMatterAccess, hasMatterAccess } = await import("@/lib/auth/access");
+const { assertCanEditMatter, assertCanManageClientsAndMatters, assertMatterAccess, canEditMatter, hasMatterAccess } =
+  await import("@/lib/auth/access");
 
 const admin = { id: "user-admin", role: "ADMIN" as const };
+const attorney = { id: "user-attorney", role: "ATTORNEY" as const };
+const paralegal = { id: "user-paralegal", role: "PARALEGAL" as const };
 const staff = { id: "user-staff", role: "STAFF" as const };
 
 describe("hasMatterAccess", () => {
@@ -64,5 +67,59 @@ describe("assertMatterAccess", () => {
   it("calls notFound (same as a nonexistent matter) for a non-admin who is not assigned", async () => {
     findManyMock.mockResolvedValueOnce([]);
     await expect(assertMatterAccess(staff, "matter-1")).rejects.toThrow("NEXT_NOT_FOUND");
+  });
+});
+
+describe("assertCanManageClientsAndMatters", () => {
+  it("does not throw for ADMIN or ATTORNEY", () => {
+    expect(() => assertCanManageClientsAndMatters(admin)).not.toThrow();
+    expect(() => assertCanManageClientsAndMatters(attorney)).not.toThrow();
+  });
+
+  it("calls notFound for PARALEGAL and STAFF", () => {
+    expect(() => assertCanManageClientsAndMatters(paralegal)).toThrow("NEXT_NOT_FOUND");
+    expect(() => assertCanManageClientsAndMatters(staff)).toThrow("NEXT_NOT_FOUND");
+  });
+});
+
+describe("canEditMatter", () => {
+  it("returns true for an admin without querying assignments", async () => {
+    findManyMock.mockClear();
+    const result = await canEditMatter(admin, "matter-1");
+    expect(result).toBe(true);
+    expect(findManyMock).not.toHaveBeenCalled();
+  });
+
+  it("returns false for PARALEGAL/STAFF regardless of assignment, without even querying it", async () => {
+    findManyMock.mockClear();
+    expect(await canEditMatter(paralegal, "matter-1")).toBe(false);
+    expect(await canEditMatter(staff, "matter-1")).toBe(false);
+    expect(findManyMock).not.toHaveBeenCalled();
+  });
+
+  it("returns true for an ATTORNEY assigned to the matter", async () => {
+    findManyMock.mockResolvedValueOnce([{ matterId: "matter-1" }]);
+    expect(await canEditMatter(attorney, "matter-1")).toBe(true);
+  });
+
+  it("returns false for an ATTORNEY not assigned to the matter", async () => {
+    findManyMock.mockResolvedValueOnce([{ matterId: "matter-2" }]);
+    expect(await canEditMatter(attorney, "matter-1")).toBe(false);
+  });
+});
+
+describe("assertCanEditMatter", () => {
+  it("resolves without throwing for an admin", async () => {
+    await expect(assertCanEditMatter(admin, "matter-1")).resolves.toBeUndefined();
+  });
+
+  it("throws NEXT_NOT_FOUND for an ATTORNEY not assigned to the matter", async () => {
+    findManyMock.mockResolvedValueOnce([]);
+    await expect(assertCanEditMatter(attorney, "matter-1")).rejects.toThrow("NEXT_NOT_FOUND");
+  });
+
+  it("throws NEXT_NOT_FOUND for STAFF even when assigned", async () => {
+    findManyMock.mockResolvedValueOnce([{ matterId: "matter-1" }]);
+    await expect(assertCanEditMatter(staff, "matter-1")).rejects.toThrow("NEXT_NOT_FOUND");
   });
 });

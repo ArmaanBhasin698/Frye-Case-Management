@@ -165,12 +165,20 @@ below for what's still open.
 
 ## Phase 2 — Clients & Matters (CRUD + authorization)
 
-- [ ] Client CRUD (create/list/view/edit) with server-side validation.
+- [x] Client *create/list/view/edit* with server-side validation. Real as
+      of the ninth session (see milestone above) — `ADMIN`/`ATTORNEY`
+      only. Deletion/archival intentionally not built (no safe pattern
+      existed yet to build it on).
 - [x] Matter *read* (list + detail) — done in the milestone above.
-- [ ] Matter create/edit/delete with server-side validation.
+- [x] Matter *create/edit* with server-side validation. Real as of the
+      ninth session — `ADMIN`/`ATTORNEY` only, and edit additionally
+      requires the caller be assigned to that specific matter. *Deletion*
+      still not built, same reasoning as Client.
 - [x] `MatterAssignment` exists in the schema and is displayed (assigned
-      staff shown on Matter overview), but there's no UI to change
-      assignments yet.
+      staff shown on Matter overview); a UI to change assignments now
+      exists too — required at Matter creation (at least one), and
+      addable/removable afterward from the Edit Matter page (ninth
+      session, see milestone above).
 - [x] Matter-level authorization: users only see matters they're assigned
       to, unless admin. Done in the fourth session (see "Milestone —
       Authentication & matter-level authorization" above) — enforced
@@ -178,12 +186,15 @@ below for what's still open.
       not just direct matter URLs.
 - [x] AuditEvent wired in as a side effect of real writes — done for
       Note/Task create, Task status update, and Call attach in the fifth
-      session (see milestone above). Matter/Client create-edit-delete
-      still don't exist, so this isn't complete for every entity yet.
+      session, and for Client create/update, Matter create/update, and
+      MatterAssignment create/delete in the ninth session (see milestones
+      above). Deadline/CalendarEvent/Document writes still don't exist, so
+      this isn't complete for every entity yet.
 
 **Exit criteria:** a staff member can create a client, open a matter for
 them, assign staff to it, and have that access properly restricted and
-audited.
+audited. **Met as of the ninth session** for `ADMIN`/`ATTORNEY` staff;
+Client/Matter deletion remains open for a future phase.
 
 ## Phase 3 — Case workflow essentials
 
@@ -336,6 +347,70 @@ run one), a production-grade per-matter Dropbox folder convention (still
 the flat dev key scheme — see Phase 4 below), encrypted-at-rest storage
 of the refresh token, and any migration path for files already on local
 disk if a firm ever switches providers.
+
+## Milestone — Client/Matter create & edit (ninth session)
+
+Phase 2's remaining CRUD gap, closed end to end: real Client and Matter
+create/edit workflows, following the same auth/authorization/validation/
+audit conventions Notes, Tasks, Calls, and Discovery already established.
+Dropbox authentication for the firm's real account was explicitly deferred
+this session (requires staff 2FA) — `STORAGE_PROVIDER` stayed on `local`
+throughout; nothing here touches storage.
+
+- **New Client / Edit Client** (`app/(dashboard)/clients/`,
+  `lib/clients/actions.ts`, `lib/clients/queries.ts`) — the "Clients"
+  sidebar item is real for the first time (previously scaffolding-only,
+  see the second-session milestone); a client's own page lists their
+  matters and links to Edit.
+- **New Matter / Edit Matter** (`app/(dashboard)/matters/new`,
+  `app/(dashboard)/matters/[matterId]/edit`) — New Matter links to an
+  *existing* client and requires at least one initial `MatterAssignment`;
+  Edit Matter's page also hosts a `ManageAssignments` widget to add/remove
+  staff on an already-existing matter.
+- **New authorization rule, documented rather than assumed** (see
+  `docs/SECURITY.md`'s Authorization section and README's "Who can
+  create/edit a Client or Matter"): creating a brand-new Client or Matter,
+  and editing a Client's own fields, is restricted to `ADMIN`/`ATTORNEY`
+  (`lib/auth/authorization.ts#canManageClientsAndMatters`) — the docs
+  never specified this before, since every other write path checks an
+  *existing* assignment and creating the first record for a case has
+  nothing to check yet. Editing an *existing* Matter additionally requires
+  the normal matter-level check (`lib/auth/access.ts#canEditMatter`): an
+  `ATTORNEY` must actually be assigned to that matter, not just hold the
+  role. `PARALEGAL`/`STAFF` are unaffected everywhere else.
+- Every action independently calls `requireCurrentUser()` and the relevant
+  authorization check, same as every write path before it — a submitted
+  `clientId`/`matterId`/`assignmentId` can't be used to reach or modify a
+  record outside the caller's permitted scope (`removeMatterAssignment`
+  scopes its delete by `{id, matterId}` together, `createMatter`
+  re-validates the client and every assigned user server-side).
+- Real `AuditEvent`s: Client `CREATE`/`UPDATE`, Matter `CREATE`/`UPDATE`,
+  and `MatterAssignment` `CREATE`/`DELETE` for every assignment change
+  (initial assignments at matter creation, or added/removed later from
+  Edit Matter). Updates carry a `metadata.changed` before/after diff
+  (`lib/utils/index.ts#diffFields`) — `Client.notes` is excluded from the
+  diff itself (only `notesChanged: true` is recorded) since it's free text
+  that could otherwise duplicate sensitive case notes into the audit log.
+- 30 new focused tests (`tests/clients/actions.test.ts`,
+  `tests/matters/actions.test.ts`, `tests/auth/authorization.test.ts`,
+  `tests/auth/access.test.ts`) covering creation validation, edit
+  authorization (including an `ATTORNEY` who holds the role but isn't
+  assigned to the specific matter), assignment scoping, ID-probing
+  denial, and audit event generation, plus a regression check that
+  existing matter-access behavior is unchanged.
+- Browser-verified end to end with fictional data (Playwright): create →
+  refresh → edit → persistence for both Client and Matter, assignment
+  add/remove via Edit Matter surviving a refresh, the new matter appearing
+  on the Matters list, a `STAFF` account denied at `/clients`,
+  `/matters/new`, and the new matter's own pages (404, not a
+  distinguishable error), and an `ATTORNEY` who holds the role but isn't
+  assigned to the specific matter denied its edit page too — confirming
+  the rule is genuinely per-matter, not just per-role.
+
+**Deliberately not done here:** Client/Matter *deletion* or archival (no
+safe pattern existed to build on, and the task explicitly scoped deletion
+out), reassigning a Matter to a different Client after creation, and any
+Dropbox/Vonage/Loop/MyCase/QuickBooks integration work.
 
 ## Phase 4 — Discovery management (core differentiator)
 

@@ -38,21 +38,42 @@ type NavItem = {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   disabled?: boolean;
+  disabledReason?: string;
+  disabledBadge?: string;
 };
 
-const NAV_ITEMS: NavItem[] = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/matters", label: "Matters", icon: FolderKanban },
-  { href: "/clients", label: "Clients", icon: Users, disabled: true },
-  { href: "/tasks", label: "Tasks", icon: CheckSquare, disabled: true },
-  { href: "/calendar", label: "Calendar", icon: CalendarDays, disabled: true },
-  { href: "/discovery", label: "Discovery", icon: FileSearch, disabled: true },
-  { href: "/communications", label: "Communications", icon: Phone, disabled: true },
-  { href: "/reports", label: "Reports", icon: BarChart3, disabled: true },
-];
+/**
+ * Clients is disabled for PARALEGAL/STAFF, not just for everyone — hiding
+ * it here is a UI convenience, not the access control (the /clients pages
+ * independently re-check the same role rule — see
+ * lib/auth/authorization.ts#canManageClientsAndMatters and
+ * docs/SECURITY.md). Every other item's disabled state is unrelated
+ * scope-not-built-yet, unchanged from before this pass.
+ */
+function navItemsFor(role: string): NavItem[] {
+  const canManageClients = role === "ADMIN" || role === "ATTORNEY";
+  return [
+    { href: "/", label: "Dashboard", icon: LayoutDashboard },
+    { href: "/matters", label: "Matters", icon: FolderKanban },
+    {
+      href: "/clients",
+      label: "Clients",
+      icon: Users,
+      disabled: !canManageClients,
+      disabledReason: "Restricted to Admin/Attorney",
+      disabledBadge: "Restricted",
+    },
+    { href: "/tasks", label: "Tasks", icon: CheckSquare, disabled: true },
+    { href: "/calendar", label: "Calendar", icon: CalendarDays, disabled: true },
+    { href: "/discovery", label: "Discovery", icon: FileSearch, disabled: true },
+    { href: "/communications", label: "Communications", icon: Phone, disabled: true },
+    { href: "/reports", label: "Reports", icon: BarChart3, disabled: true },
+  ];
+}
 
-function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
+function SidebarContent({ role, onNavigate }: { role: string; onNavigate?: () => void }) {
   const pathname = usePathname();
+  const navItems = navItemsFor(role);
 
   return (
     <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
@@ -65,7 +86,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       </div>
 
       <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-4">
-        {NAV_ITEMS.map((item) => {
+        {navItems.map((item) => {
           const Icon = item.icon;
           const active =
             item.href === "/"
@@ -77,14 +98,14 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
               <div
                 key={item.href}
                 className="flex cursor-not-allowed items-center justify-between gap-2 rounded-md px-3 py-2 text-sm text-sidebar-foreground/40"
-                title="Not built yet"
+                title={item.disabledReason ?? "Not built yet"}
               >
                 <span className="flex items-center gap-2">
                   <Icon className="h-4 w-4" />
                   {item.label}
                 </span>
                 <span className="rounded-full bg-sidebar-accent px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sidebar-foreground/60">
-                  Soon
+                  {item.disabledBadge ?? "Soon"}
                 </span>
               </div>
             );
@@ -128,7 +149,7 @@ export function AppShell({
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <aside className="hidden w-64 shrink-0 md:block">
-        <SidebarContent />
+        <SidebarContent role={user.role} />
       </aside>
 
       {mobileOpen && (
@@ -139,7 +160,7 @@ export function AppShell({
             aria-hidden="true"
           />
           <aside className="relative z-50 h-full w-64 shadow-xl">
-            <SidebarContent onNavigate={() => setMobileOpen(false)} />
+            <SidebarContent role={user.role} onNavigate={() => setMobileOpen(false)} />
           </aside>
         </div>
       )}

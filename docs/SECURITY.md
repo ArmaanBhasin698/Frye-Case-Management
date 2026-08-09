@@ -24,11 +24,13 @@ following pieces of it are **actually implemented**, not just planned:
 Also now real:
 
 - **Write actions** for Task status changes, Notes, Tasks, attaching a Call
-  to a matter, and the Discovery/Bates engine (creating a production,
-  registering a file, running a comparison) — see `lib/matters/actions.ts`
-  and `lib/discovery/actions.ts`. Each independently re-checks
-  authentication and matter-level access rather than trusting that a page
-  already did (see "Authorization" below).
+  to a matter, Client create/edit, Matter create/edit, MatterAssignment
+  add/remove, and the Discovery/Bates engine (creating a production,
+  registering a file, running a comparison) — see `lib/matters/actions.ts`,
+  `lib/clients/actions.ts`, and `lib/discovery/actions.ts`. Each
+  independently re-checks authentication and the relevant authorization
+  rule rather than trusting that a page already did (see "Authorization"
+  below).
 - **Audit logging** for those same writes — `AuditEvent` rows are now
   produced by real `CREATE`/`UPDATE`/`EXPORT` actions, not only seeded, and
   the Timeline tab reflects them.
@@ -47,7 +49,8 @@ Also now real:
 
 Still **not implemented** (tracked in `docs/ROADMAP.md`):
 
-- Client/Matter create-edit-delete, Deadline/CalendarEvent writes, Document
+- Client/Matter *deletion* or archival (create/edit are real as of the
+  ninth session — see below), Deadline/CalendarEvent writes, Document
   upload, logging a brand-new Call (only attaching an existing unfiled
   one), Note/Task edit-delete, and Discovery production/file edit-delete —
   none of those have a write path yet, so `AuditEvent` for them is still
@@ -135,6 +138,38 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
 
 - Role-based: `ADMIN`, `ATTORNEY`, `PARALEGAL`, `STAFF`
   (`prisma/schema.prisma`'s `UserRole` enum). **Implemented.**
+- **Client/Matter management role rule (added the ninth session):** neither
+  this document nor `docs/DATA_MODEL.md` previously said who may originate
+  a brand-new Client or Matter — every other write path checks an
+  *existing* `MatterAssignment`, but creating the very first record for a
+  case has no assignment to check yet. Rather than default to "any
+  logged-in user," a conservative rule was chosen and is now the
+  documented answer:
+  - Only `ADMIN` and `ATTORNEY` may create a Client or Matter, or edit a
+    Client's own fields (`lib/auth/authorization.ts#canManageClientsAndMatters`,
+    unit-tested in `tests/auth/authorization.test.ts`). Client records
+    aren't matter-scoped in the data model (one client can span several
+    matters with different staff), so this is a plain role gate, not a
+    per-client assignment check.
+  - Editing an *existing* Matter's own fields (or its `MatterAssignment`
+    roster) additionally requires the existing matter-level check: an
+    `ADMIN` always can; an `ATTORNEY` must actually be assigned to that
+    matter, not just hold the role
+    (`lib/auth/access.ts#canEditMatter`/`assertCanEditMatter`, tested in
+    `tests/auth/access.test.ts`). A submitted `matterId` the caller isn't
+    assigned to is denied exactly like a nonexistent one.
+  - `PARALEGAL`/`STAFF` are unaffected everywhere else: full read/write
+    access to Notes, Tasks, Calls, and Discovery on matters they're
+    assigned to, unchanged. This rule only gates the Client/Matter records
+    themselves and `MatterAssignment` membership.
+  - `app/(dashboard)/clients/*`, `app/(dashboard)/matters/new`, and
+    `app/(dashboard)/matters/[matterId]/edit` all call
+    `assertCanManageClientsAndMatters`/`assertCanEditMatter` and return the
+    same not-found page a nonexistent route would — same posture as
+    matter-level access. `components/shared/app-shell.tsx` also grays out
+    "Clients" in the sidebar for `PARALEGAL`/`STAFF`, but that's a UI
+    convenience only; the pages and Server Actions enforce it
+    independently regardless of what the sidebar shows.
 - **Matter-level access control**: being logged in is not enough. A user
   must be assigned to a matter (via `MatterAssignment`) or hold the
   `ADMIN` role to view or write that matter's data — this mirrors
@@ -168,6 +203,17 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
     {id, matterId}})`) before touching it — the same "scope every id by
     matterId, not just the top-level check" pattern `updateTaskStatus` and
     `attachCallToMatter` already use.
+  - `updateMatter`, `addMatterAssignment`, and `removeMatterAssignment`
+    (`lib/matters/actions.ts`, ninth session) apply the same pattern one
+    layer up: `canEditMatter` re-checks both the Client/Matter management
+    role *and* matter assignment for the submitted `matterId`, and
+    `removeMatterAssignment`'s delete is scoped by `{id: assignmentId,
+    matterId}` together — so an `assignmentId` belonging to a different
+    matter can never be removed through a matter the caller can edit, even
+    if they can edit *some* matter. `createMatter` similarly re-validates
+    every submitted `clientId` and assignment `userId` server-side (the
+    client must exist; every assigned user must exist and be `active`)
+    rather than trusting the form.
 - All authorization checks happen **server-side** — `proxy.ts` gates
   "is anyone logged in," and every Server Component that reads matter data
   re-checks independently rather than trusting the proxy alone (see
@@ -198,16 +244,30 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
   CalendarEvent, Communication, Call, Document, DiscoveryProduction, and
   DiscoveryFile produces an `AuditEvent` (see `docs/DATA_MODEL.md`).
   **Implemented so far** for: Note create, Task create, Task status
-  update, Call attach-to-matter (`lib/matters/actions.ts`), and Discovery
-  production create, file registration, Bates generation, and comparison
-  (`lib/discovery/actions.ts`). Every other entity/action in that list
-  still has no write path at all, so there's nothing yet to log for them
-  (see `docs/ROADMAP.md`).
+  update, Call attach-to-matter (`lib/matters/actions.ts`), Client
+  create/update, Matter create/update, MatterAssignment create/delete
+  (`lib/clients/actions.ts`, `lib/matters/actions.ts`, ninth session), and
+  Discovery production create, file registration, Bates generation, and
+  comparison (`lib/discovery/actions.ts`). Every other entity/action in
+  that list still has no write path at all, so there's nothing yet to log
+  for them (see `docs/ROADMAP.md`).
   - Registering a PDF logs **two** events: a `CREATE` for the file itself
     and a separate `UPDATE` carrying `metadata.event: "bates_generated"`
     with the assigned range — Bates generation is its own auditable action,
     not just a side effect of registration, per this document's original
     intent.
+  - `createMatter` similarly logs a `CREATE` `Matter` event plus one
+    `CREATE` `MatterAssignment` event per initial assignment — assigning
+    staff to a new matter is its own auditable action, not folded into the
+    matter's own event.
+  - `updateClient`/`updateMatter` log an `UPDATE` event with
+    `metadata.changed` containing only the fields that actually changed
+    (before/after), via a shared `lib/utils/index.ts#diffFields` helper —
+    a no-op edit produces no audit event at all. `Client.notes` is the one
+    field excluded from the diff itself: since it's free text up to 5,000
+    characters, the event only records `metadata.notesChanged: true`,
+    never the before/after content, so the audit log can't become a
+    second copy of potentially sensitive case notes.
 - Sensitive read actions that matter for accountability (e.g., viewing/
   exporting discovery, exporting a client's full file) should also be
   logged, not just writes. **Implemented** for discovery file downloads —

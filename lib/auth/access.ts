@@ -1,7 +1,13 @@
 import { notFound } from "next/navigation";
 
 import { prisma } from "@/lib/db";
-import { buildMatterIdFilter, buildMatterScopeFilter, canAccessMatter, isAdmin } from "@/lib/auth/authorization";
+import {
+  buildMatterIdFilter,
+  buildMatterScopeFilter,
+  canAccessMatter,
+  canManageClientsAndMatters,
+  isAdmin,
+} from "@/lib/auth/authorization";
 import type { AuthorizableUser } from "@/lib/auth/authorization";
 
 /** Matter ids `user` is assigned to. Meaningless (and unused) for admins. */
@@ -47,6 +53,40 @@ export async function hasMatterAccess(user: AuthorizableUser, matterId: string):
  */
 export async function assertMatterAccess(user: AuthorizableUser, matterId: string): Promise<void> {
   if (!(await hasMatterAccess(user, matterId))) {
+    notFound();
+  }
+}
+
+/**
+ * Enforces the Client/Matter creation-and-editing role rule (see
+ * lib/auth/authorization.ts#canManageClientsAndMatters) for a page render —
+ * a PARALEGAL/STAFF user hitting /clients or /matters/new directly gets the
+ * same not-found page as any other unauthorized route, not a distinguishable
+ * "forbidden" page.
+ */
+export function assertCanManageClientsAndMatters(user: AuthorizableUser): void {
+  if (!canManageClientsAndMatters(user)) {
+    notFound();
+  }
+}
+
+/**
+ * Can `user` edit an *existing* Matter's own fields (not its sub-resources)
+ * or its MatterAssignment roster? Admins always can. An ATTORNEY may, but
+ * only for a matter they're actually assigned to — editing a matter they
+ * have no other access to would bypass matter-level authorization entirely.
+ * PARALEGAL/STAFF never can, regardless of assignment (see
+ * lib/auth/authorization.ts#canManageClientsAndMatters).
+ */
+export async function canEditMatter(user: AuthorizableUser, matterId: string): Promise<boolean> {
+  if (isAdmin(user)) return true;
+  if (user.role !== "ATTORNEY") return false;
+  return hasMatterAccess(user, matterId);
+}
+
+/** Page-render form of `canEditMatter` — see `assertMatterAccess` above. */
+export async function assertCanEditMatter(user: AuthorizableUser, matterId: string): Promise<void> {
+  if (!(await canEditMatter(user, matterId))) {
     notFound();
   }
 }
