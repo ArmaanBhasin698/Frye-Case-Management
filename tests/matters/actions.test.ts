@@ -17,6 +17,8 @@ const { requireCurrentUserMock, hasMatterAccessMock, canEditMatterMock, prismaMo
       user: { findMany: vi.fn(), findUnique: vi.fn() },
       matter: { create: vi.fn(), update: vi.fn(), findUnique: vi.fn() },
       matterAssignment: { create: vi.fn(), deleteMany: vi.fn() },
+      deadline: { create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), findFirst: vi.fn() },
+      calendarEvent: { create: vi.fn(), update: vi.fn(), findFirst: vi.fn() },
       auditEvent: { create: vi.fn() },
     },
   }));
@@ -33,10 +35,15 @@ vi.mock("@/lib/db", () => ({ prisma: prismaMock }));
 const {
   addMatterAssignment,
   attachCallToMatter,
+  createCalendarEvent,
+  createDeadline,
   createMatter,
   createNote,
   createTask,
   removeMatterAssignment,
+  setDeadlineSatisfied,
+  updateCalendarEvent,
+  updateDeadline,
   updateMatter,
   updateTaskStatus,
 } = await import("@/lib/matters/actions");
@@ -439,6 +446,353 @@ describe("removeMatterAssignment", () => {
         entityType: "MatterAssignment",
         entityId: "assignment-1",
         matterId,
+      }),
+    });
+  });
+});
+
+describe("createDeadline", () => {
+  const validFields = {
+    matterId,
+    type: "FILING",
+    date: "2026-09-05",
+    description: "Deadline to file pretrial motions",
+    reminderDaysBefore: "10",
+  };
+
+  it("rejects a missing description before touching the database", async () => {
+    const result = await createDeadline(
+      { error: null },
+      matterFormData({ ...validFields, description: "" }),
+    );
+    expect(result?.error).toBeTruthy();
+    expect(prismaMock.deadline.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid date", async () => {
+    const result = await createDeadline(
+      { error: null },
+      matterFormData({ ...validFields, date: "not-a-date" }),
+    );
+    expect(result?.error).toBeTruthy();
+    expect(prismaMock.deadline.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects an out-of-range reminder value", async () => {
+    const result = await createDeadline(
+      { error: null },
+      matterFormData({ ...validFields, reminderDaysBefore: "9999" }),
+    );
+    expect(result?.error).toBeTruthy();
+    expect(prismaMock.deadline.create).not.toHaveBeenCalled();
+  });
+
+  it("denies creation when the user lacks matter access", async () => {
+    hasMatterAccessMock.mockResolvedValue(false);
+    const result = await createDeadline({ error: null }, matterFormData(validFields));
+    expect(result?.error).toBe("Not found or access denied.");
+    expect(prismaMock.deadline.create).not.toHaveBeenCalled();
+  });
+
+  it("creates the deadline with a default reminder and an audit event", async () => {
+    prismaMock.deadline.create.mockResolvedValue({ id: "deadline-1" });
+    const result = await createDeadline({ error: null }, matterFormData(validFields));
+    expect(result.error).toBeNull();
+    expect(prismaMock.deadline.create).toHaveBeenCalledWith({
+      data: {
+        matterId,
+        type: "FILING",
+        date: new Date("2026-09-05"),
+        description: "Deadline to file pretrial motions",
+        reminderDaysBefore: 10,
+      },
+    });
+    expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ action: "CREATE", entityType: "Deadline", entityId: "deadline-1", matterId }),
+    });
+  });
+
+  it("defaults reminderDaysBefore to 7 when omitted", async () => {
+    prismaMock.deadline.create.mockResolvedValue({ id: "deadline-2" });
+    const fieldsWithNoReminder: Record<string, string> = { ...validFields };
+    delete fieldsWithNoReminder.reminderDaysBefore;
+    await createDeadline({ error: null }, matterFormData(fieldsWithNoReminder));
+    expect(prismaMock.deadline.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ reminderDaysBefore: 7 }) }),
+    );
+  });
+});
+
+describe("updateDeadline", () => {
+  const deadlineId = "deadline-1";
+  const validFields = {
+    matterId,
+    deadlineId,
+    type: "FILING",
+    date: "2026-09-05",
+    description: "Amended filing deadline",
+    reminderDaysBefore: "10",
+  };
+
+  beforeEach(() => {
+    prismaMock.deadline.findFirst.mockResolvedValue({
+      type: "FILING",
+      date: new Date("2026-08-01"),
+      description: "Original filing deadline",
+      reminderDaysBefore: 7,
+    });
+  });
+
+  it("denies the update when the user lacks matter access", async () => {
+    hasMatterAccessMock.mockResolvedValue(false);
+    const result = await updateDeadline({ error: null }, matterFormData(validFields));
+    expect(result?.error).toBe("Not found or access denied.");
+    expect(prismaMock.deadline.update).not.toHaveBeenCalled();
+  });
+
+  it("scopes the lookup to the given matter, denying a cross-matter deadline id", async () => {
+    prismaMock.deadline.findFirst.mockResolvedValue(null);
+    const result = await updateDeadline({ error: null }, matterFormData(validFields));
+    expect(result?.error).toBe("Not found or access denied.");
+    expect(prismaMock.deadline.findFirst).toHaveBeenCalledWith({
+      where: { id: deadlineId, matterId },
+      select: { type: true, date: true, description: true, reminderDaysBefore: true },
+    });
+    expect(prismaMock.deadline.update).not.toHaveBeenCalled();
+  });
+
+  it("updates the deadline and writes an audit event with a before/after diff", async () => {
+    prismaMock.deadline.update.mockResolvedValue({});
+    const result = await updateDeadline({ error: null }, matterFormData(validFields));
+    expect(result.error).toBeNull();
+    expect(prismaMock.deadline.update).toHaveBeenCalledWith({
+      where: { id: deadlineId },
+      data: {
+        type: "FILING",
+        date: new Date("2026-09-05"),
+        description: "Amended filing deadline",
+        reminderDaysBefore: 10,
+      },
+    });
+    expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "UPDATE",
+        entityType: "Deadline",
+        entityId: deadlineId,
+        metadata: {
+          changed: expect.objectContaining({
+            description: { before: "Original filing deadline", after: "Amended filing deadline" },
+          }),
+        },
+      }),
+    });
+  });
+
+  it("writes no audit event when nothing actually changed", async () => {
+    prismaMock.deadline.findFirst.mockResolvedValue({
+      type: "FILING",
+      date: new Date("2026-09-05"),
+      description: "Amended filing deadline",
+      reminderDaysBefore: 10,
+    });
+    prismaMock.deadline.update.mockResolvedValue({});
+    await updateDeadline({ error: null }, matterFormData(validFields));
+    expect(prismaMock.auditEvent.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("setDeadlineSatisfied", () => {
+  it("denies the status change when the user lacks matter access", async () => {
+    hasMatterAccessMock.mockResolvedValue(false);
+    const result = await setDeadlineSatisfied({ matterId, deadlineId: "deadline-1", satisfied: true });
+    expect(result).toEqual({ ok: false, error: "Not found or access denied." });
+    expect(prismaMock.deadline.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("scopes the update to the given matter, so a deadline from another matter can't be toggled", async () => {
+    prismaMock.deadline.updateMany.mockResolvedValue({ count: 0 });
+    const result = await setDeadlineSatisfied({
+      matterId,
+      deadlineId: "deadline-in-other-matter",
+      satisfied: true,
+    });
+    expect(result.ok).toBe(false);
+    expect(prismaMock.deadline.updateMany).toHaveBeenCalledWith({
+      where: { id: "deadline-in-other-matter", matterId },
+      data: expect.objectContaining({ satisfied: true }),
+    });
+    expect(prismaMock.auditEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("marks a deadline satisfied, sets satisfiedAt, and writes an audit event", async () => {
+    prismaMock.deadline.updateMany.mockResolvedValue({ count: 1 });
+    const result = await setDeadlineSatisfied({ matterId, deadlineId: "deadline-1", satisfied: true });
+    expect(result).toEqual({ ok: true, data: undefined });
+    expect(prismaMock.deadline.updateMany).toHaveBeenCalledWith({
+      where: { id: "deadline-1", matterId },
+      data: { satisfied: true, satisfiedAt: expect.any(Date) },
+    });
+    expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "UPDATE",
+        entityType: "Deadline",
+        entityId: "deadline-1",
+        matterId,
+        metadata: { satisfied: true },
+      }),
+    });
+  });
+
+  it("marks a deadline incomplete and clears satisfiedAt", async () => {
+    prismaMock.deadline.updateMany.mockResolvedValue({ count: 1 });
+    await setDeadlineSatisfied({ matterId, deadlineId: "deadline-1", satisfied: false });
+    expect(prismaMock.deadline.updateMany).toHaveBeenCalledWith({
+      where: { id: "deadline-1", matterId },
+      data: { satisfied: false, satisfiedAt: null },
+    });
+  });
+});
+
+describe("createCalendarEvent", () => {
+  const validFields = {
+    matterId,
+    title: "Pretrial Conference",
+    type: "HEARING",
+    startTime: "2026-08-19T14:00",
+    endTime: "2026-08-19T14:30",
+    location: "Courtroom 4B",
+  };
+
+  it("rejects a missing title before touching the database", async () => {
+    const result = await createCalendarEvent(
+      { error: null },
+      matterFormData({ ...validFields, title: "" }),
+    );
+    expect(result?.error).toBeTruthy();
+    expect(prismaMock.calendarEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects an end time before the start time", async () => {
+    const result = await createCalendarEvent(
+      { error: null },
+      matterFormData({ ...validFields, startTime: "2026-08-19T14:00", endTime: "2026-08-19T13:00" }),
+    );
+    expect(result?.error).toBeTruthy();
+    expect(prismaMock.calendarEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("allows an event with no end time at all", async () => {
+    prismaMock.calendarEvent.create.mockResolvedValue({ id: "event-1" });
+    const fieldsWithNoEndTime: Record<string, string> = { ...validFields };
+    delete fieldsWithNoEndTime.endTime;
+    const result = await createCalendarEvent({ error: null }, matterFormData(fieldsWithNoEndTime));
+    expect(result.error).toBeNull();
+    expect(prismaMock.calendarEvent.create).toHaveBeenCalled();
+  });
+
+  it("denies creation when the user lacks matter access", async () => {
+    hasMatterAccessMock.mockResolvedValue(false);
+    const result = await createCalendarEvent({ error: null }, matterFormData(validFields));
+    expect(result?.error).toBe("Not found or access denied.");
+    expect(prismaMock.calendarEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("creates the event and an audit event", async () => {
+    prismaMock.calendarEvent.create.mockResolvedValue({ id: "event-1" });
+    const result = await createCalendarEvent({ error: null }, matterFormData(validFields));
+    expect(result.error).toBeNull();
+    expect(prismaMock.calendarEvent.create).toHaveBeenCalledWith({
+      data: {
+        matterId,
+        title: "Pretrial Conference",
+        type: "HEARING",
+        startTime: new Date("2026-08-19T14:00"),
+        endTime: new Date("2026-08-19T14:30"),
+        location: "Courtroom 4B",
+        notes: undefined,
+      },
+    });
+    expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ action: "CREATE", entityType: "CalendarEvent", entityId: "event-1", matterId }),
+    });
+  });
+});
+
+describe("updateCalendarEvent", () => {
+  const eventId = "event-1";
+  const validFields = {
+    matterId,
+    eventId,
+    title: "Pretrial Conference (rescheduled)",
+    type: "HEARING",
+    startTime: "2026-08-20T14:00",
+    endTime: "2026-08-20T14:30",
+    location: "Courtroom 4B",
+  };
+
+  beforeEach(() => {
+    prismaMock.calendarEvent.findFirst.mockResolvedValue({
+      title: "Pretrial Conference",
+      type: "HEARING",
+      startTime: new Date("2026-08-19T14:00:00.000Z"),
+      endTime: new Date("2026-08-19T14:30:00.000Z"),
+      location: "Courtroom 4B",
+      notes: null,
+    });
+  });
+
+  it("denies the update when the user lacks matter access", async () => {
+    hasMatterAccessMock.mockResolvedValue(false);
+    const result = await updateCalendarEvent({ error: null }, matterFormData(validFields));
+    expect(result?.error).toBe("Not found or access denied.");
+    expect(prismaMock.calendarEvent.update).not.toHaveBeenCalled();
+  });
+
+  it("scopes the lookup to the given matter, denying a cross-matter event id", async () => {
+    prismaMock.calendarEvent.findFirst.mockResolvedValue(null);
+    const result = await updateCalendarEvent({ error: null }, matterFormData(validFields));
+    expect(result?.error).toBe("Not found or access denied.");
+    expect(prismaMock.calendarEvent.findFirst).toHaveBeenCalledWith({
+      where: { id: eventId, matterId },
+      select: { title: true, type: true, startTime: true, endTime: true, location: true, notes: true },
+    });
+    expect(prismaMock.calendarEvent.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects an end time before the start time on edit too", async () => {
+    const result = await updateCalendarEvent(
+      { error: null },
+      matterFormData({ ...validFields, startTime: "2026-08-20T14:00", endTime: "2026-08-20T13:00" }),
+    );
+    expect(result?.error).toBeTruthy();
+    expect(prismaMock.calendarEvent.update).not.toHaveBeenCalled();
+  });
+
+  it("updates the event and writes an audit event with a before/after diff", async () => {
+    prismaMock.calendarEvent.update.mockResolvedValue({});
+    const result = await updateCalendarEvent({ error: null }, matterFormData(validFields));
+    expect(result.error).toBeNull();
+    expect(prismaMock.calendarEvent.update).toHaveBeenCalledWith({
+      where: { id: eventId },
+      data: {
+        title: "Pretrial Conference (rescheduled)",
+        type: "HEARING",
+        startTime: new Date("2026-08-20T14:00"),
+        endTime: new Date("2026-08-20T14:30"),
+        location: "Courtroom 4B",
+        notes: null,
+      },
+    });
+    expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "UPDATE",
+        entityType: "CalendarEvent",
+        entityId: eventId,
+        metadata: expect.objectContaining({
+          changed: expect.objectContaining({
+            title: { before: "Pretrial Conference", after: "Pretrial Conference (rescheduled)" },
+          }),
+        }),
       }),
     });
   });

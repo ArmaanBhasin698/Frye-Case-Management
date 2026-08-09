@@ -13,7 +13,7 @@ const TABS = [
   { segment: "calls", label: "Calls" },
   { segment: "notes", label: "Notes" },
   { segment: "tasks", label: "Tasks" },
-  { segment: "deadlines", label: "Deadlines" },
+  { segment: "deadlines", label: "Deadlines & Calendar" },
   { segment: "timeline", label: "Timeline" },
 ] as const;
 

@@ -203,19 +203,25 @@ Client/Matter deletion remains open for a future phase.
 - [x] Tasks (assignable, with status/priority) on a matter — create and
       Kanban drag-to-update-status are done (fifth-session milestone
       above); no edit/delete/reassign form yet.
-- [ ] Deadlines on a matter, with a simple upcoming-deadlines view —
-      *read-only view shipped; no create/edit form.*
+- [x] Deadlines on a matter, with a simple upcoming-deadlines view. Real
+      as of the tenth session (see milestone below) — create, edit, and a
+      mark complete/incomplete toggle all persist; the Matter Overview and
+      Dashboard's upcoming-dates widgets already read live data, so they
+      needed no changes to reflect real deadlines.
 - [x] Calendar events on a matter. `CalendarEvent` model exists and is
       shown (Matter Overview's "Upcoming key dates", Dashboard's "Upcoming
-      court dates & deadlines") — still no create/edit form.
+      court dates & deadlines") — create/edit real as of the tenth session
+      too (see milestone below), on the same "Deadlines & Calendar" tab.
 - [x] A per-matter timeline/activity view combining the above — now
       reflects live `AuditEvent` rows for Note/Task create, Task status
-      update, and Call attach (fifth-session milestone above); older
-      matters still carry seeded history from before those actions
-      existed.
+      update, Call attach (fifth-session milestone above), and Deadline/
+      CalendarEvent create/update/status-change (tenth session, see
+      milestone below); older matters still carry seeded history from
+      before those actions existed.
 
 **Exit criteria:** day-to-day case management (notes, tasks, deadlines,
-calendar) works without MyCase for a pilot matter.
+calendar) works without MyCase for a pilot matter. **Met as of the tenth
+session** — Notes/Tasks still lack edit/delete, tracked separately above.
 
 ## Milestone — Real Bates/hashing/comparison engine (sixth session)
 
@@ -410,6 +416,81 @@ throughout; nothing here touches storage.
 **Deliberately not done here:** Client/Matter *deletion* or archival (no
 safe pattern existed to build on, and the task explicitly scoped deletion
 out), reassigning a Matter to a different Client after creation, and any
+Dropbox/Vonage/Loop/MyCase/QuickBooks integration work.
+
+## Milestone — Deadlines & Calendar Events (tenth session)
+
+Phase 3's remaining gap closed: real Deadline and CalendarEvent create/edit
+workflows, following the same auth/matter-scoping/validation/audit
+conventions Notes, Tasks, and Calls already established. Dropbox
+authentication for the firm's real account remains deferred (requires
+staff 2FA) — `STORAGE_PROVIDER` stayed on `local` throughout; nothing here
+touches storage. No schema/migration changes were needed — every field
+used (`Deadline.satisfied`/`satisfiedAt`, `CalendarEvent.startTime`/
+`endTime`) already existed.
+
+- **New Deadline / Edit Deadline / Mark complete-incomplete**
+  (`lib/matters/actions.ts#createDeadline`/`updateDeadline`/
+  `setDeadlineSatisfied`, `components/shared/new-deadline-form.tsx`,
+  `deadline-list.tsx`) — all on the Matter's "Deadlines & Calendar" tab
+  (`app/(dashboard)/matters/[matterId]/deadlines/page.tsx`, renamed from
+  "Deadlines" since it now also hosts Calendar Events). Marking a deadline
+  satisfied/unsatisfied is a separate direct action (not a form submit),
+  matching the `updateTaskStatus` pattern from the fifth session.
+- **New Calendar Event / Edit Calendar Event**
+  (`#createCalendarEvent`/`updateCalendarEvent`,
+  `new-calendar-event-form.tsx`, `calendar-event-list.tsx`) — end time is
+  validated to be after start time when both are given; an event with no
+  end time is allowed (matches the existing nullable `endTime` column).
+- **Authorization rule: the existing matter-access rule, per this
+  session's explicit fallback instruction** — `hasMatterAccess` (any
+  assigned role), the *same* rule Notes/Tasks/Calls already use, not the
+  stricter `ADMIN`/`ATTORNEY` Client/Matter management rule from the ninth
+  session. Neither `docs/DATA_MODEL.md` nor `docs/SECURITY.md` specified a
+  stricter rule for Deadline/CalendarEvent, and unlike originating a
+  brand-new Client/Matter, editing one has an existing matter assignment
+  to check against — see docs/SECURITY.md's Authorization section for the
+  full reasoning.
+- Every submitted `matterId`/`deadlineId`/`eventId` is independently
+  scoped server-side: `updateDeadline`/`updateCalendarEvent` re-fetch the
+  record via `findFirst({where: {id, matterId}})` before editing it (the
+  same pattern `registerDiscoveryFile`/`runDiscoveryComparison` use for
+  `productionId`), and `setDeadlineSatisfied` scopes its `updateMany` by
+  `{id, matterId}` together like `updateTaskStatus` — a cross-matter id
+  can never be read or written through a matter the caller can access.
+- Real `AuditEvent`s: Deadline `CREATE`, a separate `UPDATE` for
+  `setDeadlineSatisfied` (its own auditable action, same reasoning as
+  Bates generation logging separately from file registration), a
+  field-diff `UPDATE` for `updateDeadline`, and CalendarEvent `CREATE`/
+  `UPDATE` (also a field-diff via the shared `diffFields` helper from the
+  ninth session).
+- Neither `Deadline` nor `CalendarEvent` has an assignee/attendee column in
+  `prisma/schema.prisma` (unlike `Task.assignedToId`), so their forms have
+  no staff picker and there's no user id to validate — adding one would be
+  a schema change, out of scope for this pass.
+- The Matter Overview's "Upcoming key dates" card and the Dashboard's
+  upcoming-dates widgets (`lib/dashboard/queries.ts#getUpcomingKeyDates`)
+  already read live `Deadline`/`CalendarEvent` rows from Postgres — they
+  needed **zero** code changes to reflect real writes, only
+  `revalidatePath("/")` calls in the new actions so their cache updates.
+- 23 new focused tests (`tests/matters/actions.test.ts`) covering creation
+  validation (including end-before-start rejection), edit authorization,
+  cross-matter id-scoping denial for both entities, status-change
+  persistence, and audit event generation (including the "no-op edit
+  writes no audit event" case).
+- Browser-verified end to end with fictional data (Playwright): create →
+  refresh → edit → persistence for both a Deadline and a Calendar Event,
+  mark-complete/incomplete surviving a refresh, the Timeline showing the
+  new audit events, a `STAFF` account unassigned to the test matter denied
+  its Deadlines & Calendar tab (404), and all of Notes/Tasks/Discovery/
+  Calls/Clients/Matters still rendering correctly afterward.
+
+**Deliberately not done here:** Deadline/CalendarEvent *deletion* (no safe
+pattern existed to build on, consistent with the ninth session's
+Client/Matter reasoning), an assignee/attendee field for either entity (no
+schema change made), a firm-wide standalone Calendar page (the sidebar's
+"Calendar" item is still the disabled/not-built-yet placeholder — Calendar
+Events exist per-matter only, same as Discovery/Tasks), and any
 Dropbox/Vonage/Loop/MyCase/QuickBooks integration work.
 
 ## Phase 4 — Discovery management (core differentiator)

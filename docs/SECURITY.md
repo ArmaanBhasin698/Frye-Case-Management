@@ -25,7 +25,8 @@ Also now real:
 
 - **Write actions** for Task status changes, Notes, Tasks, attaching a Call
   to a matter, Client create/edit, Matter create/edit, MatterAssignment
-  add/remove, and the Discovery/Bates engine (creating a production,
+  add/remove, Deadline create/update/status-change, CalendarEvent
+  create/update, and the Discovery/Bates engine (creating a production,
   registering a file, running a comparison) — see `lib/matters/actions.ts`,
   `lib/clients/actions.ts`, and `lib/discovery/actions.ts`. Each
   independently re-checks authentication and the relevant authorization
@@ -49,12 +50,11 @@ Also now real:
 
 Still **not implemented** (tracked in `docs/ROADMAP.md`):
 
-- Client/Matter *deletion* or archival (create/edit are real as of the
-  ninth session — see below), Deadline/CalendarEvent writes, Document
+- Client/Matter/Deadline/CalendarEvent *deletion* or archival (create/edit
+  are real as of the ninth and tenth sessions — see below), Document
   upload, logging a brand-new Call (only attaching an existing unfiled
-  one), Note/Task edit-delete, and Discovery production/file edit-delete —
-  none of those have a write path yet, so `AuditEvent` for them is still
-  only seeded demo data.
+  one), and Note/Task edit-delete — none of those have a write path yet,
+  so `AuditEvent` for them is still only seeded demo data.
 - The **production** Dropbox integration (a firm-wide app, a real per-matter
   folder convention, encrypted-at-rest token storage, monitoring) — see
   "Third-party integrations" below. What exists now is a development/test
@@ -214,6 +214,23 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
     every submitted `clientId` and assignment `userId` server-side (the
     client must exist; every assigned user must exist and be `active`)
     rather than trusting the form.
+  - **Deadlines and Calendar Events (tenth session)** use the plain
+    matter-access rule above — `hasMatterAccess`, the same as Notes/Tasks/
+    Calls — not the stricter `ADMIN`/`ATTORNEY` Client/Matter management
+    rule: neither `docs/DATA_MODEL.md` nor this document specified a
+    stricter rule for either entity, and per that session's explicit
+    fallback instruction, "any assigned role may manage them" is the
+    correct default (unlike originating a brand-new Client/Matter, editing
+    a Deadline/CalendarEvent has an existing matter assignment to check
+    against, same as every other per-matter sub-resource). `updateDeadline`
+    and `updateCalendarEvent` re-fetch the record scoped by `{id, matterId}`
+    together (`prisma.deadline.findFirst`/`calendarEvent.findFirst`) before
+    editing it, and `setDeadlineSatisfied` scopes its `updateMany` the same
+    way `updateTaskStatus` does — a `deadlineId`/`eventId` from a different
+    matter can never be read or written through a matter the caller can
+    access, even one they're genuinely assigned to. Neither model has an
+    assignee/attendee column in `prisma/schema.prisma`, so there's no user
+    id to validate for either write path.
 - All authorization checks happen **server-side** — `proxy.ts` gates
   "is anyone logged in," and every Server Component that reads matter data
   re-checks independently rather than trusting the proxy alone (see
@@ -246,11 +263,13 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
   **Implemented so far** for: Note create, Task create, Task status
   update, Call attach-to-matter (`lib/matters/actions.ts`), Client
   create/update, Matter create/update, MatterAssignment create/delete
-  (`lib/clients/actions.ts`, `lib/matters/actions.ts`, ninth session), and
-  Discovery production create, file registration, Bates generation, and
-  comparison (`lib/discovery/actions.ts`). Every other entity/action in
-  that list still has no write path at all, so there's nothing yet to log
-  for them (see `docs/ROADMAP.md`).
+  (`lib/clients/actions.ts`, `lib/matters/actions.ts`, ninth session),
+  Deadline create/update/status-change, CalendarEvent create/update
+  (`lib/matters/actions.ts`, tenth session), and Discovery production
+  create, file registration, Bates generation, and comparison
+  (`lib/discovery/actions.ts`). Every other entity/action in that list
+  still has no write path at all, so there's nothing yet to log for them
+  (see `docs/ROADMAP.md`).
   - Registering a PDF logs **two** events: a `CREATE` for the file itself
     and a separate `UPDATE` carrying `metadata.event: "bates_generated"`
     with the assigned range — Bates generation is its own auditable action,
@@ -260,14 +279,21 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
     `CREATE` `MatterAssignment` event per initial assignment — assigning
     staff to a new matter is its own auditable action, not folded into the
     matter's own event.
-  - `updateClient`/`updateMatter` log an `UPDATE` event with
-    `metadata.changed` containing only the fields that actually changed
-    (before/after), via a shared `lib/utils/index.ts#diffFields` helper —
-    a no-op edit produces no audit event at all. `Client.notes` is the one
-    field excluded from the diff itself: since it's free text up to 5,000
-    characters, the event only records `metadata.notesChanged: true`,
-    never the before/after content, so the audit log can't become a
-    second copy of potentially sensitive case notes.
+  - `updateClient`/`updateMatter`/`updateDeadline`/`updateCalendarEvent`
+    log an `UPDATE` event with `metadata.changed` containing only the
+    fields that actually changed (before/after), via a shared
+    `lib/utils/index.ts#diffFields` helper — a no-op edit produces no audit
+    event at all. `Client.notes` is the one field excluded from the diff
+    itself: since it's free text up to 5,000 characters, the event only
+    records `metadata.notesChanged: true`, never the before/after content,
+    so the audit log can't become a second copy of potentially sensitive
+    case notes.
+  - `setDeadlineSatisfied` logs its own `UPDATE` event
+    (`metadata: {satisfied}`) separately from `updateDeadline`'s
+    field-diff event — same reasoning as Bates generation above: marking a
+    deadline complete/incomplete is its own auditable action with legal
+    significance (see `docs/DATA_MODEL.md`'s note on why Deadline has its
+    own satisfied/audit lifecycle), not just an incidental field change.
 - Sensitive read actions that matter for accountability (e.g., viewing/
   exporting discovery, exporting a client's full file) should also be
   logged, not just writes. **Implemented** for discovery file downloads —
