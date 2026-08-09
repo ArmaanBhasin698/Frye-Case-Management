@@ -1,17 +1,7 @@
-import { format } from "date-fns";
-
 import { getMatterDocuments } from "@/lib/matters/queries";
-import { documentCategoryLabel } from "@/lib/matters/format";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { DocumentList } from "@/components/shared/document-list";
+import { UploadDocumentForm } from "@/components/shared/upload-document-form";
 
 export default async function MatterDocumentsPage({
   params,
@@ -23,45 +13,33 @@ export default async function MatterDocumentsPage({
 
   return (
     <div className="space-y-4">
-      <div className="rounded-md border border-dashed border-border bg-muted/40 p-3 text-sm text-muted-foreground">
-        Documents reference a Dropbox path — Dropbox is not connected yet, so links below are not
-        clickable (see docs/ARCHITECTURE.md).
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          {documents.length} {documents.length === 1 ? "document" : "documents"} on file.
+        </p>
+        <UploadDocumentForm matterId={matterId} />
       </div>
 
       <Card>
         <CardContent className="p-0">
-          {documents.length === 0 ? (
-            <p className="p-6 text-sm text-muted-foreground">No documents on file yet.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Title</TableHead>
-                  <TableHead>Category</TableHead>
-                  <TableHead>Dropbox path</TableHead>
-                  <TableHead>Uploaded by</TableHead>
-                  <TableHead>Uploaded</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {documents.map((doc) => (
-                  <TableRow key={doc.id}>
-                    <TableCell className="font-medium">{doc.title}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{documentCategoryLabel(doc.category)}</Badge>
-                    </TableCell>
-                    <TableCell className="max-w-xs truncate text-xs text-muted-foreground">
-                      {doc.dropboxPath}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{doc.uploadedBy.name}</TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {format(doc.uploadedAt, "MMM d, yyyy")}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <DocumentList
+            matterId={matterId}
+            documents={documents.map((doc) => ({
+              id: doc.id,
+              title: doc.title,
+              category: doc.category,
+              originalFilename: doc.originalFilename,
+              sizeBytes: doc.sizeBytes,
+              uploadedAt: doc.uploadedAt,
+              uploadedBy: doc.uploadedBy,
+              notes: doc.notes,
+              // Rows seeded before real upload support carry a fake,
+              // Dropbox-shaped path string with nothing actually stored
+              // behind them — only offer a download once there's real
+              // content (see docs/DATA_MODEL.md's Document entry).
+              hasStoredFile: doc.storageKey.startsWith("matters/"),
+            }))}
+          />
         </CardContent>
       </Card>
     </div>

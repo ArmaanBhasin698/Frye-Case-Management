@@ -61,12 +61,20 @@ validation + audit logging on every write — see `docs/SECURITY.md`):
   modified); comparing two productions classifies every file as
   New/Changed/Duplicate/Missing using stored hashes and filenames, not
   hand-picked results. See `lib/discovery/`.
+- **General (non-discovery) matter documents** — Upload Document and
+  editing a document's title/category/notes persist to Postgres and
+  `DocumentStore`; downloads stream through an authenticated route the
+  same way Discovery's do. Every upload gets a server-generated storage
+  key (never the raw filename, so two files sharing a name never collide
+  or overwrite each other) and a SHA-256 hash. See `lib/documents/`.
 - **Storage backend is swappable** — `lib/storage/DocumentStore` has two
   real implementations, chosen via `STORAGE_PROVIDER`: local disk
   (default) or a **development/test** Dropbox integration
   (`lib/storage/DropboxDocumentStore.ts`) that writes to a dedicated,
-  clearly-named test folder. Neither Discovery's logic nor its
-  authorization/audit behavior changes based on which one is active — see
+  clearly-named test folder. Both Discovery and general Documents talk to
+  whichever implementation is active through the same interface, so
+  neither one's logic nor its authorization/audit behavior changes based
+  on which is active — see
   "Dropbox (optional, for development/test only)" below to configure it.
 
 See "Demo login credentials" below to sign in, "What's mocked / not
@@ -241,21 +249,21 @@ this password anywhere real** — see `docs/SECURITY.md`.
 - **No Note/Task edit or delete.** Deadline and CalendarEvent create/edit
   are real as of the tenth session (see "Current status" above); their
   *deletion* wasn't built, same reasoning as Client/Matter above.
+- **No Document *deletion*.** Upload and metadata edit are real as of the
+  eleventh session (see "Current status" above); same reasoning as
+  Client/Matter/Deadline/CalendarEvent above.
 - **No production Dropbox, Vonage, Loop/HighLevel, MyCase, or QuickBooks
   integration.** A **development/test** Dropbox integration exists (see
   "Current status" and the setup steps above), but it's not the
   production integration: no firm-owned Dropbox app, no per-matter folder
   convention, no encrypted-at-rest token storage — see
   `docs/ARCHITECTURE.md`'s "Documents & Dropbox" section for the full
-  list. General (non-discovery) documents still show fake Dropbox paths
-  as plain text with no real file behind them either way; calls are
-  manually-seeded/attached rows, not pulled from Vonage. General
-  (non-discovery) document upload isn't built, so `DocumentStore` is only
-  wired up for Discovery so far.
-- **The Matter Overview's "Quick actions"** — Add Note and New Task link
-  to the tabs with the real forms; "Log a Call" (logging a *new* call, as
-  opposed to attaching an already-existing unfiled one) and "Upload
-  Document" still just show a "coming soon" message.
+  list; calls are manually-seeded/attached rows, not pulled from Vonage.
+- **The Matter Overview's "Quick actions"** — Add Note, New Task, New
+  Deadline, and Upload Document all link to the tab with the real form;
+  "Log a Call" (logging a *new* call, as opposed to attaching an
+  already-existing unfiled one) still has no write path — no Vonage
+  integration exists.
 - **Discovery productions/comparisons seeded before the Bates engine
   existed** (see `prisma/seed.ts`) remain in the database as illustrative
   historical data with no real stored files behind them — anything created
@@ -275,11 +283,11 @@ this password anywhere real** — see `docs/SECURITY.md`.
   `docs/SECURITY.md`'s "Implementation status" section for the full list.
 - **Audit logging covers every write listed in "Current status" above**
   (Client/Matter create/update, MatterAssignment add/remove, Deadline
-  create/update/status-change, and CalendarEvent create/update all
-  included, plus file downloads, logged as `EXPORT`), but login/logout and
+  create/update/status-change, CalendarEvent create/update, and Document
+  upload/metadata-edit all included, plus file downloads — Discovery and
+  general Documents both — logged as `EXPORT`), but login/logout and
   permission-denial events aren't logged yet, and neither are the
-  not-yet-built writes (Document upload, Note/Task edit, etc.) — see
-  `docs/SECURITY.md`.
+  not-yet-built writes (Note/Task edit, etc.) — see `docs/SECURITY.md`.
 
 ### Known limitations to address in the next phase
 
@@ -291,11 +299,13 @@ this password anywhere real** — see `docs/SECURITY.md`.
 - **No custom Bates starting number.** Every production starts numbering
   at 1 — there's no way to continue a physical/pre-existing Bates range
   from outside this system.
-- **Orphaned storage risk on a failed registration.** A discovery file's
-  bytes are written to `local-data/discovery-files/` before the database
-  row is created; if the DB write fails after a successful disk write, the
-  file is left on disk with no DB record pointing to it. Acceptable for a
-  local dev/demo store, worth revisiting before any real storage backend.
+- **Orphaned storage risk on a failed registration/upload.** A discovery
+  file's or general document's bytes are written to storage before the
+  database row is created; if the DB write fails after a successful
+  storage write, the file is left behind with no DB record pointing to it.
+  `DocumentStore` has no delete method, so there's nothing to clean up —
+  acceptable for a local dev/demo store, worth revisiting (along with
+  adding a delete method) before any real storage backend.
 - **Neither `DocumentStore` implementation is the final production storage
   backend.** `DropboxDocumentStore` is real, but it's a development/test
   integration (a personal-dev Dropbox app, a flat dev key scheme, an
@@ -308,6 +318,12 @@ this password anywhere real** — see `docs/SECURITY.md`.
   `prisma/schema.prisma` doesn't carry one for either model (unlike
   `Task.assignedToId`), so their New/Edit forms don't have a staff picker —
   adding one is a schema change, not just a UI gap.
+- **General Documents have no preview.** Uploaded files are stored and
+  served back byte-for-byte and are never opened, rendered, or transformed
+  server-side — downloading is the only way to view one. The upload
+  allowlist (PDF, Word, Excel, text, common image formats) is about
+  keeping the demo to ordinary case documents, not a content-scanning
+  security control.
 - **`datetime-local` inputs (Calendar Events) have no timezone field.** A
   submitted start/end time is parsed as the server process's local time,
   same simplification `Task.dueDate`'s plain `date` input already made —

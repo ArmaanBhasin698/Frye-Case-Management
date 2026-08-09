@@ -6,19 +6,15 @@ import { CalendarClock, FilePlus, PhoneCall, StickyNote, Upload } from "lucide-r
 
 import { Button } from "@/components/ui/button";
 
-const MOCKED_ACTIONS = [
-  { key: "call", label: "Log a Call", icon: PhoneCall },
-  { key: "document", label: "Upload Document", icon: Upload },
-] as const;
+const MOCKED_ACTIONS = [{ key: "call", label: "Log a Call", icon: PhoneCall }] as const;
 
 /**
- * "Add Note", "New Task", and "New Deadline" jump to the tab that has the
- * real form (see components/shared/new-note-form.tsx, new-task-form.tsx,
- * new-deadline-form.tsx — the Deadlines tab also hosts Calendar Events, see
- * app/(dashboard)/matters/[matterId]/deadlines/page.tsx). Logging a call and
- * uploading a document still have no write path (Vonage/Dropbox
- * integrations aren't built yet, see docs/ROADMAP.md) — those two remain
- * prototype-only.
+ * "Add Note", "New Task", "New Deadline", and "Upload Document" jump to
+ * the tab that has the real form (see components/shared/new-note-form.tsx,
+ * new-task-form.tsx, new-deadline-form.tsx — the Deadlines tab also hosts
+ * Calendar Events — and upload-document-form.tsx). Logging a brand-new
+ * call still has no write path (no Vonage integration, see
+ * docs/ROADMAP.md) — that one remains prototype-only.
  */
 export function QuickActions({ matterId }: { matterId: string }) {
   const [message, setMessage] = React.useState<string | null>(null);
@@ -42,6 +38,12 @@ export function QuickActions({ matterId }: { matterId: string }) {
           <Link href={`/matters/${matterId}/deadlines`}>
             <CalendarClock className="h-4 w-4" />
             New Deadline
+          </Link>
+        </Button>
+        <Button variant="outline" size="sm" asChild>
+          <Link href={`/matters/${matterId}/documents`}>
+            <Upload className="h-4 w-4" />
+            Upload Document
           </Link>
         </Button>
         {MOCKED_ACTIONS.map((action) => {

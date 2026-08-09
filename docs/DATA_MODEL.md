@@ -215,11 +215,23 @@ One line item of a comparison result.
   new/changed/duplicate rows, null for `missing` since by definition the
   file isn't in the newer production), `notes`.
 
-### Document
+### Document — real upload/download as of the tenth session
 General, non-discovery document.
 - `id`, `matterId` (FK), `category`
-  (`pleading` | `correspondence` | `contract` | `other`),
-  `dropboxPath`, `uploadedBy` (FK → User), `uploadedAt`, `notes`.
+  (`pleading` | `correspondence` | `contract` | `other`), `title`,
+  `storageKey`, `originalFilename` (nullable), `mimeType` (nullable),
+  `sizeBytes` (nullable), `contentHash` (nullable, SHA-256),
+  `uploadedBy` (FK → User), `uploadedAt`, `notes` (nullable).
+- **Implementation note:** `storageKey` is an opaque
+  `lib/storage/DocumentStore` key (renamed from `dropboxPath`, which held
+  the same kind of value but under a name that implied a literal Dropbox
+  API path even when `STORAGE_PROVIDER=local`) — see
+  `lib/documents/actions.ts#uploadDocument`. `originalFilename`/
+  `mimeType`/`sizeBytes`/`contentHash` are nullable because rows seeded
+  before this session have nothing actually stored behind them (same
+  pattern as `DiscoveryFile` rows seeded before the real Bates engine —
+  see below); anything uploaded through the Documents tab's UI populates
+  all four.
 
 ### AuditEvent
 Immutable log of who did what.

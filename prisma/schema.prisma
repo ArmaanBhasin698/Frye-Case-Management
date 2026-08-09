@@ -363,19 +363,32 @@ model DiscoveryFileMatch {
 }
 
 /// A general (non-discovery) document tied to a Matter — pleadings,
-/// correspondence, contracts. References a Dropbox path; the file itself
-/// is never stored in this application (see docs/ARCHITECTURE.md).
+/// correspondence, contracts. `storageKey` is an opaque
+/// `lib/storage/DocumentStore` key (local disk today, a Dropbox test
+/// folder if `STORAGE_PROVIDER=dropbox` — see docs/ARCHITECTURE.md), not a
+/// literal Dropbox API path; it's named generically on purpose so the
+/// storage backend can change without a schema change. Renamed from
+/// `dropboxPath` and given `originalFilename`/`mimeType`/`sizeBytes`/
+/// `contentHash` (tenth session, real upload/download support) — rows
+/// seeded before that session keep their old illustrative path strings in
+/// `storageKey` with the four new columns left null, since nothing is
+/// actually stored behind them (same pattern as DiscoveryFile rows seeded
+/// before the real Bates engine).
 model Document {
-  id           String           @id @default(cuid())
-  matterId     String
-  matter       Matter           @relation(fields: [matterId], references: [id], onDelete: Cascade)
-  category     DocumentCategory @default(OTHER)
-  title        String
-  dropboxPath  String
-  uploadedById String
-  uploadedBy   User             @relation(fields: [uploadedById], references: [id])
-  uploadedAt   DateTime         @default(now())
-  notes        String?
+  id               String           @id @default(cuid())
+  matterId         String
+  matter           Matter           @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  category         DocumentCategory @default(OTHER)
+  title            String
+  storageKey       String
+  originalFilename String?
+  mimeType         String?
+  sizeBytes        Int?
+  contentHash      String?
+  uploadedById     String
+  uploadedBy       User             @relation(fields: [uploadedById], references: [id])
+  uploadedAt       DateTime         @default(now())
+  notes            String?
 }
 
 /// A phone call. `matterId` is nullable to represent the "unfiled call"
