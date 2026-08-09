@@ -4,7 +4,14 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
-import type { AssignmentRole, MatterStatus, TaskPriority, TaskStatus } from "@prisma/client";
+import type {
+  AssignmentRole,
+  CalendarEventType,
+  DeadlineType,
+  MatterStatus,
+  TaskPriority,
+  TaskStatus,
+} from "@prisma/client";
 
 import { prisma } from "@/lib/db";
 import { canEditMatter, hasMatterAccess } from "@/lib/auth/access";
@@ -50,6 +57,18 @@ const ASSIGNMENT_ROLE_VALUES = [
   "PARALEGAL",
   "STAFF",
 ] as const satisfies readonly AssignmentRole[];
+const DEADLINE_TYPE_VALUES = [
+  "STATUTE_OF_LIMITATIONS",
+  "SPEEDY_TRIAL",
+  "FILING",
+  "OTHER",
+] as const satisfies readonly DeadlineType[];
+const CALENDAR_EVENT_TYPE_VALUES = [
+  "HEARING",
+  "DEPOSITION",
+  "MEETING",
+  "OTHER",
+] as const satisfies readonly CalendarEventType[];
 
 const cuid = z.string().min(1, "Required.");
 
@@ -612,4 +631,351 @@ export async function removeMatterAssignment(input: {
   revalidatePath(`/matters/${matterId}/edit`);
   revalidatePath(`/matters/${matterId}/timeline`);
   return { ok: true, data: undefined };
+}
+
+// --- Deadlines ---------------------------------------------------------
+//
+// Deadline has no docs/DATA_MODEL.md-stricter access rule of its own, so
+// per this pass's explicit fallback, it uses the same matter-access rule
+// as Notes/Tasks/Calls above (any assigned role, not just ADMIN/ATTORNEY —
+// unlike the Client/Matter management rule in the milestone above, which
+// only applies to originating a brand-new case record). Neither
+// `Deadline` nor `CalendarEvent` has an assignee/attendee column in
+// `prisma/schema.prisma`, so there's no user id to validate here.
+
+const deadlineFieldsSchema = z.object({
+  type: z.enum(DEADLINE_TYPE_VALUES),
+  date: z.string().refine((v) => !Number.isNaN(Date.parse(v)), "Invalid date."),
+  description: z.string().trim().min(1, "Description is required.").max(1_000, "Description is too long."),
+  reminderDaysBefore: z
+    .string()
+    .optional()
+    .transform((v) => (v ? Number(v) : 7))
+    .refine((v) => Number.isInteger(v) && v >= 0 && v <= 365, "Reminder days must be between 0 and 365."),
+});
+
+function readDeadlineFields(formData: FormData) {
+  return deadlineFieldsSchema.safeParse({
+    type: formData.get("type"),
+    date: formData.get("date"),
+    description: formData.get("description"),
+    reminderDaysBefore: formData.get("reminderDaysBefore") ?? undefined,
+  });
+}
+
+export async function createDeadline(
+  _prevState: FormActionState,
+  formData: FormData,
+): Promise<FormActionState> {
+  const user = await requireCurrentUser();
+
+  const matterId = String(formData.get("matterId") ?? "");
+  if (!matterId) {
+    return { error: NOT_FOUND.error };
+  }
+  const parsed = readDeadlineFields(formData);
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+  const { type, date, description, reminderDaysBefore } = parsed.data;
+
+  if (!(await hasMatterAccess(user, matterId))) {
+    return { error: NOT_FOUND.error };
+  }
+
+  const deadline = await prisma.deadline.create({
+    data: { matterId, type, date: new Date(date), description, reminderDaysBefore },
+  });
+
+  await prisma.auditEvent.create({
+    data: {
+      actorId: user.id,
+      action: "CREATE",
+      entityType: "Deadline",
+      entityId: deadline.id,
+      matterId,
+      metadata: { type, date },
+    },
+  });
+
+  revalidatePath(`/matters/${matterId}/deadlines`);
+  revalidatePath(`/matters/${matterId}`);
+  revalidatePath(`/matters/${matterId}/timeline`);
+  revalidatePath("/");
+  return { ...FORM_OK };
+}
+
+export async function updateDeadline(
+  _prevState: FormActionState,
+  formData: FormData,
+): Promise<FormActionState> {
+  const user = await requireCurrentUser();
+
+  const matterId = String(formData.get("matterId") ?? "");
+  const deadlineId = String(formData.get("deadlineId") ?? "");
+  if (!matterId || !deadlineId) {
+    return { error: NOT_FOUND.error };
+  }
+  const parsed = readDeadlineFields(formData);
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+  const { type, date, description, reminderDaysBefore } = parsed.data;
+
+  if (!(await hasMatterAccess(user, matterId))) {
+    return { error: NOT_FOUND.error };
+  }
+
+  // Scoped by matterId, not just id: a deadlineId from a different matter
+  // can never be edited through this matter, even by a caller who has
+  // legitimate write access to *some* matter.
+  const before = await prisma.deadline.findFirst({
+    where: { id: deadlineId, matterId },
+    select: { type: true, date: true, description: true, reminderDaysBefore: true },
+  });
+  if (!before) {
+    return { error: NOT_FOUND.error };
+  }
+
+  const nextDate = new Date(date);
+  await prisma.deadline.update({
+    where: { id: deadlineId },
+    data: { type, date: nextDate, description, reminderDaysBefore },
+  });
+
+  const changed = diffFields(before, { type, date: nextDate, description, reminderDaysBefore });
+  if (Object.keys(changed).length > 0) {
+    await prisma.auditEvent.create({
+      data: {
+        actorId: user.id,
+        action: "UPDATE",
+        entityType: "Deadline",
+        entityId: deadlineId,
+        matterId,
+        metadata: { changed },
+      },
+    });
+  }
+
+  revalidatePath(`/matters/${matterId}/deadlines`);
+  revalidatePath(`/matters/${matterId}`);
+  revalidatePath(`/matters/${matterId}/timeline`);
+  revalidatePath("/");
+  return { ...FORM_OK };
+}
+
+const setDeadlineSatisfiedSchema = z.object({
+  matterId: cuid,
+  deadlineId: cuid,
+  satisfied: z.boolean(),
+});
+
+/** Called directly from the Deadlines tab's complete/incomplete toggle, not a <form>. */
+export async function setDeadlineSatisfied(input: {
+  matterId: string;
+  deadlineId: string;
+  satisfied: boolean;
+}): Promise<ActionResult> {
+  const user = await requireCurrentUser();
+
+  const parsed = setDeadlineSatisfiedSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+  const { matterId, deadlineId, satisfied } = parsed.data;
+
+  if (!(await hasMatterAccess(user, matterId))) {
+    return NOT_FOUND;
+  }
+
+  const result = await prisma.deadline.updateMany({
+    where: { id: deadlineId, matterId },
+    data: { satisfied, satisfiedAt: satisfied ? new Date() : null },
+  });
+  if (result.count === 0) {
+    return NOT_FOUND;
+  }
+
+  await prisma.auditEvent.create({
+    data: {
+      actorId: user.id,
+      action: "UPDATE",
+      entityType: "Deadline",
+      entityId: deadlineId,
+      matterId,
+      metadata: { satisfied },
+    },
+  });
+
+  revalidatePath(`/matters/${matterId}/deadlines`);
+  revalidatePath(`/matters/${matterId}`);
+  revalidatePath(`/matters/${matterId}/timeline`);
+  revalidatePath("/");
+  return { ok: true, data: undefined };
+}
+
+// --- Calendar events -----------------------------------------------------
+//
+// Same matter-access rule as Deadlines above — no attendee/assignee field
+// exists on CalendarEvent to validate.
+
+const calendarEventFieldsSchema = z
+  .object({
+    title: z.string().trim().min(1, "Title is required.").max(200, "Title is too long."),
+    type: z.enum(CALENDAR_EVENT_TYPE_VALUES),
+    startTime: z.string().refine((v) => !Number.isNaN(Date.parse(v)), "Invalid start time."),
+    endTime: z
+      .string()
+      .optional()
+      .transform((v) => (v ? v : undefined))
+      .refine((v) => !v || !Number.isNaN(Date.parse(v)), "Invalid end time."),
+    location: z
+      .string()
+      .trim()
+      .max(300, "Location is too long.")
+      .optional()
+      .transform((v) => (v ? v : undefined)),
+    notes: z
+      .string()
+      .trim()
+      .max(2_000, "Notes are too long.")
+      .optional()
+      .transform((v) => (v ? v : undefined)),
+  })
+  .refine(
+    (data) => !data.endTime || new Date(data.endTime) > new Date(data.startTime),
+    { message: "End time must be after start time.", path: ["endTime"] },
+  );
+
+function readCalendarEventFields(formData: FormData) {
+  return calendarEventFieldsSchema.safeParse({
+    title: formData.get("title"),
+    type: formData.get("type"),
+    startTime: formData.get("startTime"),
+    endTime: formData.get("endTime") ?? undefined,
+    location: formData.get("location") ?? undefined,
+    notes: formData.get("notes") ?? undefined,
+  });
+}
+
+export async function createCalendarEvent(
+  _prevState: FormActionState,
+  formData: FormData,
+): Promise<FormActionState> {
+  const user = await requireCurrentUser();
+
+  const matterId = String(formData.get("matterId") ?? "");
+  if (!matterId) {
+    return { error: NOT_FOUND.error };
+  }
+  const parsed = readCalendarEventFields(formData);
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+  const { title, type, startTime, endTime, location, notes } = parsed.data;
+
+  if (!(await hasMatterAccess(user, matterId))) {
+    return { error: NOT_FOUND.error };
+  }
+
+  const event = await prisma.calendarEvent.create({
+    data: {
+      matterId,
+      title,
+      type,
+      startTime: new Date(startTime),
+      endTime: endTime ? new Date(endTime) : undefined,
+      location,
+      notes,
+    },
+  });
+
+  await prisma.auditEvent.create({
+    data: {
+      actorId: user.id,
+      action: "CREATE",
+      entityType: "CalendarEvent",
+      entityId: event.id,
+      matterId,
+      metadata: { type, startTime },
+    },
+  });
+
+  revalidatePath(`/matters/${matterId}/deadlines`);
+  revalidatePath(`/matters/${matterId}`);
+  revalidatePath(`/matters/${matterId}/timeline`);
+  revalidatePath("/");
+  return { ...FORM_OK };
+}
+
+export async function updateCalendarEvent(
+  _prevState: FormActionState,
+  formData: FormData,
+): Promise<FormActionState> {
+  const user = await requireCurrentUser();
+
+  const matterId = String(formData.get("matterId") ?? "");
+  const eventId = String(formData.get("eventId") ?? "");
+  if (!matterId || !eventId) {
+    return { error: NOT_FOUND.error };
+  }
+  const parsed = readCalendarEventFields(formData);
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+  const { title, type, startTime, endTime, location, notes } = parsed.data;
+
+  if (!(await hasMatterAccess(user, matterId))) {
+    return { error: NOT_FOUND.error };
+  }
+
+  // Scoped by matterId, same as updateDeadline above.
+  const before = await prisma.calendarEvent.findFirst({
+    where: { id: eventId, matterId },
+    select: { title: true, type: true, startTime: true, endTime: true, location: true, notes: true },
+  });
+  if (!before) {
+    return { error: NOT_FOUND.error };
+  }
+
+  const nextStartTime = new Date(startTime);
+  const nextEndTime = endTime ? new Date(endTime) : null;
+  await prisma.calendarEvent.update({
+    where: { id: eventId },
+    data: {
+      title,
+      type,
+      startTime: nextStartTime,
+      endTime: nextEndTime,
+      location: location ?? null,
+      notes: notes ?? null,
+    },
+  });
+
+  const changed = diffFields(before, {
+    title,
+    type,
+    startTime: nextStartTime,
+    endTime: nextEndTime,
+    location: location ?? null,
+    notes: notes ?? null,
+  });
+  if (Object.keys(changed).length > 0) {
+    await prisma.auditEvent.create({
+      data: {
+        actorId: user.id,
+        action: "UPDATE",
+        entityType: "CalendarEvent",
+        entityId: eventId,
+        matterId,
+        metadata: { changed },
+      },
+    });
+  }
+
+  revalidatePath(`/matters/${matterId}/deadlines`);
+  revalidatePath(`/matters/${matterId}`);
+  revalidatePath(`/matters/${matterId}/timeline`);
+  revalidatePath("/");
+  return { ...FORM_OK };
 }

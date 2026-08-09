@@ -1,10 +1,8 @@
-import { format } from "date-fns";
-import { AlertTriangle, CheckCircle2 } from "lucide-react";
-
-import { getMatterDeadlines } from "@/lib/matters/queries";
-import { deadlineTypeLabel } from "@/lib/matters/format";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { getMatterCalendarEvents, getMatterDeadlines } from "@/lib/matters/queries";
+import { DeadlineList } from "@/components/shared/deadline-list";
+import { NewDeadlineForm } from "@/components/shared/new-deadline-form";
+import { CalendarEventList } from "@/components/shared/calendar-event-list";
+import { NewCalendarEventForm } from "@/components/shared/new-calendar-event-form";
 
 export default async function MatterDeadlinesPage({
   params,
@@ -12,36 +10,28 @@ export default async function MatterDeadlinesPage({
   params: Promise<{ matterId: string }>;
 }) {
   const { matterId } = await params;
-  const deadlines = await getMatterDeadlines(matterId);
-
-  if (deadlines.length === 0) {
-    return <p className="text-sm text-muted-foreground">No deadlines recorded for this matter.</p>;
-  }
+  const [deadlines, events] = await Promise.all([
+    getMatterDeadlines(matterId),
+    getMatterCalendarEvents(matterId),
+  ]);
 
   return (
-    <div className="space-y-3">
-      {deadlines.map((deadline) => (
-        <Card key={deadline.id}>
-          <CardContent className="flex items-start justify-between gap-3 p-4">
-            <div className="flex items-start gap-3">
-              {deadline.satisfied ? (
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-              ) : (
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-              )}
-              <div>
-                <p className="text-sm font-medium text-foreground">{deadline.description}</p>
-                <p className="text-xs text-muted-foreground">
-                  {deadlineTypeLabel(deadline.type)} &middot; {format(deadline.date, "MMM d, yyyy")}
-                </p>
-              </div>
-            </div>
-            <Badge variant={deadline.satisfied ? "success" : "outline"}>
-              {deadline.satisfied ? "Satisfied" : "Upcoming"}
-            </Badge>
-          </CardContent>
-        </Card>
-      ))}
+    <div className="space-y-8">
+      <section className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold text-foreground">Deadlines</h2>
+          <NewDeadlineForm matterId={matterId} />
+        </div>
+        <DeadlineList matterId={matterId} deadlines={deadlines} />
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold text-foreground">Calendar Events</h2>
+          <NewCalendarEventForm matterId={matterId} />
+        </div>
+        <CalendarEventList matterId={matterId} events={events} />
+      </section>
     </div>
   );
 }

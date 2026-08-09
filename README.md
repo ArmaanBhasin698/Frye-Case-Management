@@ -23,7 +23,8 @@ architecture rules, security requirements, coding standards) and the
 and a real Discovery/Bates engine — not just a read-only visual
 prototype.** The app runs with a firm-wide Dashboard, a Matters list, and
 a Matter detail view (Overview, Discovery, Documents, Calls, Notes, Tasks,
-Deadlines, Timeline tabs) backed by a real Postgres database via Prisma.
+Deadlines & Calendar, Timeline tabs) backed by a real Postgres database via
+Prisma.
 
 What's genuinely real, end to end (server-side auth + authorization + Zod
 validation + audit logging on every write — see `docs/SECURITY.md`):
@@ -41,6 +42,14 @@ validation + audit logging on every write — see `docs/SECURITY.md`):
 - **Notes, tasks, and task status** — Add Note and New Task persist to
   Postgres; the Kanban board's drag-and-drop persists a task's status and
   survives a refresh (optimistic UI, reverts if the write fails).
+- **Deadlines and Calendar Events** — New Deadline, Edit Deadline, and a
+  Mark complete/incomplete toggle (`Deadline.satisfied`/`satisfiedAt`) all
+  persist; New Event and Edit Event persist too (end time is validated to
+  be after start time). Both live on the Matter's "Deadlines & Calendar"
+  tab, use the same matter-access rule as Notes/Tasks/Calls (any assigned
+  role, not the stricter Client/Matter `ADMIN`/`ATTORNEY` rule above), and
+  automatically show up in the Matter Overview's "Upcoming key dates" and
+  the Dashboard's upcoming-dates widgets, which already read live data.
 - **Attaching an unfiled call to a matter** — persists `Call.matterId`,
   survives a refresh.
 - **The audit Timeline** — reflects real `AuditEvent` rows produced by the
@@ -229,8 +238,9 @@ this password anywhere real** — see `docs/SECURITY.md`.
   the existing architecture has no defined safe archival/deactivation
   pattern to build it on yet (a closed `Matter` just gets `status: CLOSED`,
   which already existed).
-- **No Note/Task edit or delete**, no Deadline or CalendarEvent writes —
-  those tabs are still read-only views over seed data.
+- **No Note/Task edit or delete.** Deadline and CalendarEvent create/edit
+  are real as of the tenth session (see "Current status" above); their
+  *deletion* wasn't built, same reasoning as Client/Matter above.
 - **No production Dropbox, Vonage, Loop/HighLevel, MyCase, or QuickBooks
   integration.** A **development/test** Dropbox integration exists (see
   "Current status" and the setup steps above), but it's not the
@@ -264,10 +274,11 @@ this password anywhere real** — see `docs/SECURITY.md`.
   once real staff accounts or real case data are involved — see
   `docs/SECURITY.md`'s "Implementation status" section for the full list.
 - **Audit logging covers every write listed in "Current status" above**
-  (Client/Matter create/update and MatterAssignment add/remove included,
-  plus file downloads, logged as `EXPORT`), but login/logout and
+  (Client/Matter create/update, MatterAssignment add/remove, Deadline
+  create/update/status-change, and CalendarEvent create/update all
+  included, plus file downloads, logged as `EXPORT`), but login/logout and
   permission-denial events aren't logged yet, and neither are the
-  not-yet-built writes (Deadline/CalendarEvent/etc.) — see
+  not-yet-built writes (Document upload, Note/Task edit, etc.) — see
   `docs/SECURITY.md`.
 
 ### Known limitations to address in the next phase
@@ -293,6 +304,15 @@ this password anywhere real** — see `docs/SECURITY.md`.
   credential storage before this system holds anything but fictional
   test files. No migration tooling exists to move files already on local
   disk into Dropbox (or vice versa) if the active provider changes.
+- **Deadline and CalendarEvent have no assignee/attendee field.**
+  `prisma/schema.prisma` doesn't carry one for either model (unlike
+  `Task.assignedToId`), so their New/Edit forms don't have a staff picker —
+  adding one is a schema change, not just a UI gap.
+- **`datetime-local` inputs (Calendar Events) have no timezone field.** A
+  submitted start/end time is parsed as the server process's local time,
+  same simplification `Task.dueDate`'s plain `date` input already made —
+  fine for a single-timezone dev/demo firm, worth revisiting before any
+  multi-timezone or production deployment.
 
 ## Working with confidential data
 
