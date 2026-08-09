@@ -496,8 +496,9 @@ used (`Deadline.satisfied`/`satisfiedAt`, `CalendarEvent.startTime`/
 pattern existed to build on, consistent with the ninth session's
 Client/Matter reasoning), an assignee/attendee field for either entity (no
 schema change made), a firm-wide standalone Calendar page (the sidebar's
-"Calendar" item is still the disabled/not-built-yet placeholder — Calendar
-Events exist per-matter only, same as Discovery/Tasks), and any
+"Calendar" item was still the disabled/not-built-yet placeholder — Calendar
+Events existed per-matter only, same as Discovery/Tasks; built in the
+thirteenth session, see milestone below), and any
 Dropbox/Vonage/Loop/MyCase/QuickBooks integration work.
 
 ## Milestone — General matter document upload/download (eleventh session)
@@ -668,6 +669,93 @@ No schema/migration changes were needed — `Note.updatedAt` and
 pattern exists yet, same reasoning as Client/Matter/Deadline/
 CalendarEvent/Document), and any Dropbox/Vonage/Loop/MyCase/QuickBooks
 integration work.
+
+## Milestone — Firm-wide Tasks & Calendar (thirteenth session)
+
+Turns the sidebar's long-disabled "Tasks" and "Calendar" items into real
+authorized aggregate views — the first firm-wide sections built for either
+entity. Deliberately **not** a new Task/Deadline/CalendarEvent record or a
+second CRUD path: both pages read the exact same rows the per-matter Tasks
+tab and Deadlines & Calendar tab already write, just across every matter
+the current user may see. No schema/migration changes were needed. First
+development pass run locally in VS Code rather than Claude Code Web.
+
+- **`lib/tasks/queries.ts#getFirmWideTasks`** — the query behind
+  `app/(dashboard)/tasks`. Scopes with `matterScopeFilterFor`
+  (`lib/auth/access.ts`), the same helper `lib/dashboard/queries.ts`'s
+  firm-wide widgets already use: an `ADMIN` gets no restriction, everyone
+  else gets `{ matterId: { in: assignedMatterIds } }`. Every filter
+  (status, priority, assignee, matter, overdue-only) is combined with that
+  scope via `AND` — there is no code path that queries Task without it.
+- **`lib/calendar/queries.ts#getFirmWideCalendarItems`** — the query behind
+  `app/(dashboard)/calendar`. Runs the same scoped-`Deadline`/scoped-
+  `CalendarEvent` pattern `lib/dashboard/queries.ts#getUpcomingKeyDates`
+  already established for the Dashboard's "Upcoming court dates &
+  deadlines" widget, merges the two into one chronological list, and adds
+  filters (matter, deadline vs. event, satisfied vs. open, upcoming vs.
+  include-past) — each combined with the matter scope the same way.
+- Both pages are plain Server Components reading the Next.js `searchParams`
+  page prop (validated against a fixed allowlist before reaching Prisma —
+  an unrecognized value is treated as "no filter," never passed through
+  raw) and a small client-only filter bar
+  (`components/shared/task-filter-bar.tsx`,
+  `calendar-filter-bar.tsx`) that only builds a query string and navigates
+  — it never fetches or filters data itself, and deliberately avoids
+  `useSearchParams`/`Suspense` by taking the current filter values as
+  props instead.
+- Every row links back to the existing per-matter workflow rather than
+  duplicating it: a task's title links to that matter's Tasks tab (the
+  real Kanban board and edit form), a deadline/event links to that
+  matter's Deadlines & Calendar tab, and the matter name links to the
+  Matter Overview. No new write path was added.
+- The matter and assignee filter dropdowns are themselves
+  authorization-safe: the matter list comes from `listMatters(user)`
+  (already scoped, `lib/matters/queries.ts`), so a restricted user's
+  filter dropdown can never name a matter they can't open — verified by
+  browser testing (see below) that the dropdown options themselves never
+  leak an unauthorized matter's case number.
+- Sidebar: `components/shared/app-shell.tsx`'s "Tasks" and "Calendar" items
+  are no longer `disabled` — same active-state/navigation styling as
+  Dashboard/Matters/Clients, no shell redesign.
+- Time handling is unchanged from the per-matter Deadlines & Calendar tab:
+  `CalendarEvent.startTime`/`endTime` are still interpreted as the server's
+  local time (no timezone field exists on the model — see README's "Known
+  limitations"), and this pass does not attempt a partial timezone fix.
+- The Dashboard's existing `getOpenTasksAcrossMatters`/`getUpcomingKeyDates`
+  widgets (`lib/dashboard/queries.ts`) were deliberately left as-is rather
+  than rewired onto the new helpers — they already call the same
+  underlying `matterScopeFilterFor`/`matterIdFilterFor` authorization
+  primitives the new helpers do (so there's no duplicated *authorization*
+  logic), and refactoring a small, already-tested, working Dashboard for
+  a filter/sort feature it doesn't need was judged unnecessary risk for
+  this pass.
+- 30 new focused tests (`tests/tasks/queries.test.ts`,
+  `tests/calendar/queries.test.ts`) covering ADMIN-sees-everything,
+  non-admin-sees-only-assigned-matters, an explicit "never returns a
+  row from an unassigned matter" case (simulating Prisma's actual
+  `matterId: { in }` filtering against a fixture containing both an
+  authorized and an unauthorized row, asserting the unauthorized title
+  never appears in the result or its JSON), empty-result handling with
+  no assigned matters, filter/sort combination correctness, and
+  deadline-satisfied-state pass-through.
+- Browser-verified against the local dev server (fictional seed data,
+  `STORAGE_PROVIDER=local`) using the real Auth.js credentials flow (not a
+  mocked session): `alex.rivera` (`ADMIN`) sees tasks/deadlines/events
+  across all four seeded matters on both new pages; `taylor.brooks`
+  (`STAFF`, assigned only to State v. Patel) sees only State v. Patel's
+  tasks/deadlines/events on both pages, and that matter is the *only*
+  option in either page's matter filter dropdown; filtering by
+  status/priority and sorting by priority visibly change the result count
+  and order; direct navigation to an unauthorized matter still returns the
+  same generic 404; and Notes/Tasks/Documents/Discovery/Calls/Deadlines &
+  Calendar/Dashboard/Matters/Clients all continued to render and function
+  correctly afterward.
+
+**Deliberately not done here:** any new Task/Deadline/CalendarEvent write
+path (this was an aggregate/read/navigation pass, per its own scope), a
+firm-wide Reports section (Phase 7, below — this pass only covers Tasks
+and Calendar), and any Dropbox/Vonage/Loop/MyCase/QuickBooks integration
+work.
 
 ## Phase 4 — Discovery management (core differentiator)
 
