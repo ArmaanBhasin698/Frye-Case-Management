@@ -28,15 +28,10 @@ export async function matterScopeFilterFor(user: AuthorizableUser) {
 }
 
 /**
- * Enforces matter-level authorization for a single matter (see CLAUDE.md,
- * section 4.4). Renders the standard Next.js not-found page rather than an
- * "access denied" message so an unauthorized user can't distinguish "this
- * matter doesn't exist" from "you can't see this matter."
- */
-/**
- * Boolean form of the same access decision, for call sites that can't use
- * `notFound()` (Server Actions invoked from client code, not a page
- * render). Page renders should keep using `assertMatterAccess` below.
+ * Boolean form of the matter-access decision, for call sites that can't
+ * use `notFound()` (Server Actions invoked from client code, not a page
+ * render — see lib/matters/actions.ts, lib/discovery/actions.ts). Page
+ * renders should use `assertMatterAccess` below instead.
  */
 export async function hasMatterAccess(user: AuthorizableUser, matterId: string): Promise<boolean> {
   if (isAdmin(user)) return true;
@@ -44,6 +39,12 @@ export async function hasMatterAccess(user: AuthorizableUser, matterId: string):
   return canAccessMatter(user, assignedMatterIds, matterId);
 }
 
+/**
+ * Enforces matter-level authorization for a single matter (see CLAUDE.md,
+ * section 4.4). Renders the standard Next.js not-found page rather than an
+ * "access denied" message so an unauthorized user can't distinguish "this
+ * matter doesn't exist" from "you can't see this matter."
+ */
 export async function assertMatterAccess(user: AuthorizableUser, matterId: string): Promise<void> {
   if (!(await hasMatterAccess(user, matterId))) {
     notFound();

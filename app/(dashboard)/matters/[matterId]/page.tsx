@@ -14,6 +14,7 @@ import {
 } from "@/lib/matters/queries";
 import {
   assignmentRoleLabel,
+  auditActionPastTense,
   calendarEventTypeLabel,
   daysUntil,
   deadlineTypeLabel,
@@ -150,7 +151,7 @@ export default async function MatterOverviewPage({
                       <span className="text-muted-foreground">
                         {format(event.occurredAt, "MMM d, yyyy")}
                       </span>{" "}
-                      &mdash; {event.actor?.name ?? "System"} {event.action.toLowerCase()}d a{" "}
+                      &mdash; {event.actor?.name ?? "System"} {auditActionPastTense(event.action)} a{" "}
                       {humanizeEntityType(event.entityType)}
                     </li>
                   ))}

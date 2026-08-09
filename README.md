@@ -19,24 +19,38 @@ architecture rules, security requirements, coding standards) and the
 
 ## Current status
 
-**Polished visual prototype with real authentication, built on the
-Matters vertical slice.** The app runs with a firm-wide Dashboard, a
-Matters list, and a Matter detail view (Overview, Discovery, Documents,
-Calls, Notes, Tasks, Deadlines, Timeline tabs) backed by a real Postgres
-database via Prisma. The Discovery tab demos a New/Changed/Duplicate/
-Missing production comparison, the Calls tab demos attaching an unfiled
-call to a matter, and Tasks is a drag-and-drop Kanban board — all on
-fictional seeded data, all clearly marked where the interaction is
-UI-only.
+**A functional MVP core with real authentication, real persistent writes,
+and a real Discovery/Bates engine — not just a read-only visual
+prototype.** The app runs with a firm-wide Dashboard, a Matters list, and
+a Matter detail view (Overview, Discovery, Documents, Calls, Notes, Tasks,
+Deadlines, Timeline tabs) backed by a real Postgres database via Prisma.
 
-Login is real: Auth.js (credentials, fictional dev users) gates every
-page, and matter-level authorization is enforced server-side — admins see
-every matter, everyone else only sees matters they're assigned to,
-including on a direct URL to a matter they don't have. See "Demo login
-credentials" below to sign in, and
-[`docs/ROADMAP.md`](./docs/ROADMAP.md) for exactly what's built vs.
-planned, and "What's mocked / not implemented yet" below for what auth
-does *not* cover yet (no create/edit forms, no MFA, no rate limiting).
+What's genuinely real, end to end (server-side auth + authorization + Zod
+validation + audit logging on every write — see `docs/SECURITY.md`):
+
+- **Login/logout and matter-level authorization** — Auth.js (credentials,
+  fictional dev users); admins see every matter, everyone else only what
+  they're assigned to, including on a direct URL to a matter they don't
+  have (a 404, not a distinguishable "access denied").
+- **Notes, tasks, and task status** — Add Note and New Task persist to
+  Postgres; the Kanban board's drag-and-drop persists a task's status and
+  survives a refresh (optimistic UI, reverts if the write fails).
+- **Attaching an unfiled call to a matter** — persists `Call.matterId`,
+  survives a refresh.
+- **The audit Timeline** — reflects real `AuditEvent` rows produced by the
+  writes above, not just seed data.
+- **Discovery/Bates engine** — creating a production, registering a file
+  (PDF, video, audio, photo, or other), and comparing two productions are
+  all real: registering a file computes a SHA-256 hash and, for PDFs,
+  generates a separate Bates-stamped derivative (the original is never
+  modified); comparing two productions classifies every file as
+  New/Changed/Duplicate/Missing using stored hashes and filenames, not
+  hand-picked results. See `lib/discovery/`.
+
+See "Demo login credentials" below to sign in, "What's mocked / not
+implemented yet" below for exactly what still isn't real, and
+[`docs/ROADMAP.md`](./docs/ROADMAP.md) for the full session-by-session
+history of what's built vs. planned.
 
 ## Tech stack
 
@@ -45,6 +59,7 @@ does *not* cover yet (no create/edit forms, no MFA, no rate limiting).
 - [shadcn/ui](https://ui.shadcn.com/) primitives + Tailwind CSS
 - [Auth.js](https://authjs.dev/) (NextAuth v5) — Credentials provider,
   JWT sessions, no OAuth/SSO provider configured
+- [pdf-lib](https://pdf-lib.js.org/) for PDF page counting and Bates stamping
 - [Vitest](https://vitest.dev/) for unit tests
 
 ## Getting started
@@ -82,6 +97,17 @@ npm run dev
 Then visit http://localhost:3000 — it redirects to `/login`. Sign in with
 any account from the table below.
 
+### Opening in VS Code
+
+No project-specific VS Code configuration is required — clone the repo,
+open the folder, and follow the steps above in the integrated terminal.
+Recommended extensions (not required, just nicer): **Prisma**
+(`Prisma.prisma`, for `.prisma` syntax highlighting), **ESLint**
+(`dbaeumer.vscode-eslint`), and **Tailwind CSS IntelliSense**
+(`bradlc.vscode-tailwindcss`). TypeScript strict-mode errors and ESLint
+warnings both surface inline once those are installed — the same checks
+`npm run typecheck` and `npm run lint` run from the CLI.
+
 ### Demo login credentials
 
 All accounts are fictional, seeded by `prisma/seed.ts`, and share one
@@ -116,50 +142,65 @@ this password anywhere real** — see `docs/SECURITY.md`.
 
 ## What's mocked / not implemented yet
 
-This is intentionally a small slice. Not real, not built, or not wired up
-yet:
-
-- **Authentication and matter-level authorization are real** (Auth.js,
-  credentials login, server-side enforcement — see `docs/SECURITY.md`),
-  but several things around them are still dev-only or missing: no MFA,
-  no rate-limiting/lockout on failed logins, no forced sign-out when a
-  user's role or assignments change mid-session, no HTTPS enforcement,
-  and every seeded account shares one password. None of this is
-  acceptable once real staff accounts or real case data are involved —
-  see `docs/SECURITY.md`'s "Implementation status" section for the full
-  list.
-- **No create/edit forms.** Everything currently on screen is read-only,
-  rendered from seed data — there's no way yet to add a matter, note, task,
-  etc. through the UI. The Matter Overview's "Quick actions" buttons (Add
-  Note, Log a Call, Upload Document, New Task) show what the entry point
-  will feel like but only display a "coming soon" message.
+- **No Client/Matter create-edit-delete.** You can't add a client or
+  matter, or edit/delete one, through the UI yet — only the writes listed
+  in "Current status" above exist (Notes, Tasks, Task status, Call attach,
+  Discovery production/file/comparison). `MatterAssignment` (who's staffed
+  on a matter) is display-only, no UI to change it.
+- **No Note/Task edit or delete**, no Deadline or CalendarEvent writes —
+  those tabs are still read-only views over seed data.
 - **No Dropbox, Vonage, Loop/HighLevel, MyCase, or QuickBooks integration.**
-  General (non-discovery) documents show fake Dropbox paths as plain text;
-  calls are manually-seeded rows, not pulled from Vonage. Discovery files
-  are stored on local disk (`lib/storage/DocumentStore`) as a stand-in
-  behind the same interface Dropbox will eventually implement.
-- **Bates numbering and discovery comparison are real** for anything
-  created through the Discovery tab: registering a PDF hashes it, reads
-  its page count, and generates a separate Bates-stamped derivative
-  (original untouched); "Compare" classifies files as New/Changed/
-  Duplicate/Missing using stored hashes and filenames (`lib/discovery/`).
-  Productions/comparisons seeded before this feature existed remain as
-  illustrative historical demo data with no real stored files behind them.
-- **Tasks board drag-and-drop is UI-only.** Moving a card between columns
-  updates the screen, not the database — there's no Task-update Server
-  Action yet, so refreshing resets it.
-- **"Attach to Matter" on the Calls tab is UI-only.** Clicking it updates
-  local component state to show the intended workflow; it doesn't file the
-  call in the database.
+  General (non-discovery) documents show fake Dropbox paths as plain text
+  with no real file behind them; calls are manually-seeded/attached rows,
+  not pulled from Vonage. Discovery files are stored on local disk
+  (`lib/storage/DocumentStore`) as a stand-in behind the same interface
+  Dropbox will eventually implement — see `docs/ARCHITECTURE.md`.
+  General (non-discovery) document upload isn't built, so `DocumentStore`
+  is only wired up for Discovery so far.
+- **The Matter Overview's "Quick actions"** — Add Note and New Task link
+  to the tabs with the real forms; "Log a Call" (logging a *new* call, as
+  opposed to attaching an already-existing unfiled one) and "Upload
+  Document" still just show a "coming soon" message.
+- **Discovery productions/comparisons seeded before the Bates engine
+  existed** (see `prisma/seed.ts`) remain in the database as illustrative
+  historical data with no real stored files behind them — anything created
+  through the Discovery tab's UI is real.
 - **Sidebar items other than Dashboard/Matters** (Clients, Tasks, Calendar,
   Discovery, Communications, Reports) are shown but disabled ("Soon") —
   present for layout/orientation, not yet functional as their own
-  sections.
-- **Audit trail is seeded, not generated.** `AuditEvent` rows exist to
-  demonstrate the Timeline tab, but since there are no write actions yet,
-  nothing in the running app currently produces them — including login/
-  logout and permission-denial events, which `docs/SECURITY.md` calls for
-  logging but which aren't wired up yet.
+  firm-wide sections (Tasks and Discovery both exist per-matter, under a
+  Matter's tabs).
+- **Authentication is real, but incomplete for production use:** no MFA,
+  no rate-limiting/lockout on failed logins, no forced sign-out when a
+  user's role or assignments change mid-session, no HTTPS enforcement, and
+  every seeded account shares one password. None of this is acceptable
+  once real staff accounts or real case data are involved — see
+  `docs/SECURITY.md`'s "Implementation status" section for the full list.
+- **Audit logging covers every write listed in "Current status" above**
+  (plus file downloads, logged as `EXPORT`), but login/logout and
+  permission-denial events aren't logged yet, and neither are the
+  not-yet-built writes (Client/Matter/Deadline/etc.) — see
+  `docs/SECURITY.md`.
+
+### Known limitations to address in the next phase
+
+- **No row-level locking on Bates sequencing.** Two simultaneous file
+  registrations on the same production could race on
+  `DiscoveryProduction.batesStart`/`batesEnd`. Fine at current
+  single-firm, low-concurrency scale; would need a `SELECT ... FOR UPDATE`
+  (or similar) to be airtight.
+- **No custom Bates starting number.** Every production starts numbering
+  at 1 — there's no way to continue a physical/pre-existing Bates range
+  from outside this system.
+- **Orphaned storage risk on a failed registration.** A discovery file's
+  bytes are written to `local-data/discovery-files/` before the database
+  row is created; if the DB write fails after a successful disk write, the
+  file is left on disk with no DB record pointing to it. Acceptable for a
+  local dev/demo store, worth revisiting before any real storage backend.
+- **`LocalDocumentStore` is not the final storage backend.** It's a
+  correct implementation of the `DocumentStore` interface, but real
+  discovery evidence needs Dropbox (or another durable, backed-up store)
+  before this system holds anything but fictional test files.
 
 ## Working with confidential data
 

@@ -244,6 +244,51 @@ Dropbox-backed `DocumentStore` (still local-disk), and a standardized
 per-matter Dropbox folder convention (`docs/DISCOVERY.md`) — see Phase 4
 and Phase 6 below.
 
+## Milestone — Stabilization & cleanup pass (seventh session)
+
+No new features — a full regression pass over the persistent-write
+(fifth session) and Discovery/Bates (sixth session) work before
+development moves into VS Code, per this session's explicit scope:
+
+- Ran lint, typecheck, the full Vitest suite, and a production build from
+  a clean clone/reseed — all passed with no changes needed.
+- Found and fixed two real issues surfaced by a full code read-through:
+  - `lib/auth/access.ts` had a doc comment for `assertMatterAccess`
+    orphaned above `hasMatterAccess` from the fifth session's refactor
+    (correct code, misleading comment for a future reader) — moved back
+    to the function it actually describes.
+  - The Matter Overview's "Recent activity" list used the same inline
+    `action.toLowerCase()}d` pattern that was already fixed on the
+    Timeline tab in the fourth session (producing "viewd"/"exportd" for
+    `VIEW`/`EXPORT` events) but was never updated to use the
+    `auditActionPastTense` helper — now it is. This had become more
+    visible than when it was first found: the Discovery engine's file
+    downloads now produce real `EXPORT` events, so this was no longer a
+    dormant bug.
+- Browser-verified every major flow end to end with fictional test data:
+  login/logout, role-based matter access (admin vs. a STAFF user assigned
+  to one matter), Matter Overview, Add Note, New Task, Kanban drag
+  persistence, Attach Call to Matter, the audit Timeline, Discovery
+  production creation, file registration (PDF + non-paginated types),
+  Bates stamping, original/stamped download (byte-for-byte verified against
+  the uploaded file), production comparison (all four of New/Changed/
+  Duplicate/Missing produced in one run), persistence across a full page
+  refresh, and unauthorized access denied for another matter's pages,
+  discovery tab, and file downloads (including a cross-matter file-id
+  probe). All passed.
+- Rewrote README.md's "Current status" and "What's mocked" sections,
+  which had gone stale across the fifth and sixth sessions (they still
+  described Notes/Tasks/Kanban/Attach-Call and audit logging as UI-only
+  mocks, and didn't mention the Discovery engine at all) — see README.md
+  for the corrected, current list, plus a new "Known limitations to
+  address in the next phase" section.
+
+**Known limitations carried into the next phase** (see README.md for the
+full list): no row-level locking on Bates sequencing under concurrent
+registration, no custom Bates starting number, a possible orphaned file
+on disk if a registration's DB write fails after its disk write succeeds,
+and `LocalDocumentStore` remaining a dev/demo stand-in (not Dropbox).
+
 ## Phase 4 — Discovery management (core differentiator)
 
 - [x] `DiscoveryProduction` and `DiscoveryFile` create. *Real as of the
