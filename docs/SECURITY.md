@@ -32,10 +32,18 @@ Also now real:
 - **Audit logging** for those same writes — `AuditEvent` rows are now
   produced by real `CREATE`/`UPDATE`/`EXPORT` actions, not only seeded, and
   the Timeline tab reflects them.
-- **A first (local-disk) `DocumentStore` implementation** — fictional/test
-  discovery files registered through the UI are actually hashed, stored,
-  and (for PDFs) Bates-stamped, not just represented as metadata. See
-  `lib/storage/DocumentStore.ts`.
+- **Two `DocumentStore` implementations**, selected via `STORAGE_PROVIDER`
+  — fictional/test discovery files registered through the UI are actually
+  hashed, stored, and (for PDFs) Bates-stamped, not just represented as
+  metadata, regardless of which one is active:
+  - `LocalDocumentStore` (default) — local disk, no credentials.
+  - `DropboxDocumentStore` (`STORAGE_PROVIDER=dropbox`) — a **development/
+    test** Dropbox integration, scoped to a dedicated test folder
+    (`DROPBOX_ROOT_PATH`, default `/FryeCaseManagement-DEV`). This is not
+    the production Dropbox integration `docs/ROADMAP.md` still tracks as
+    future work — see "Third-party integrations" below for exactly what
+    that distinction means and what's still missing before real discovery
+    evidence should touch it.
 
 Still **not implemented** (tracked in `docs/ROADMAP.md`):
 
@@ -44,9 +52,10 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
   one), Note/Task edit-delete, and Discovery production/file edit-delete —
   none of those have a write path yet, so `AuditEvent` for them is still
   only seeded demo data.
-- Dropbox itself. `DocumentStore`'s local-disk implementation is a dev/demo
-  stand-in behind the same interface a real Dropbox-backed one will use —
-  see docs/ARCHITECTURE.md's "Documents & Dropbox" section.
+- The **production** Dropbox integration (a firm-wide app, a real per-matter
+  folder convention, encrypted-at-rest token storage, monitoring) — see
+  "Third-party integrations" below. What exists now is a development/test
+  integration behind the same interface, not that.
 - No MFA, no rate limiting on failed logins, no forced sign-out on
   role/assignment change.
 - No HTTPS enforcement (this is a local-dev prototype; see
@@ -72,9 +81,9 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
 
 ## Secrets & configuration
 
-- All credentials (database URL, auth secret, and future API keys for
-  Dropbox/Vonage/QuickBooks/Loop) live in environment variables, never in
-  code or committed files.
+- All credentials (database URL, auth secret, Dropbox app key/secret/
+  refresh token, and future API keys for Vonage/QuickBooks/Loop) live in
+  environment variables, never in code or committed files.
 - `.env`, `.env.local`, `.env*.local` and similar are gitignored. Only
   `.env.example` (placeholders, no real values) is committed.
 - If a secret is ever accidentally committed, it must be rotated
@@ -82,7 +91,18 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
   it remains in git history.
 - Production secrets should eventually live in a proper secret
   manager/host-provided environment config, not just a `.env` file on a
-  server.
+  server. **Not yet true for the Dropbox dev/test integration** — its
+  refresh token lives in a local `.env` file like everything else in this
+  phase, which is acceptable for disposable dev/test credentials scoped
+  to a throwaway test folder, not for anything touching real discovery.
+- `lib/storage/config.ts#readDropboxConfig()` never includes a variable's
+  *value* in an error message — only which variable names are missing —
+  so a misconfiguration can be reported (in a log, a crash message, or to
+  a developer) without any risk of echoing a partial secret.
+- `lib/storage/DropboxDocumentStore.ts` never logs the Dropbox SDK's raw
+  error object (which could carry request/response headers) — only an
+  HTTP status and Dropbox's own `error_summary` string, and only to the
+  server console, never to a client response.
 
 ## Authentication
 
@@ -221,7 +241,22 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
   for discovery file registration (`lib/discovery/actions.ts`): file type
   is a fixed enum, size is capped at 25MB, and storage keys are always
   server-generated (`matters/<matterId>/discovery/<productionId>/<uuid>/...`)
-  — never taken from the client. Document upload isn't built yet.
+  — never taken from the client. This holds regardless of which
+  `DocumentStore` implementation is active: `DropboxDocumentStore` gets
+  the exact same server-generated key `LocalDocumentStore` does, and
+  additionally re-validates it's a safe relative path (no `..`, no
+  leading slash, no `//`) before ever calling the Dropbox API — the same
+  defense-in-depth check `LocalDocumentStore` already applied for the
+  filesystem. Document upload isn't built yet.
+- Discovery files are downloaded only through the app's own authenticated
+  Route Handler (`app/(dashboard)/matters/[matterId]/discovery/files/[fileId]/route.ts`),
+  regardless of storage backend — the app never generates or exposes a
+  Dropbox shared/public link for a discovery file. Every request still
+  goes through `hasMatterAccess` and file-existence checks before any
+  `documentStore.read()` call, and every failure mode (not logged in, no
+  matter access, wrong matter, file doesn't exist, Dropbox read fails)
+  returns the same generic 404 — unchanged by which storage backend is
+  active.
 
 ## Data in transit / at rest
 
@@ -232,22 +267,47 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
 - Backups (once the system holds real data) must be encrypted and access
   to them restricted and logged like any other access to case data.
 
-## Third-party integrations (future)
+## Third-party integrations
 
-When Dropbox, Vonage, Loop/HighLevel, or QuickBooks integrations are
-eventually built:
+A **development/test** Dropbox integration exists as of the eighth
+session (`lib/storage/DropboxDocumentStore.ts`) — read this section as
+"done" for the bullets below, and "still future work" for the rest of
+this section (Vonage, Loop/HighLevel, QuickBooks, and *production*
+Dropbox use):
 
-- Use scoped API tokens with the minimum permissions needed (e.g., access
-  only to the firm's specific Dropbox folder structure, not the whole
-  account, if the API supports scoping).
-- Store integration tokens as secrets, never in the database in plaintext —
-  encrypt at rest if they must be stored, or use short-lived tokens with
-  server-side refresh.
-- Log integration actions (e.g., "pulled call recording X into matter Y")
-  through the same `AuditEvent` mechanism as everything else.
-- Each integration lives behind a narrow internal interface (see
-  `docs/ARCHITECTURE.md`) so a compromised or misbehaving third-party SDK
-  has a small blast radius.
+- **Use scoped API tokens with the minimum permissions needed.**
+  **Implemented for dev/test**: the Dropbox app backing this integration
+  should be created with access type "App folder" (configured in the
+  Dropbox App Console, not in this codebase — see `.env.example`), so it
+  can only ever see its own dedicated folder, never the rest of anyone's
+  Dropbox account. `DropboxDocumentStore` adds a second layer on top
+  regardless of that App Console setting: every key is additionally
+  confined under a configurable root path (`DROPBOX_ROOT_PATH`, default
+  `/FryeCaseManagement-DEV`) that's obviously a disposable test namespace,
+  not a real firm folder. Request only `files.content.write` and
+  `files.content.read` scopes when generating the refresh token — nothing
+  broader (no sharing, no account-info scopes).
+- **Store integration tokens as secrets, never in the database in
+  plaintext.** **Partially implemented**: the refresh token lives in
+  environment variables (`.env`, gitignored), never in the database or
+  code — but it isn't yet in a real secrets manager or encrypted at rest,
+  which is fine for a disposable dev/test credential and not acceptable
+  before production use (see docs/ARCHITECTURE.md's "Documents & Dropbox"
+  section for the full list of what's still required first).
+- **Log integration actions through the same `AuditEvent` mechanism as
+  everything else.** Already true by construction: `lib/discovery/actions.ts`
+  logs a `CREATE`/`UPDATE`/`EXPORT` `AuditEvent` for every file
+  registration, Bates generation, and download exactly as it did before
+  this pass — it calls `documentStore.save`/`.read`, not the Dropbox SDK
+  directly, so switching storage backends doesn't change what gets
+  audited or when.
+- **Each integration lives behind a narrow internal interface.**
+  **Implemented** for storage: `lib/storage/DocumentStore` is that
+  interface, and `DropboxDocumentStore` is the first thing other than
+  `LocalDocumentStore` to implement it — no other file in the app talks
+  to the `dropbox` package directly. Vonage, Loop/HighLevel, and
+  QuickBooks remain future work behind their own interfaces
+  (`lib/telephony/CallProvider`, etc.) when those phases start.
 
 ## Dependency & code hygiene
 
