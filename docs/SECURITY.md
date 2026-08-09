@@ -26,33 +26,38 @@ Also now real:
 - **Write actions** for Task status changes, Notes, Tasks, attaching a Call
   to a matter, Client create/edit, Matter create/edit, MatterAssignment
   add/remove, Deadline create/update/status-change, CalendarEvent
-  create/update, and the Discovery/Bates engine (creating a production,
-  registering a file, running a comparison) — see `lib/matters/actions.ts`,
-  `lib/clients/actions.ts`, and `lib/discovery/actions.ts`. Each
-  independently re-checks authentication and the relevant authorization
-  rule rather than trusting that a page already did (see "Authorization"
-  below).
+  create/update, general Document upload/metadata-edit, and the
+  Discovery/Bates engine (creating a production, registering a file,
+  running a comparison) — see `lib/matters/actions.ts`,
+  `lib/clients/actions.ts`, `lib/documents/actions.ts`, and
+  `lib/discovery/actions.ts`. Each independently re-checks authentication
+  and the relevant authorization rule rather than trusting that a page
+  already did (see "Authorization" below).
 - **Audit logging** for those same writes — `AuditEvent` rows are now
   produced by real `CREATE`/`UPDATE`/`EXPORT` actions, not only seeded, and
   the Timeline tab reflects them.
 - **Two `DocumentStore` implementations**, selected via `STORAGE_PROVIDER`
-  — fictional/test discovery files registered through the UI are actually
-  hashed, stored, and (for PDFs) Bates-stamped, not just represented as
-  metadata, regardless of which one is active:
+  — fictional/test discovery files and general matter documents uploaded
+  through the UI are actually hashed, stored, and (for Discovery PDFs)
+  Bates-stamped, not just represented as metadata, regardless of which one
+  is active:
   - `LocalDocumentStore` (default) — local disk, no credentials.
   - `DropboxDocumentStore` (`STORAGE_PROVIDER=dropbox`) — a **development/
     test** Dropbox integration, scoped to a dedicated test folder
     (`DROPBOX_ROOT_PATH`, default `/FryeCaseManagement-DEV`). This is not
     the production Dropbox integration `docs/ROADMAP.md` still tracks as
-    future work — see "Third-party integrations" below for exactly what
-    that distinction means and what's still missing before real discovery
-    evidence should touch it.
+    future work, and the firm's real Dropbox account still requires staff
+    2FA to authorize (deliberately deferred) — see "Third-party
+    integrations" below for exactly what that distinction means and
+    what's still missing before real discovery evidence or real matter
+    documents should touch it. `STORAGE_PROVIDER` stays on `local` for all
+    browser/integration testing until that authorization happens.
 
 Still **not implemented** (tracked in `docs/ROADMAP.md`):
 
-- Client/Matter/Deadline/CalendarEvent *deletion* or archival (create/edit
-  are real as of the ninth and tenth sessions — see below), Document
-  upload, logging a brand-new Call (only attaching an existing unfiled
+- Client/Matter/Deadline/CalendarEvent/Document *deletion* or archival
+  (create/edit are real as of the ninth, tenth, and eleventh sessions —
+  see below), logging a brand-new Call (only attaching an existing unfiled
   one), and Note/Task edit-delete — none of those have a write path yet,
   so `AuditEvent` for them is still only seeded demo data.
 - The **production** Dropbox integration (a firm-wide app, a real per-matter
@@ -231,6 +236,22 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
     access, even one they're genuinely assigned to. Neither model has an
     assignee/attendee column in `prisma/schema.prisma`, so there's no user
     id to validate for either write path.
+  - **General Documents (eleventh session)** use the same plain
+    matter-access rule too, same reasoning as Deadlines/CalendarEvents
+    above. `uploadDocument` (`lib/documents/actions.ts`) checks
+    `hasMatterAccess` *before* writing any bytes to `DocumentStore`, so a
+    denied caller never causes a storage write. `updateDocumentMetadata`
+    re-fetches the row scoped by `{id: documentId, matterId}` before
+    editing it (same pattern as `updateDeadline`) and only ever touches
+    `title`/`category`/`notes` — it never rewrites `storageKey` or calls
+    `documentStore.save`, so an existing original file can never be
+    destroyed by a metadata edit. Every storage key is generated
+    server-side from a fresh UUID (`matters/<matterId>/documents/<uuid>/
+    original`) — never the client-supplied filename, and never reused
+    across uploads, so two files sharing a filename get distinct keys and
+    neither can silently overwrite the other. The true original filename
+    is preserved only as `Document.originalFilename` metadata, never in
+    the storage path (see "Data handling" below for why).
 - All authorization checks happen **server-side** — `proxy.ts` gates
   "is anyone logged in," and every Server Component that reads matter data
   re-checks independently rather than trusting the proxy alone (see
@@ -241,19 +262,22 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
   Server Actions can be invoked directly, not just through a page render.
   The discovery file download Route Handler
   (`app/(dashboard)/matters/[matterId]/discovery/files/[fileId]/route.ts`)
-  does the same, since Route Handlers don't inherit a parent layout's
+  and, as of the eleventh session, the general document download route
+  (`app/(dashboard)/matters/[matterId]/documents/files/[documentId]/route.ts`)
+  do the same, since Route Handlers don't inherit a parent layout's
   checks either — every failure mode (not logged in, no matter access,
-  wrong matter, file doesn't exist, content never stored) returns the same
-  generic 404. Future write actions must do the same.
+  wrong matter, document doesn't exist, content never stored) returns the
+  same generic 404. Future write actions must do the same.
 - Discovery, documents, notes, tasks, deadlines, and calls are scoped to
   the same per-matter check as the parent Matter record, since they only
   render inside a matter route the layout has already authorized —
   **implemented** by construction (there's no separate route for, say, a
   single Note that could be reached without going through the matter
-  layout first). The discovery file download route is the one exception —
-  it isn't nested under the matter layout (Route Handlers don't render
-  through layouts), which is exactly why it repeats the matter-access and
-  matter-scoping checks itself instead of relying on that construction.
+  layout first). The discovery and general-document download routes are
+  the exception — neither is nested under the matter layout (Route
+  Handlers don't render through layouts), which is exactly why each
+  repeats the matter-access and matter-scoping checks itself instead of
+  relying on that construction.
 
 ## Audit logging
 
@@ -265,7 +289,9 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
   create/update, Matter create/update, MatterAssignment create/delete
   (`lib/clients/actions.ts`, `lib/matters/actions.ts`, ninth session),
   Deadline create/update/status-change, CalendarEvent create/update
-  (`lib/matters/actions.ts`, tenth session), and Discovery production
+  (`lib/matters/actions.ts`, tenth session), general Document
+  upload/metadata-edit/download (`lib/documents/actions.ts` and its
+  download Route Handler, eleventh session), and Discovery production
   create, file registration, Bates generation, and comparison
   (`lib/discovery/actions.ts`). Every other entity/action in that list
   still has no write path at all, so there's nothing yet to log for them
@@ -279,12 +305,12 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
     `CREATE` `MatterAssignment` event per initial assignment — assigning
     staff to a new matter is its own auditable action, not folded into the
     matter's own event.
-  - `updateClient`/`updateMatter`/`updateDeadline`/`updateCalendarEvent`
-    log an `UPDATE` event with `metadata.changed` containing only the
-    fields that actually changed (before/after), via a shared
-    `lib/utils/index.ts#diffFields` helper — a no-op edit produces no audit
-    event at all. `Client.notes` is the one field excluded from the diff
-    itself: since it's free text up to 5,000 characters, the event only
+  - `updateClient`/`updateMatter`/`updateDeadline`/`updateCalendarEvent`/
+    `updateDocumentMetadata` log an `UPDATE` event with `metadata.changed`
+    containing only the fields that actually changed (before/after), via a
+    shared `lib/utils/index.ts#diffFields` helper — a no-op edit produces
+    no audit event at all. `Client.notes` and `Document.notes` are both
+    excluded from the diff itself: since they're free text, the event only
     records `metadata.notesChanged: true`, never the before/after content,
     so the audit log can't become a second copy of potentially sensitive
     case notes.
@@ -298,8 +324,10 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
   exporting discovery, exporting a client's full file) should also be
   logged, not just writes. **Implemented** for discovery file downloads —
   the download route logs an `EXPORT` event (`variant: "original" |
-  "stamped"`) for every successful download; other sensitive reads (e.g.
-  viewing a matter) are not logged yet.
+  "stamped"`) for every successful download — and, as of the eleventh
+  session, general document downloads, which log a plain `EXPORT` event
+  the same way; other sensitive reads (e.g. viewing a matter) are not
+  logged yet.
 - Audit records are append-only. No feature should ever allow editing or
   deleting an `AuditEvent`, including for admins, through the application
   layer.
@@ -324,25 +352,35 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
   concatenation.
 - File uploads validate type/size server-side and store bytes via the
   internal storage interface, never a client-supplied path. **Implemented**
-  for discovery file registration (`lib/discovery/actions.ts`): file type
-  is a fixed enum, size is capped at 25MB, and storage keys are always
-  server-generated (`matters/<matterId>/discovery/<productionId>/<uuid>/...`)
-  — never taken from the client. This holds regardless of which
-  `DocumentStore` implementation is active: `DropboxDocumentStore` gets
-  the exact same server-generated key `LocalDocumentStore` does, and
+  for discovery file registration (`lib/discovery/actions.ts`) and, as of
+  the eleventh session, general document upload
+  (`lib/documents/actions.ts#uploadDocument`): file type is checked
+  against a fixed extension allowlist (PDF, Word, Excel, text, common
+  image formats — `lib/documents/validation.ts#isAllowedDocumentFile`,
+  cross-checked against a permissive MIME list since browsers/OSes report
+  `file.type` inconsistently), size is capped at 25MB, and storage keys
+  are always server-generated from a fresh UUID
+  (`matters/<matterId>/documents/<uuid>/original`) — never the
+  client-supplied filename, so a filename that happened to contain a real
+  client's name or case details can never leak into a storage path, and
+  two uploads sharing a filename never collide. This holds regardless of
+  which `DocumentStore` implementation is active: `DropboxDocumentStore`
+  gets the exact same server-generated key `LocalDocumentStore` does, and
   additionally re-validates it's a safe relative path (no `..`, no
   leading slash, no `//`) before ever calling the Dropbox API — the same
   defense-in-depth check `LocalDocumentStore` already applied for the
-  filesystem. Document upload isn't built yet.
-- Discovery files are downloaded only through the app's own authenticated
-  Route Handler (`app/(dashboard)/matters/[matterId]/discovery/files/[fileId]/route.ts`),
-  regardless of storage backend — the app never generates or exposes a
-  Dropbox shared/public link for a discovery file. Every request still
-  goes through `hasMatterAccess` and file-existence checks before any
-  `documentStore.read()` call, and every failure mode (not logged in, no
-  matter access, wrong matter, file doesn't exist, Dropbox read fails)
-  returns the same generic 404 — unchanged by which storage backend is
-  active.
+  filesystem. Uploaded documents are never executed, previewed, or
+  transformed server-side — only stored and served back byte-for-byte.
+- Discovery files and, as of the eleventh session, general documents are
+  downloaded only through the app's own authenticated Route Handlers
+  (`app/(dashboard)/matters/[matterId]/discovery/files/[fileId]/route.ts`
+  and `.../documents/files/[documentId]/route.ts`), regardless of storage
+  backend — the app never generates or exposes a Dropbox shared/public
+  link for either. Every request still goes through `hasMatterAccess` and
+  matter-scoped existence checks before any `documentStore.read()` call,
+  and every failure mode (not logged in, no matter access, wrong matter,
+  file doesn't exist, storage read fails) returns the same generic 404 —
+  unchanged by which storage backend is active.
 
 ## Data in transit / at rest
 
@@ -382,11 +420,12 @@ Dropbox use):
   section for the full list of what's still required first).
 - **Log integration actions through the same `AuditEvent` mechanism as
   everything else.** Already true by construction: `lib/discovery/actions.ts`
-  logs a `CREATE`/`UPDATE`/`EXPORT` `AuditEvent` for every file
-  registration, Bates generation, and download exactly as it did before
-  this pass — it calls `documentStore.save`/`.read`, not the Dropbox SDK
-  directly, so switching storage backends doesn't change what gets
-  audited or when.
+  and, as of the eleventh session, `lib/documents/actions.ts` log a
+  `CREATE`/`UPDATE`/`EXPORT` `AuditEvent` for every file registration/
+  upload, Bates generation, metadata edit, and download exactly the same
+  way regardless of storage backend — both call `documentStore.save`/
+  `.read`, not the Dropbox SDK directly, so switching storage backends
+  doesn't change what gets audited or when.
 - **Each integration lives behind a narrow internal interface.**
   **Implemented** for storage: `lib/storage/DocumentStore` is that
   interface, and `DropboxDocumentStore` is the first thing other than

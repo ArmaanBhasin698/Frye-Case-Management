@@ -98,10 +98,14 @@ implementations, selected via `STORAGE_PROVIDER` (see `.env.example`):
 Both implementations satisfy the same `save(key, data)`/`read(key)`
 contract, so:
 
-- `lib/discovery/actions.ts` calls `documentStore.save`/`.read` — it has no
-  idea, and doesn't need to know, whether that's local disk or Dropbox
-  underneath. Nothing in `lib/discovery/` changed to add the Dropbox
-  implementation.
+- `lib/discovery/actions.ts` and, as of the eleventh session,
+  `lib/documents/actions.ts` both call `documentStore.save`/`.read` — they
+  have no idea, and don't need to know, whether that's local disk or
+  Dropbox underneath. Nothing in either module changed to add the Dropbox
+  implementation, and nothing in `lib/documents/` needs to change if/when
+  `STORAGE_PROVIDER` switches to `dropbox` for real matter documents —
+  proving out the interface's whole reason for existing (see the
+  sixth-session milestone in `docs/ROADMAP.md`).
 - `lib/storage/DocumentStore.ts#createDocumentStore()` picks the
   implementation once, at module load, via `lib/storage/config.ts`. An
   incomplete Dropbox configuration fails immediately and loudly (a clear
@@ -109,25 +113,40 @@ contract, so:
   silently falling back to local disk or failing confusingly mid-request.
 - A **standardized folder structure per matter** in Dropbox for real
   production use (defined in a future `docs/DISCOVERY.md` once that phase
-  starts) will likely replace the current flat
-  `matters/<id>/discovery/<productionId>/<uuid>/...` key scheme so
+  starts) will likely replace both Discovery's flat
+  `matters/<id>/discovery/<productionId>/<uuid>/...` key scheme and
+  Documents' flat `matters/<id>/documents/<uuid>/original` scheme so
   discovery, correspondence, pleadings, etc. are organized consistently
   across all matters — that key scheme is unchanged by the Dropbox
-  storage backend, since key generation lives in `lib/discovery/actions.ts`,
-  not in either `DocumentStore` implementation.
-- `Document` (general, non-discovery files) doesn't use `DocumentStore` yet
-  — it still only stores a Dropbox-shaped path string with nothing behind
-  it (see `docs/ROADMAP.md`).
+  storage backend, since key generation lives in `lib/discovery/actions.ts`
+  and `lib/documents/actions.ts` respectively, not in either
+  `DocumentStore` implementation. Neither key scheme ever embeds the
+  uploaded file's real name — only a server-generated id — since a
+  client-supplied filename could contain a client's real name or other
+  case details that must never end up in a storage path (see
+  docs/SECURITY.md); the true original filename is preserved only as DB
+  metadata (`Document.originalFilename`).
+- `Document` (general, non-discovery files) now uses `DocumentStore` for
+  real — `lib/documents/actions.ts#uploadDocument` saves the uploaded
+  bytes and creates the `Document` row; `updateDocumentMetadata` edits
+  title/category/notes only and never touches the stored bytes or
+  `storageKey`. Downloads stream through
+  `app/(dashboard)/matters/[matterId]/documents/files/[documentId]/route.ts`,
+  the same authenticated-Route-Handler pattern Discovery's download route
+  already established (see docs/SECURITY.md).
 
 **What's still required before Dropbox is safe for production use** (not
 done in this pass — see docs/SECURITY.md): a production Dropbox app (not
 a personal dev app), a real per-matter/per-firm folder convention instead
-of the flat dev key scheme, encrypted-at-rest storage of the refresh
+of the flat dev key schemes, encrypted-at-rest storage of the refresh
 token in a real secrets manager instead of a local `.env` file, monitoring/
 alerting on storage errors, and a decision on what happens to files
 already on local disk if a firm ever migrates from local to Dropbox
 storage (no migration tooling exists — this pass only adds the second
-implementation, it doesn't move data between them).
+implementation, it doesn't move data between them). The firm's real
+Dropbox account also still requires staff 2FA to authorize, which is
+explicitly deferred — `STORAGE_PROVIDER` stays on `local` for all
+browser/integration testing until that happens.
 
 ## Calls & Vonage
 
@@ -190,8 +209,10 @@ fully unit tested and independent of the UI:
 │   ├── db/                     # Prisma client singleton
 │   ├── dashboard/               # Cross-matter aggregate reads for the dashboard home page
 │   ├── matters/                 # Matter-scoped data access + presentation helpers (format.ts)
-│   ├── discovery/              # Bates numbering, identifiers, comparison logic (future)
-│   ├── storage/                # Dropbox interface (future)
+│   ├── clients/                 # Client CRUD data access + Server Actions
+│   ├── discovery/              # Bates numbering, identifiers, comparison logic
+│   ├── documents/               # General (non-discovery) matter document upload/edit
+│   ├── storage/                # DocumentStore interface (local disk + Dropbox implementations)
 │   ├── telephony/              # Vonage interface (future)
 │   ├── validation/             # Zod schemas
 │   └── utils/

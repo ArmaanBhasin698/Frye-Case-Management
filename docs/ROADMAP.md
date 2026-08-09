@@ -186,9 +186,11 @@ below for what's still open.
       not just direct matter URLs.
 - [x] AuditEvent wired in as a side effect of real writes — done for
       Note/Task create, Task status update, and Call attach in the fifth
-      session, and for Client create/update, Matter create/update, and
-      MatterAssignment create/delete in the ninth session (see milestones
-      above). Deadline/CalendarEvent/Document writes still don't exist, so
+      session; Client create/update, Matter create/update, and
+      MatterAssignment create/delete in the ninth session; Deadline/
+      CalendarEvent create/update/status-change in the tenth session; and
+      Document upload/metadata-edit/download in the eleventh session (see
+      milestones above). Note/Task edit-delete still has no write path, so
       this isn't complete for every entity yet.
 
 **Exit criteria:** a staff member can create a client, open a matter for
@@ -493,6 +495,98 @@ schema change made), a firm-wide standalone Calendar page (the sidebar's
 Events exist per-matter only, same as Discovery/Tasks), and any
 Dropbox/Vonage/Loop/MyCase/QuickBooks integration work.
 
+## Milestone — General matter document upload/download (eleventh session)
+
+Turns the Matter Documents tab from a display-only mock (a fake Dropbox
+path shown as plain text) into a real workflow through the existing
+`lib/storage/DocumentStore` abstraction — the exact payoff that interface
+was built for back in the sixth session. Dropbox authorization for the
+firm's real account remains deferred (requires staff 2FA); every
+browser/integration test in this session ran with `STORAGE_PROVIDER=local`.
+
+- **Upload / edit metadata** (`lib/documents/actions.ts#uploadDocument`/
+  `updateDocumentMetadata`, `components/shared/upload-document-form.tsx`,
+  `document-list.tsx`) — real for the first time on the Matter Documents
+  tab; the Matter Overview's "Upload Document" quick action (mocked since
+  the third session) now links to it, same as the other real quick
+  actions.
+- **One small, additive Prisma migration**
+  (`20260809000000_add_document_storage_metadata`): renamed
+  `Document.dropboxPath` → `storageKey` (same values, same type — the
+  field always held an opaque `DocumentStore` key, never a literal Dropbox
+  API path, and the old name actively contradicted the "storage-provider
+  agnostic" goal now that `STORAGE_PROVIDER` can be `local`) and added
+  four nullable columns: `originalFilename`, `mimeType`, `sizeBytes`,
+  `contentHash`. All four are nullable specifically so existing seeded
+  rows needed no backfill and keep working as illustrative-only history
+  (same pattern as pre-engine `DiscoveryFile` rows) — see
+  `docs/DATA_MODEL.md`'s Document entry.
+- **Storage-provider agnostic by construction, not just by claim**:
+  `uploadDocument` and the download Route Handler call
+  `documentStore.save`/`.read` exactly the way `lib/discovery/actions.ts`
+  already does — neither file needed to change to add this feature, and
+  neither would need to change if `STORAGE_PROVIDER` switched to
+  `dropbox` for real matter documents once the firm's account is
+  authorized.
+- **Server-generated storage keys, deliberately never the uploaded
+  filename**: `matters/<matterId>/documents/<uuid>/original`, a fresh
+  UUID per upload (not the eventual `Document.id` — same chicken-and-egg
+  reasoning `registerDiscoveryFile` already established). This is a
+  deliberate deviation from this session's own illustrative example key
+  (`.../<documentId>/original/<safe-file-name>`): embedding the real
+  uploaded filename in a storage path would risk leaking a client's real
+  name or case details into the path, which the session's own
+  instructions separately prohibited — the true original filename is
+  preserved only as `Document.originalFilename` metadata. Because every
+  upload gets a fresh, never-reused key, two files sharing a filename
+  never collide or overwrite each other.
+- **Authorization uses the plain matter-access rule** (`hasMatterAccess`,
+  any assigned role) — same as Deadlines/CalendarEvents/Notes/Tasks/Calls,
+  not the stricter `ADMIN`/`ATTORNEY` Client/Matter rule, per this
+  session's explicit fallback instruction and since neither
+  `docs/DATA_MODEL.md` nor `docs/SECURITY.md` establishes anything
+  stricter for Documents. `hasMatterAccess` is checked *before* any bytes
+  are written to `DocumentStore`, so a denied upload never touches
+  storage. `updateDocumentMetadata` and the download route both re-fetch/
+  re-scope by `{id: documentId, matterId}` together — a `documentId` from
+  a different matter is denied exactly like a nonexistent one, even for a
+  caller with legitimate access to *some* matter.
+- Real `AuditEvent`s: Document `CREATE` (upload), `UPDATE` (metadata edit,
+  a `diffFields` before/after — `notes` excluded from the diff itself,
+  only `notesChanged: true`, same pattern as `Client.notes`), and `EXPORT`
+  (download) — mirroring Discovery's file-registration/download auditing
+  exactly.
+- 25 new tests (`tests/documents/actions.test.ts`,
+  `tests/documents/route.test.ts`) covering upload validation (size, empty
+  file, disallowed extension, extension/MIME mismatch), matter
+  authorization, server-generated storage keys never containing the raw
+  filename, original-byte preservation, duplicate-filename non-collision,
+  metadata-edit authorization and cross-matter id-scoping, generic-error
+  handling on a Prisma failure, and download-route authorization
+  (unauthenticated, no matter access, cross-matter probe, storage-read
+  failure, and a successful download's headers + `EXPORT` audit event).
+- Browser-verified end to end with a fictional PDF: upload → refresh →
+  persistence → metadata edit → refresh → persistence → download with a
+  **SHA-256 byte-for-byte match** against the originally uploaded file →
+  Timeline showing the CREATE/UPDATE/EXPORT events → a second upload
+  sharing the first file's exact filename, confirmed not to overwrite it
+  → a `STAFF` account unassigned to the test matter denied (404) on its
+  Documents tab and the matter itself → a realistic cross-matter probe (an
+  `ATTORNEY` genuinely assigned to their own matter, requesting a
+  `documentId` that belongs to a different matter they aren't assigned
+  to) denied (404) → Discovery, Notes, Tasks, Calls, Clients, Matters, and
+  Deadlines & Calendar all still rendering correctly afterward.
+
+**Deliberately not done here:** Document *deletion* (no safe archival
+pattern exists, same reasoning as Client/Matter/Deadline/CalendarEvent), a
+`DocumentStore.delete()` method (so an upload's bytes are left orphaned in
+storage if the follow-up `prisma.document.create` fails — the same
+documented, unresolved limitation `registerDiscoveryFile` already
+carries; adding delete support to both `DocumentStore` implementations was
+judged out of scope for this pass), a production Dropbox folder
+convention (still the flat dev key scheme), any file preview/rendering,
+and any Dropbox/Vonage/Loop/MyCase/QuickBooks integration work.
+
 ## Phase 4 — Discovery management (core differentiator)
 
 - [x] `DiscoveryProduction` and `DiscoveryFile` create. *Real as of the
@@ -547,10 +641,14 @@ manually before any Vonage API work begins.
 - [x] Dropbox integration behind `lib/storage/DocumentStore` for
       dev/test use. *Real as of the eighth session
       (`lib/storage/DropboxDocumentStore.ts`, `STORAGE_PROVIDER=dropbox`)
-      — see the milestone above.* Still open for **production** use:
-      linking a real per-matter folder structure, browsing/uploading from
-      the app beyond Discovery's own register/download flow, a firm-owned
-      (not personal-dev) Dropbox app, and encrypted-at-rest token storage.
+      — see the milestone above. Both Discovery and, as of the eleventh
+      session, general matter Documents upload/download through this same
+      interface, so either would work against Dropbox as soon as
+      `STORAGE_PROVIDER=dropbox` is set — the firm's real account still
+      needs staff 2FA to authorize that, which remains deliberately
+      deferred.* Still open for **production** use: linking a real
+      per-matter folder structure, a firm-owned (not personal-dev) Dropbox
+      app, and encrypted-at-rest token storage.
 - [ ] Vonage integration behind `lib/telephony/CallProvider`: pull call/SMS
       history, support flagging and filing a real call to a matter, save
       recordings into the matter's Dropbox structure.
