@@ -81,6 +81,18 @@ validation + audit logging on every write — see `docs/SECURITY.md`):
   neither one's logic nor its authorization/audit behavior changes based
   on which is active — see
   "Dropbox (optional, for development/test only)" below to configure it.
+- **Firm-wide Tasks and Calendar** — the sidebar's "Tasks" and "Calendar"
+  items are real, authorized aggregate views over the existing per-matter
+  `Task`/`Deadline`/`CalendarEvent` rows (`lib/tasks/queries.ts`,
+  `lib/calendar/queries.ts`), not a second set of records or a new CRUD
+  path: an `ADMIN` sees every matter's tasks/deadlines/events, everyone
+  else sees only matters they're assigned to, scoped server-side the same
+  way `lib/dashboard/queries.ts`'s widgets already are. Each page supports
+  filtering (status/priority/assignee/matter/overdue for Tasks; matter/
+  type/satisfied/upcoming-vs-past for Calendar) and links every row back to
+  its matter's own Tasks or Deadlines & Calendar tab for editing — there is
+  no separate edit path here. See `docs/ROADMAP.md`'s thirteenth-session
+  milestone for the full writeup.
 
 See "Demo login credentials" below to sign in, "What's mocked / not
 implemented yet" below for exactly what still isn't real, and
@@ -274,13 +286,14 @@ this password anywhere real** — see `docs/SECURITY.md`.
   existed** (see `prisma/seed.ts`) remain in the database as illustrative
   historical data with no real stored files behind them — anything created
   through the Discovery tab's UI is real.
-- **Sidebar items other than Dashboard/Matters/Clients** (Tasks, Calendar,
-  Discovery, Communications, Reports) are shown but disabled ("Soon") —
+- **Sidebar items other than Dashboard/Matters/Clients/Tasks/Calendar**
+  (Discovery, Communications, Reports) are shown but disabled ("Soon") —
   present for layout/orientation, not yet functional as their own
-  firm-wide sections (Tasks and Discovery both exist per-matter, under a
-  Matter's tabs). Clients is real but shown as "Restricted" for
-  `PARALEGAL`/`STAFF` accounts (see "Who can create/edit a Client or
-  Matter" above).
+  firm-wide sections (Discovery exists per-matter, under a Matter's tabs).
+  Tasks and Calendar are real firm-wide aggregate views as of the
+  thirteenth session (see "Current status" above). Clients is real but
+  shown as "Restricted" for `PARALEGAL`/`STAFF` accounts (see "Who can
+  create/edit a Client or Matter" above).
 - **Authentication is real, but incomplete for production use:** no MFA,
   no rate-limiting/lockout on failed logins, no forced sign-out when a
   user's role or assignments change mid-session, no HTTPS enforcement, and
@@ -335,7 +348,10 @@ this password anywhere real** — see `docs/SECURITY.md`.
   submitted start/end time is parsed as the server process's local time,
   same simplification `Task.dueDate`'s plain `date` input already made —
   fine for a single-timezone dev/demo firm, worth revisiting before any
-  multi-timezone or production deployment.
+  multi-timezone or production deployment. The firm-wide Calendar page
+  (`app/(dashboard)/calendar`) reads and displays the same
+  already-stored values, so it carries this exact limitation forward
+  rather than introducing a second, partial timezone fix.
 
 ## Working with confidential data
 

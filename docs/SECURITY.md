@@ -277,6 +277,19 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
     submitting, an option the server would reject anyway. Clearing an
     assignee (submitting no id) is always allowed and skips this check
     entirely, since it does not grant anyone new visibility.
+- **Firm-wide Tasks and Calendar (thirteenth session):** `app/(dashboard)/tasks`
+  and `app/(dashboard)/calendar` introduce no new authorization rule — they
+  reuse the plain matter-access scoping every cross-matter read already
+  uses (`matterScopeFilterFor`, `lib/auth/access.ts`), the same primitive
+  `lib/dashboard/queries.ts`'s widgets rely on. `lib/tasks/queries.ts#getFirmWideTasks`
+  and `lib/calendar/queries.ts#getFirmWideCalendarItems` merge that scope
+  with every user-supplied filter via Prisma `AND` — there is no unscoped
+  "list every task/deadline/event" helper for either page to accidentally
+  call, and every filter value is validated against a fixed allowlist
+  before it reaches Prisma. Both pages are read-only aggregate views: a
+  row's title links back to the existing per-matter Tasks or Deadlines &
+  Calendar tab for editing, not a new write path, so no existing
+  per-matter authorization rule changed.
 - All authorization checks happen **server-side** — `proxy.ts` gates
   "is anyone logged in," and every Server Component that reads matter data
   re-checks independently rather than trusting the proxy alone (see
