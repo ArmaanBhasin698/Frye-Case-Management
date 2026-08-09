@@ -76,27 +76,58 @@ a handful of staff, thousands of matters at most).
 
 ## Documents & Dropbox
 
-Dropbox will eventually be the actual file store. `lib/storage/DocumentStore`
+Dropbox will eventually be the actual production file store. `lib/storage/DocumentStore`
 is the narrow interface every file-backed feature talks to instead of a
-storage SDK directly — as of the fifth session it has one real
-implementation, `LocalDocumentStore`, which writes fictional/test discovery
-files to a gitignored `local-data/discovery-files/` directory. This is a
-dev/demo-only stand-in, not Dropbox:
+storage SDK directly, and as of the eighth session it has **two** real
+implementations, selected via `STORAGE_PROVIDER` (see `.env.example`):
+
+- `LocalDocumentStore` (default, `STORAGE_PROVIDER=local` or unset) —
+  writes fictional/test discovery files to a gitignored
+  `local-data/discovery-files/` directory. No credentials, fully offline.
+- `DropboxDocumentStore` (`STORAGE_PROVIDER=dropbox`,
+  `lib/storage/DropboxDocumentStore.ts`) — writes the same fictional/test
+  files to a dedicated Dropbox **test** folder
+  (`DROPBOX_ROOT_PATH`, default `/FryeCaseManagement-DEV`) via the
+  official `dropbox` SDK, authenticated with a long-lived refresh token
+  (`DROPBOX_APP_KEY`/`DROPBOX_APP_SECRET`/`DROPBOX_REFRESH_TOKEN`). This is
+  a **development/test** integration, not the production Dropbox
+  integration described below — see docs/SECURITY.md for exactly what
+  still needs to change before real discovery evidence goes anywhere near
+  it.
+
+Both implementations satisfy the same `save(key, data)`/`read(key)`
+contract, so:
 
 - `lib/discovery/actions.ts` calls `documentStore.save`/`.read` — it has no
-  idea whether that's local disk or Dropbox underneath.
-- When Dropbox is eventually built, only a new class implementing
-  `DocumentStore` needs to be written and swapped in; `lib/discovery/`'s
-  Bates/hashing/comparison engine and every Server Action calling it stay
-  unchanged.
-- A **standardized folder structure per matter** in Dropbox (defined in a
-  future `docs/DISCOVERY.md` once that phase starts) will replace the
-  current flat `matters/<id>/discovery/<productionId>/<uuid>/...` key
-  scheme so discovery, correspondence, pleadings, etc. are organized
-  consistently across all matters.
+  idea, and doesn't need to know, whether that's local disk or Dropbox
+  underneath. Nothing in `lib/discovery/` changed to add the Dropbox
+  implementation.
+- `lib/storage/DocumentStore.ts#createDocumentStore()` picks the
+  implementation once, at module load, via `lib/storage/config.ts`. An
+  incomplete Dropbox configuration fails immediately and loudly (a clear
+  error naming which environment variable is missing) rather than
+  silently falling back to local disk or failing confusingly mid-request.
+- A **standardized folder structure per matter** in Dropbox for real
+  production use (defined in a future `docs/DISCOVERY.md` once that phase
+  starts) will likely replace the current flat
+  `matters/<id>/discovery/<productionId>/<uuid>/...` key scheme so
+  discovery, correspondence, pleadings, etc. are organized consistently
+  across all matters — that key scheme is unchanged by the Dropbox
+  storage backend, since key generation lives in `lib/discovery/actions.ts`,
+  not in either `DocumentStore` implementation.
 - `Document` (general, non-discovery files) doesn't use `DocumentStore` yet
   — it still only stores a Dropbox-shaped path string with nothing behind
   it (see `docs/ROADMAP.md`).
+
+**What's still required before Dropbox is safe for production use** (not
+done in this pass — see docs/SECURITY.md): a production Dropbox app (not
+a personal dev app), a real per-matter/per-firm folder convention instead
+of the flat dev key scheme, encrypted-at-rest storage of the refresh
+token in a real secrets manager instead of a local `.env` file, monitoring/
+alerting on storage errors, and a decision on what happens to files
+already on local disk if a firm ever migrates from local to Dropbox
+storage (no migration tooling exists — this pass only adds the second
+implementation, it doesn't move data between them).
 
 ## Calls & Vonage
 

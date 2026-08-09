@@ -46,6 +46,13 @@ validation + audit logging on every write — see `docs/SECURITY.md`):
   modified); comparing two productions classifies every file as
   New/Changed/Duplicate/Missing using stored hashes and filenames, not
   hand-picked results. See `lib/discovery/`.
+- **Storage backend is swappable** — `lib/storage/DocumentStore` has two
+  real implementations, chosen via `STORAGE_PROVIDER`: local disk
+  (default) or a **development/test** Dropbox integration
+  (`lib/storage/DropboxDocumentStore.ts`) that writes to a dedicated,
+  clearly-named test folder. Neither Discovery's logic nor its
+  authorization/audit behavior changes based on which one is active — see
+  "Dropbox (optional, for development/test only)" below to configure it.
 
 See "Demo login credentials" below to sign in, "What's mocked / not
 implemented yet" below for exactly what still isn't real, and
@@ -60,6 +67,8 @@ history of what's built vs. planned.
 - [Auth.js](https://authjs.dev/) (NextAuth v5) — Credentials provider,
   JWT sessions, no OAuth/SSO provider configured
 - [pdf-lib](https://pdf-lib.js.org/) for PDF page counting and Bates stamping
+- [dropbox](https://www.npmjs.com/package/dropbox) (official SDK) for the
+  optional development/test Dropbox storage backend
 - [Vitest](https://vitest.dev/) for unit tests
 
 ## Getting started
@@ -108,6 +117,46 @@ Recommended extensions (not required, just nicer): **Prisma**
 warnings both surface inline once those are installed — the same checks
 `npm run typecheck` and `npm run lint` run from the CLI.
 
+### Dropbox (optional, for development/test only)
+
+By default (`STORAGE_PROVIDER=local` or unset) Discovery files are stored
+on local disk under `local-data/discovery-files/` — no setup needed
+beyond the steps above. To instead exercise the Dropbox-backed
+`DocumentStore` (`lib/storage/DropboxDocumentStore.ts`) against a real
+**test** Dropbox account:
+
+1. Create an app in the [Dropbox App
+   Console](https://www.dropbox.com/developers/apps) with access type
+   **"App folder"** (not "Full Dropbox") — this confines it to a single
+   dedicated folder Dropbox creates for it, so it can never see the rest
+   of that account. Use a personal/test Dropbox account, never the firm's
+   real one.
+2. Under that app's Permissions tab, enable only the `files.content.write`
+   and `files.content.read` scopes.
+3. Generate a refresh token for that app (Dropbox's OAuth2 flow with
+   `token_access_type=offline`) — the app's "Generate access token" button
+   in the console gives a short-lived token, not this; you need the
+   refresh-token flow so the SDK can renew it automatically. Dropbox's
+   [OAuth guide](https://developers.dropbox.com/oauth-guide) covers this.
+4. Set in `.env` (never commit these):
+   ```
+   STORAGE_PROVIDER=dropbox
+   DROPBOX_APP_KEY=<the app's key>
+   DROPBOX_APP_SECRET=<the app's secret>
+   DROPBOX_REFRESH_TOKEN=<the refresh token from step 3>
+   DROPBOX_ROOT_PATH=/FryeCaseManagement-DEV
+   ```
+5. Restart the dev server. Registering a discovery file now uploads to
+   `<App folder>/FryeCaseManagement-DEV/matters/...` in that test
+   account's Dropbox instead of local disk — everything else about the
+   Discovery workflow (hashing, Bates stamping, download, comparison,
+   authorization, audit logging) is identical either way.
+
+If `STORAGE_PROVIDER=dropbox` is set without all three `DROPBOX_*`
+variables, the app fails to start with an error naming exactly which one
+is missing, rather than silently using local disk or failing on the
+first upload.
+
 ### Demo login credentials
 
 All accounts are fictional, seeded by `prisma/seed.ts`, and share one
@@ -149,14 +198,17 @@ this password anywhere real** — see `docs/SECURITY.md`.
   on a matter) is display-only, no UI to change it.
 - **No Note/Task edit or delete**, no Deadline or CalendarEvent writes —
   those tabs are still read-only views over seed data.
-- **No Dropbox, Vonage, Loop/HighLevel, MyCase, or QuickBooks integration.**
-  General (non-discovery) documents show fake Dropbox paths as plain text
-  with no real file behind them; calls are manually-seeded/attached rows,
-  not pulled from Vonage. Discovery files are stored on local disk
-  (`lib/storage/DocumentStore`) as a stand-in behind the same interface
-  Dropbox will eventually implement — see `docs/ARCHITECTURE.md`.
-  General (non-discovery) document upload isn't built, so `DocumentStore`
-  is only wired up for Discovery so far.
+- **No production Dropbox, Vonage, Loop/HighLevel, MyCase, or QuickBooks
+  integration.** A **development/test** Dropbox integration exists (see
+  "Current status" and the setup steps above), but it's not the
+  production integration: no firm-owned Dropbox app, no per-matter folder
+  convention, no encrypted-at-rest token storage — see
+  `docs/ARCHITECTURE.md`'s "Documents & Dropbox" section for the full
+  list. General (non-discovery) documents still show fake Dropbox paths
+  as plain text with no real file behind them either way; calls are
+  manually-seeded/attached rows, not pulled from Vonage. General
+  (non-discovery) document upload isn't built, so `DocumentStore` is only
+  wired up for Discovery so far.
 - **The Matter Overview's "Quick actions"** — Add Note and New Task link
   to the tabs with the real forms; "Log a Call" (logging a *new* call, as
   opposed to attaching an already-existing unfiled one) and "Upload
@@ -197,10 +249,14 @@ this password anywhere real** — see `docs/SECURITY.md`.
   row is created; if the DB write fails after a successful disk write, the
   file is left on disk with no DB record pointing to it. Acceptable for a
   local dev/demo store, worth revisiting before any real storage backend.
-- **`LocalDocumentStore` is not the final storage backend.** It's a
-  correct implementation of the `DocumentStore` interface, but real
-  discovery evidence needs Dropbox (or another durable, backed-up store)
-  before this system holds anything but fictional test files.
+- **Neither `DocumentStore` implementation is the final production storage
+  backend.** `DropboxDocumentStore` is real, but it's a development/test
+  integration (a personal-dev Dropbox app, a flat dev key scheme, an
+  unencrypted local refresh token) — real discovery evidence needs a
+  firm-owned Dropbox app, a production folder convention, and encrypted
+  credential storage before this system holds anything but fictional
+  test files. No migration tooling exists to move files already on local
+  disk into Dropbox (or vice versa) if the active provider changes.
 
 ## Working with confidential data
 

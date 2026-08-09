@@ -289,6 +289,54 @@ registration, no custom Bates starting number, a possible orphaned file
 on disk if a registration's DB write fails after its disk write succeeds,
 and `LocalDocumentStore` remaining a dev/demo stand-in (not Dropbox).
 
+## Milestone — Dropbox-backed dev/test DocumentStore (eighth session)
+
+A second `DocumentStore` implementation, picked ahead of the rest of
+Phase 6 specifically because the interface was already designed for
+exactly this swap (see the sixth-session milestone above) — first local
+setup in VS Code, then this:
+
+- `STORAGE_PROVIDER` (`.env`) selects `local` (default, unchanged
+  `LocalDocumentStore`) or `dropbox` (`lib/storage/DropboxDocumentStore.ts`,
+  the official `dropbox` SDK, authenticated with a refresh token —
+  `DROPBOX_APP_KEY`/`DROPBOX_APP_SECRET`/`DROPBOX_REFRESH_TOKEN`). Every
+  key is written under a configurable, obviously-disposable test root
+  (`DROPBOX_ROOT_PATH`, default `/FryeCaseManagement-DEV`) — see
+  `.env.example`.
+- `lib/discovery/actions.ts` and every Server Action calling
+  `documentStore` needed **zero** changes — exactly the payoff the
+  interface was designed for. The existing key scheme
+  (`matters/<matterId>/discovery/<productionId>/<uuid>/...`), hashing,
+  Bates stamping, authorization, and audit logging are all identical
+  regardless of which backend is active.
+- `lib/storage/config.ts` validates the Dropbox environment variables and
+  throws a clear, secret-free error (naming which variable is missing,
+  never a value) if `STORAGE_PROVIDER=dropbox` is set without all three —
+  this happens at startup, not on the first upload.
+- `DropboxDocumentStore` re-validates every key is a safe relative path
+  (no `..`, no leading slash, no `//`) before calling the Dropbox API, and
+  writes with Dropbox's `add` mode (fails instead of silently overwriting
+  on a path collision) — the same defense-in-depth posture
+  `LocalDocumentStore` already had for the filesystem.
+- Downloads still only happen through the app's own authenticated Route
+  Handler — this pass never generates a Dropbox shared/public link, and
+  the generic-404 behavior for unauthorized/nonexistent files is
+  unchanged (see docs/SECURITY.md).
+- Tests (`tests/storage/`) cover provider selection, missing-config
+  failure, Dropbox path generation (including the original/stamped
+  derivative staying at distinct paths), path-traversal rejection, error
+  sanitization (a mocked Dropbox error carrying a fake token value never
+  reaches the thrown error's message), and a `LocalDocumentStore`
+  regression check — all against mocks, no real Dropbox account required.
+
+**Deliberately not done here:** an actual live round-trip against a real
+Dropbox test account (no Dropbox credentials were available in the
+session that built this — see README.md for exactly what to configure to
+run one), a production-grade per-matter Dropbox folder convention (still
+the flat dev key scheme — see Phase 4 below), encrypted-at-rest storage
+of the refresh token, and any migration path for files already on local
+disk if a firm ever switches providers.
+
 ## Phase 4 — Discovery management (core differentiator)
 
 - [x] `DiscoveryProduction` and `DiscoveryFile` create. *Real as of the
@@ -297,10 +345,12 @@ and `LocalDocumentStore` remaining a dev/demo stand-in (not Dropbox).
       edit/delete UI yet.*
 - [ ] Standardized Dropbox folder-structure convention per matter
       (documented in a new `docs/DISCOVERY.md` once designed) — files
-      currently key into `lib/storage/DocumentStore` by
-      `matters/<matterId>/discovery/<productionId>/<uuid>/...`, a
-      placeholder scheme that only matters once Dropbox is the backing
-      store.
+      still key into `lib/storage/DocumentStore` by
+      `matters/<matterId>/discovery/<productionId>/<uuid>/...` (unchanged
+      by the eighth-session Dropbox milestone above — that key scheme is
+      generated in `lib/discovery/actions.ts`, independent of which
+      storage backend receives it), a placeholder scheme good enough for
+      dev/test but not the production folder convention this item covers.
 - [x] Bates numbering for PDFs (apply to a copy; preserve the original).
       *Real — `lib/discovery/pdf.ts` + `lib/discovery/bates.ts`, unit
       tested for sequencing and non-destructiveness.*
@@ -338,13 +388,13 @@ manually before any Vonage API work begins.
 
 ## Phase 6 — Integrations (Dropbox, Vonage)
 
-- [ ] Dropbox integration behind `lib/storage/DocumentStore`: link matter
-      folders, browse/upload/reference files from the app. The interface
-      already exists with a local-disk implementation
-      (`LocalDocumentStore`, sixth session) — this phase is writing a
-      Dropbox-backed implementation of the same interface and swapping it
-      in; `lib/discovery/`'s Bates/hashing/comparison engine and every
-      Server Action calling `documentStore` should need no changes.
+- [x] Dropbox integration behind `lib/storage/DocumentStore` for
+      dev/test use. *Real as of the eighth session
+      (`lib/storage/DropboxDocumentStore.ts`, `STORAGE_PROVIDER=dropbox`)
+      — see the milestone above.* Still open for **production** use:
+      linking a real per-matter folder structure, browsing/uploading from
+      the app beyond Discovery's own register/download flow, a firm-owned
+      (not personal-dev) Dropbox app, and encrypted-at-rest token storage.
 - [ ] Vonage integration behind `lib/telephony/CallProvider`: pull call/SMS
       history, support flagging and filing a real call to a matter, save
       recordings into the matter's Dropbox structure.
