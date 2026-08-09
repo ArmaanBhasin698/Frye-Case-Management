@@ -188,10 +188,11 @@ below for what's still open.
       Note/Task create, Task status update, and Call attach in the fifth
       session; Client create/update, Matter create/update, and
       MatterAssignment create/delete in the ninth session; Deadline/
-      CalendarEvent create/update/status-change in the tenth session; and
-      Document upload/metadata-edit/download in the eleventh session (see
-      milestones above). Note/Task edit-delete still has no write path, so
-      this isn't complete for every entity yet.
+      CalendarEvent create/update/status-change in the tenth session;
+      Document upload/metadata-edit/download in the eleventh session; and
+      Note/Task edit in the twelfth session (see milestones above).
+      Note/Task *deletion* still has no write path (deliberately deferred,
+      same reasoning as every other entity).
 
 **Exit criteria:** a staff member can create a client, open a matter for
 them, assign staff to it, and have that access properly restricted and
@@ -200,11 +201,14 @@ Client/Matter deletion remains open for a future phase.
 
 ## Phase 3 — Case workflow essentials
 
-- [x] Notes on a matter — create is done (fifth-session milestone above);
-      no edit/delete/pin-toggle form yet.
-- [x] Tasks (assignable, with status/priority) on a matter — create and
-      Kanban drag-to-update-status are done (fifth-session milestone
-      above); no edit/delete/reassign form yet.
+- [x] Notes on a matter — create (fifth-session milestone above) and edit
+      (body + pinned, twelfth-session milestone below) are done; no
+      deletion (deliberately deferred, no safe archival pattern yet).
+- [x] Tasks (assignable, with status/priority) on a matter — create,
+      Kanban drag-to-update-status (fifth-session milestone above), and a
+      full edit form (title/description/due date/priority/status/
+      assignee, twelfth-session milestone below) are done; no deletion
+      (deliberately deferred, same reasoning as Notes).
 - [x] Deadlines on a matter, with a simple upcoming-deadlines view. Real
       as of the tenth session (see milestone below) — create, edit, and a
       mark complete/incomplete toggle all persist; the Matter Overview and
@@ -222,8 +226,9 @@ Client/Matter deletion remains open for a future phase.
       before those actions existed.
 
 **Exit criteria:** day-to-day case management (notes, tasks, deadlines,
-calendar) works without MyCase for a pilot matter. **Met as of the tenth
-session** — Notes/Tasks still lack edit/delete, tracked separately above.
+calendar) works without MyCase for a pilot matter. **Met as of the twelfth
+session** for everyday create/edit workflows — deletion/archival for any
+entity remains deliberately deferred, tracked separately above.
 
 ## Milestone — Real Bates/hashing/comparison engine (sixth session)
 
@@ -586,6 +591,83 @@ carries; adding delete support to both `DocumentStore` implementations was
 judged out of scope for this pass), a production Dropbox folder
 convention (still the flat dev key scheme), any file preview/rendering,
 and any Dropbox/Vonage/Loop/MyCase/QuickBooks integration work.
+
+## Milestone — Note/Task editing (twelfth session)
+
+Closes the last everyday editing gap called out by the eleventh session's
+Documents milestone: Notes and Tasks could be created but never edited.
+No schema/migration changes were needed — `Note.updatedAt` and
+`Task.updatedAt` already existed via `@updatedAt`.
+
+- **Edit Note** (`lib/matters/actions.ts#updateNote`,
+  `components/shared/note-list.tsx`) — body and pinned only; author and
+  original `createdAt` are never touched. The Matter Notes tab
+  (`app/(dashboard)/matters/[matterId]/notes/page.tsx`) now renders each
+  note through `NoteList`, which gives every note card a restrained
+  "Edit" action inline, matching the Deadline/CalendarEvent/Document edit
+  pattern.
+- **Edit Task** (`lib/matters/actions.ts#updateTask`,
+  `components/shared/task-board.tsx`) — title, description, due date,
+  priority, status, and assignee. The Kanban board's existing drag-and-
+  drop (`updateTaskStatus`) and the new full-form edit both write the same
+  `Task.status` column with matching `revalidatePath` calls, so a drag and
+  a form-based status change can never disagree with each other — no
+  reconciliation logic was needed, just two ordinary writers of one
+  column.
+- **Task assignee security rule**: an `assignedToId` submitted to
+  `updateTask` must belong to an **active** user who is **either assigned
+  to that matter or an active `ADMIN`** — enforced by reusing the existing
+  `hasMatterAccess` check against the *candidate* assignee's `{id, role}`
+  rather than inventing a new authorization concept. This prevents a
+  forged request from assigning a Task on Matter A to a globally-valid
+  user who has no legitimate reason to know Matter A exists. The picker
+  itself only ever offers legitimate candidates —
+  `lib/matters/queries.ts#getMatterAssignableUsers` mirrors the same rule
+  (matter-assigned active users ∪ active `ADMIN`s) so the UI never offers
+  an option the server would reject.
+- **Authorization**: both actions independently call
+  `requireCurrentUser()` and `hasMatterAccess` for the caller (the plain
+  matter-access rule, any assigned role — same as Notes/Tasks/Calls/
+  Deadlines/CalendarEvents/Documents before them, not the stricter
+  `ADMIN`/`ATTORNEY` Client/Matter rule), then re-fetch the record via
+  `findFirst({where: {id, matterId}})` before writing — a `noteId`/
+  `taskId` from a different matter is denied exactly like a nonexistent
+  one, even for a caller with legitimate access to *some* matter.
+- Real `AuditEvent`s: Note `UPDATE` and Task `UPDATE`, both restrained the
+  same way `Client.notes`/`Document.notes` already are — `Note.body` and
+  `Task.description` are free text excluded from the diff itself; only
+  `contentChanged: true` / `descriptionChanged: true` is recorded, never
+  the actual before/after text. Every other changed field (`pinned`,
+  `title`, `dueDate`, `priority`, `status`, `assignedToId`) is diffed
+  normally via `diffFields`. A no-op edit (nothing actually changed)
+  writes no audit event, consistent with every prior write-action
+  milestone.
+- 22 new focused tests (`tests/matters/actions.test.ts`) covering Note
+  edit validation, matter authorization, cross-matter id-scoping denial,
+  audit content restraint (including a JSON-stringify assertion that
+  neither the before nor after note text appears anywhere in the audit
+  payload), no-op-edit producing no audit event, Task edit validation,
+  matter authorization, cross-matter id-scoping denial, Kanban-column
+  consistency, description redaction, and the assignee-validation rule
+  (rejecting a nonexistent/inactive assignee, rejecting an active user
+  unrelated to the matter, allowing a genuinely matter-assigned user,
+  allowing an `ADMIN` regardless of assignment, and allowing the assignee
+  to be cleared).
+- Browser-verified end to end with fictional data (Playwright): create →
+  edit → refresh → persistence for both a Note (body + pinned) and a Task
+  (title/due date/assignee/status), the Timeline showing both UPDATE
+  events without reproducing the note's full text, a Kanban drag-to-Done
+  after a form edit staying consistent with the edit workflow, a `STAFF`
+  account unassigned to the test matter denied (404) on the matter itself
+  and its Notes/Tasks tabs, and Documents/Discovery/Calls/Deadlines &
+  Calendar/Clients/Matters/Dashboard all still rendering and functioning
+  (including a full upload/download/metadata-edit exercise, not just a
+  page-render check) afterward.
+
+**Deliberately not done here:** Note/Task *deletion* or archival (no safe
+pattern exists yet, same reasoning as Client/Matter/Deadline/
+CalendarEvent/Document), and any Dropbox/Vonage/Loop/MyCase/QuickBooks
+integration work.
 
 ## Phase 4 — Discovery management (core differentiator)
 

@@ -122,6 +122,79 @@ export async function createNote(
   return { ...FORM_OK };
 }
 
+const updateNoteSchema = z.object({
+  matterId: cuid,
+  noteId: cuid,
+  body: z.string().trim().min(1, "Note text is required.").max(10_000, "Note is too long."),
+  pinned: z.boolean(),
+});
+
+export async function updateNote(
+  _prevState: FormActionState,
+  formData: FormData,
+): Promise<FormActionState> {
+  const user = await requireCurrentUser();
+
+  const parsed = updateNoteSchema.safeParse({
+    matterId: formData.get("matterId"),
+    noteId: formData.get("noteId"),
+    body: formData.get("body"),
+    pinned: formData.get("pinned") === "on",
+  });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+  const { matterId, noteId, body, pinned } = parsed.data;
+
+  if (!(await hasMatterAccess(user, matterId))) {
+    return { error: NOT_FOUND.error };
+  }
+
+  // Scoped by matterId, not just id: a noteId from a different matter can
+  // never be edited through this matter, even by a caller who has
+  // legitimate write access to *some* matter. Author/createdAt are never
+  // touched by this action — only body and pinned change.
+  const before = await prisma.note.findFirst({
+    where: { id: noteId, matterId },
+    select: { body: true, pinned: true },
+  });
+  if (!before) {
+    return { error: NOT_FOUND.error };
+  }
+
+  await prisma.note.update({
+    where: { id: noteId },
+    data: { body, pinned },
+  });
+
+  // `body` is the note's actual content — never dump the before/after text
+  // into the audit log (see docs/SECURITY.md); record only that it
+  // changed, same treatment `Client.notes`/`Document.notes` already get.
+  const bodyChanged = before.body !== body;
+  const changed = diffFields({ pinned: before.pinned }, { pinned });
+
+  if (bodyChanged || Object.keys(changed).length > 0) {
+    await prisma.auditEvent.create({
+      data: {
+        actorId: user.id,
+        action: "UPDATE",
+        entityType: "Note",
+        entityId: noteId,
+        matterId,
+        metadata: {
+          ...(bodyChanged ? { contentChanged: true } : {}),
+          ...(Object.keys(changed).length > 0 ? { changed } : {}),
+        },
+      },
+    });
+  }
+
+  revalidatePath(`/matters/${matterId}/notes`);
+  revalidatePath(`/matters/${matterId}`);
+  revalidatePath(`/matters/${matterId}/timeline`);
+  return { ...FORM_OK };
+}
+
 // --- Tasks -------------------------------------------------------------
 
 const createTaskSchema = z.object({
@@ -182,6 +255,155 @@ export async function createTask(
       matterId,
     },
   });
+
+  revalidatePath(`/matters/${matterId}/tasks`);
+  revalidatePath(`/matters/${matterId}`);
+  revalidatePath(`/matters/${matterId}/timeline`);
+  return { ...FORM_OK };
+}
+
+const updateTaskSchema = z.object({
+  matterId: cuid,
+  taskId: cuid,
+  title: z.string().trim().min(1, "Title is required.").max(200, "Title is too long."),
+  description: z
+    .string()
+    .trim()
+    .max(2_000, "Description is too long.")
+    .optional()
+    .transform((v) => (v ? v : undefined)),
+  dueDate: z
+    .string()
+    .optional()
+    .transform((v) => (v ? v : undefined))
+    .refine((v) => !v || !Number.isNaN(Date.parse(v)), "Invalid due date."),
+  priority: z.enum(TASK_PRIORITY_VALUES),
+  status: z.enum(TASK_STATUS_VALUES),
+  assignedToId: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => (v ? v : undefined)),
+});
+
+/**
+ * Full edit form for a Task (title/description/due date/priority/status/
+ * assignee). Writes the same `status` column `updateTaskStatus` (Kanban
+ * drag-and-drop) does, so the two stay consistent by construction — both
+ * are just ordinary writes to `Task.status`, and either one's
+ * `revalidatePath` refreshes the same Tasks page the other renders from.
+ */
+export async function updateTask(
+  _prevState: FormActionState,
+  formData: FormData,
+): Promise<FormActionState> {
+  const user = await requireCurrentUser();
+
+  const parsed = updateTaskSchema.safeParse({
+    matterId: formData.get("matterId"),
+    taskId: formData.get("taskId"),
+    title: formData.get("title"),
+    description: formData.get("description") ?? undefined,
+    dueDate: formData.get("dueDate") ?? undefined,
+    priority: formData.get("priority"),
+    status: formData.get("status"),
+    assignedToId: formData.get("assignedToId") ?? undefined,
+  });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+  const { matterId, taskId, title, description, dueDate, priority, status, assignedToId } = parsed.data;
+
+  if (!(await hasMatterAccess(user, matterId))) {
+    return { error: NOT_FOUND.error };
+  }
+
+  // Scoped by matterId, not just id: a taskId from a different matter can
+  // never be edited through this matter, even by a caller who has
+  // legitimate write access to *some* matter.
+  const before = await prisma.task.findFirst({
+    where: { id: taskId, matterId },
+    select: {
+      title: true,
+      description: true,
+      dueDate: true,
+      priority: true,
+      status: true,
+      assignedToId: true,
+    },
+  });
+  if (!before) {
+    return { error: NOT_FOUND.error };
+  }
+
+  // An assignee must be an active user who has a legitimate reason to
+  // know this matter exists — either genuinely assigned to it, or an
+  // ADMIN (who can see every matter). This reuses `hasMatterAccess`
+  // as-is against the *candidate* assignee's own id/role rather than the
+  // caller's, so a forged assignedToId naming some unrelated active user
+  // can never be assigned to a matter they have no access to, even though
+  // the id itself is a real, active user. No new authorization concept —
+  // exactly the same rule that already gates who may view this matter.
+  if (assignedToId) {
+    const candidate = await prisma.user.findUnique({
+      where: { id: assignedToId },
+      select: { id: true, role: true, active: true },
+    });
+    if (!candidate || !candidate.active) {
+      return { error: "Selected assignee is invalid." };
+    }
+    if (!(await hasMatterAccess(candidate, matterId))) {
+      return { error: "Selected assignee does not have access to this matter." };
+    }
+  }
+
+  const nextDueDate = dueDate ? new Date(dueDate) : null;
+  const nextAssignedToId = assignedToId ?? null;
+  const nextDescription = description ?? null;
+
+  await prisma.task.update({
+    where: { id: taskId },
+    data: {
+      title,
+      description: nextDescription,
+      dueDate: nextDueDate,
+      priority,
+      status,
+      assignedToId: nextAssignedToId,
+    },
+  });
+
+  // `description` is free text (up to 2,000 chars) and can carry the same
+  // kind of case-sensitive detail as a Note — record only that it
+  // changed, never the content, same treatment `Note.body`/`Client.notes`/
+  // `Document.notes` already get (see docs/SECURITY.md).
+  const descriptionChanged = before.description !== nextDescription;
+  const changed = diffFields(
+    {
+      title: before.title,
+      dueDate: before.dueDate,
+      priority: before.priority,
+      status: before.status,
+      assignedToId: before.assignedToId,
+    },
+    { title, dueDate: nextDueDate, priority, status, assignedToId: nextAssignedToId },
+  );
+
+  if (descriptionChanged || Object.keys(changed).length > 0) {
+    await prisma.auditEvent.create({
+      data: {
+        actorId: user.id,
+        action: "UPDATE",
+        entityType: "Task",
+        entityId: taskId,
+        matterId,
+        metadata: {
+          ...(Object.keys(changed).length > 0 ? { changed } : {}),
+          ...(descriptionChanged ? { descriptionChanged: true } : {}),
+        },
+      },
+    });
+  }
 
   revalidatePath(`/matters/${matterId}/tasks`);
   revalidatePath(`/matters/${matterId}`);

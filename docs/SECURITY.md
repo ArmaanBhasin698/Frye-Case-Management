@@ -55,11 +55,11 @@ Also now real:
 
 Still **not implemented** (tracked in `docs/ROADMAP.md`):
 
-- Client/Matter/Deadline/CalendarEvent/Document *deletion* or archival
-  (create/edit are real as of the ninth, tenth, and eleventh sessions —
-  see below), logging a brand-new Call (only attaching an existing unfiled
-  one), and Note/Task edit-delete — none of those have a write path yet,
-  so `AuditEvent` for them is still only seeded demo data.
+- Client/Matter/Deadline/CalendarEvent/Document/Note/Task *deletion* or
+  archival (create/edit are real as of the ninth through twelfth sessions
+  — see `docs/ROADMAP.md`) and logging a brand-new Call (only attaching an
+  existing unfiled one) — none of those have a write path yet, so
+  `AuditEvent` for them is still only seeded demo data.
 - The **production** Dropbox integration (a firm-wide app, a real per-matter
   folder convention, encrypted-at-rest token storage, monitoring) — see
   "Third-party integrations" below. What exists now is a development/test
@@ -252,6 +252,31 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
     neither can silently overwrite the other. The true original filename
     is preserved only as `Document.originalFilename` metadata, never in
     the storage path (see "Data handling" below for why).
+  - **Note/Task editing (twelfth session)** also uses the plain
+    matter-access rule — `hasMatterAccess`, same as every other per-matter
+    sub-resource above, not the stricter Client/Matter management rule.
+    `updateNote` and `updateTask` (`lib/matters/actions.ts`) re-fetch the
+    record scoped by `{id, matterId}` together before editing it, same
+    pattern as `updateDeadline`/`updateDocumentMetadata` — a `noteId`/
+    `taskId` from a different matter is denied exactly like a nonexistent
+    one, even for a caller genuinely assigned to some other matter.
+  - **Task assignee security rule (twelfth session):** `Task.assignedToId`
+    is a plain foreign key to `User`, with no matter-scoping of its own —
+    submitting *any* globally-valid, active user id would otherwise let a
+    caller assign a confidential matter's task to a user who has no
+    legitimate reason to know that matter exists. `updateTask` closes this
+    by requiring the submitted assignee be **active** and **either
+    assigned to that matter (any role) or an active `ADMIN`** — reusing
+    `hasMatterAccess` against the *candidate* assignee's `{id, role}`
+    rather than the caller's, so the same authorization logic that decides
+    who may access a matter also decides who may be assigned its tasks,
+    instead of introducing a second, parallel rule. `lib/matters/
+    queries.ts#getMatterAssignableUsers` mirrors this exact rule for the
+    UI's assignee picker (matter-assigned active users ∪ active `ADMIN`s),
+    so the picker never offers, and a user can never be tricked into
+    submitting, an option the server would reject anyway. Clearing an
+    assignee (submitting no id) is always allowed and skips this check
+    entirely, since it does not grant anyone new visibility.
 - All authorization checks happen **server-side** — `proxy.ts` gates
   "is anyone logged in," and every Server Component that reads matter data
   re-checks independently rather than trusting the proxy alone (see
@@ -284,18 +309,19 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
 - Every create/update/delete on Client, Matter, Note, Task, Deadline,
   CalendarEvent, Communication, Call, Document, DiscoveryProduction, and
   DiscoveryFile produces an `AuditEvent` (see `docs/DATA_MODEL.md`).
-  **Implemented so far** for: Note create, Task create, Task status
+  **Implemented so far** for: Note create/update, Task create/update/status
   update, Call attach-to-matter (`lib/matters/actions.ts`), Client
   create/update, Matter create/update, MatterAssignment create/delete
   (`lib/clients/actions.ts`, `lib/matters/actions.ts`, ninth session),
   Deadline create/update/status-change, CalendarEvent create/update
   (`lib/matters/actions.ts`, tenth session), general Document
   upload/metadata-edit/download (`lib/documents/actions.ts` and its
-  download Route Handler, eleventh session), and Discovery production
-  create, file registration, Bates generation, and comparison
-  (`lib/discovery/actions.ts`). Every other entity/action in that list
-  still has no write path at all, so there's nothing yet to log for them
-  (see `docs/ROADMAP.md`).
+  download Route Handler, eleventh session), Note/Task `UPDATE`
+  (`lib/matters/actions.ts#updateNote`/`updateTask`, twelfth session), and
+  Discovery production create, file registration, Bates generation, and
+  comparison (`lib/discovery/actions.ts`). Every other entity/action in
+  that list still has no write path at all, so there's nothing yet to log
+  for them (see `docs/ROADMAP.md`).
   - Registering a PDF logs **two** events: a `CREATE` for the file itself
     and a separate `UPDATE` carrying `metadata.event: "bates_generated"`
     with the assigned range — Bates generation is its own auditable action,
@@ -306,14 +332,16 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
     staff to a new matter is its own auditable action, not folded into the
     matter's own event.
   - `updateClient`/`updateMatter`/`updateDeadline`/`updateCalendarEvent`/
-    `updateDocumentMetadata` log an `UPDATE` event with `metadata.changed`
-    containing only the fields that actually changed (before/after), via a
-    shared `lib/utils/index.ts#diffFields` helper — a no-op edit produces
-    no audit event at all. `Client.notes` and `Document.notes` are both
-    excluded from the diff itself: since they're free text, the event only
-    records `metadata.notesChanged: true`, never the before/after content,
-    so the audit log can't become a second copy of potentially sensitive
-    case notes.
+    `updateDocumentMetadata`/`updateNote`/`updateTask` log an `UPDATE`
+    event with `metadata.changed` containing only the fields that actually
+    changed (before/after), via a shared `lib/utils/index.ts#diffFields`
+    helper — a no-op edit produces no audit event at all. `Client.notes`,
+    `Document.notes`, `Note.body`, and `Task.description` are all excluded
+    from the diff itself: since they're free text that could contain
+    privileged case detail, the event only records `metadata.notesChanged`
+    / `contentChanged` / `descriptionChanged: true`, never the before/after
+    content, so the audit log can't become a second copy of potentially
+    sensitive case notes.
   - `setDeadlineSatisfied` logs its own `UPDATE` event
     (`metadata: {satisfied}`) separately from `updateDeadline`'s
     field-diff event — same reasoning as Bates generation above: marking a
