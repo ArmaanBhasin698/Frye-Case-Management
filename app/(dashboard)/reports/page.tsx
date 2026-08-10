@@ -91,7 +91,7 @@ export default async function ReportsPage({
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Reports</h1>
+        <h1 className="page-title">Reports</h1>
         <p className="text-sm text-muted-foreground">
           Firm-wide operational reporting across every matter you have access to — an aggregate view over
           existing Task/Deadline/Document/Discovery/Call records, not a separate billing or case-outcome

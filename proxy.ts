@@ -28,5 +28,9 @@ export default auth((req) => {
 });
 
 export const config = {
-  matcher: ["/((?!api/auth|_next/static|_next/image|favicon.ico).*)"],
+  // `brand` is excluded alongside the existing framework/static exclusions
+  // because it's a public asset folder (public/brand) — the login page
+  // itself renders before a session exists, so its logo <img> must be
+  // fetchable without auth. No application route is affected.
+  matcher: ["/((?!api/auth|_next/static|_next/image|favicon.ico|brand).*)"],
 };

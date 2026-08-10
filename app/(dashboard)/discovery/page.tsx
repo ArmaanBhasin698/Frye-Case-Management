@@ -99,7 +99,7 @@ export default async function FirmDiscoveryPage({
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Discovery</h1>
+        <h1 className="page-title">Discovery</h1>
         <p className="text-sm text-muted-foreground">
           Firm-wide discovery files across every matter you have access to — an aggregate view over
           each matter&apos;s own Discovery tab, not a separate record. {files.length}{" "}

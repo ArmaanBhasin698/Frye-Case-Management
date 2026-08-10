@@ -93,7 +93,7 @@ export default async function FirmTasksPage({
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Tasks</h1>
+        <h1 className="page-title">Tasks</h1>
         <p className="text-sm text-muted-foreground">
           Firm-wide tasks across every matter you have access to — an aggregate view over each matter&apos;s
           own Tasks tab, not a separate record. {tasks.length} {tasks.length === 1 ? "task" : "tasks"} match

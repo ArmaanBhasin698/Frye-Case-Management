@@ -56,7 +56,7 @@ export default async function MatterLayout({
         <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-semibold tracking-tight">{matterTitle(matter)}</h1>
+              <h1 className="page-title">{matterTitle(matter)}</h1>
               <Badge variant={matterStatusVariant(matter.status)}>
                 {matterStatusLabel(matter.status)}
               </Badge>
