@@ -12,7 +12,13 @@ import { auth } from "@/lib/auth/config";
  */
 export default auth((req) => {
   const isLoggedIn = Boolean(req.auth);
-  const isLoginPage = req.nextUrl.pathname === "/login";
+  // /login/mfa and /login/mfa/setup are reached with a signed pending-
+  // challenge cookie, not a session (see lib/auth/mfa/tickets.ts) — they
+  // belong in the same pre-session bucket as /login itself.
+  const isLoginPage =
+    req.nextUrl.pathname === "/login" ||
+    req.nextUrl.pathname === "/login/mfa" ||
+    req.nextUrl.pathname.startsWith("/login/mfa/");
 
   if (!isLoggedIn && !isLoginPage) {
     const loginUrl = new URL("/login", req.nextUrl.origin);

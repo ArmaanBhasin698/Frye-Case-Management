@@ -1,8 +1,9 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
-import bcrypt from "bcryptjs";
 
 import { prisma } from "@/lib/db";
+import { verifyPassword } from "@/lib/auth/credentials";
+import { consumeVerifiedTicket } from "@/lib/auth/mfa/tickets";
 
 /**
  * Auth.js configuration for credentials-based, session-based auth (see
@@ -26,6 +27,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   pages: { signIn: "/login" },
   providers: [
     Credentials({
+      // Completes sign-in directly only for accounts with no MFA in play.
+      // An account with mfaEnabled or mfaRequired set can NEVER complete
+      // sign-in through this provider, no matter how the request was made
+      // (the login form, a direct POST to the callback route, or anything
+      // else) — that refusal, not any UI redirect, is what actually
+      // prevents a password-only session for those accounts. See
+      // lib/auth/mfa/ and the "mfa-complete" provider below.
+      id: "credentials",
       credentials: {
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
@@ -37,24 +46,43 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           return null;
         }
 
-        const user = await prisma.user.findUnique({
-          where: { email: email.toLowerCase().trim() },
-        });
+        const user = await verifyPassword(email, password);
+        if (!user || user.mfaEnabled || user.mfaRequired) {
+          return null;
+        }
+
+        return { id: user.id, name: user.name, email: user.email, role: user.role };
+      },
+    }),
+    Credentials({
+      // Internal, not surfaced on any login form. The only credential it
+      // accepts is a challenge-ticket id, and that id can only ever
+      // complete sign-in once (see consumeVerifiedTicket) and only after
+      // lib/auth/mfa/actions.ts has already verified a real TOTP code or
+      // recovery code for that ticket's user. A caller who invokes this
+      // provider directly with a guessed/forged/expired/already-used
+      // ticket id gets nothing — the ticket lookup is the entire check.
+      id: "mfa-complete",
+      credentials: {
+        ticket: { label: "Ticket", type: "text" },
+      },
+      async authorize(credentials) {
+        const ticket = credentials?.ticket;
+        if (typeof ticket !== "string") {
+          return null;
+        }
+
+        const consumed = await consumeVerifiedTicket(ticket);
+        if (!consumed) {
+          return null;
+        }
+
+        const user = await prisma.user.findUnique({ where: { id: consumed.userId } });
         if (!user || !user.active) {
           return null;
         }
 
-        const passwordMatches = await bcrypt.compare(password, user.passwordHash);
-        if (!passwordMatches) {
-          return null;
-        }
-
-        return {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
-        };
+        return { id: user.id, name: user.name, email: user.email, role: user.role };
       },
     }),
   ],

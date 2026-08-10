@@ -85,6 +85,33 @@ Firm staff account.
   `authorize()` callback. `active: false` blocks login even with a correct
   password (no UI to toggle it yet; set directly via `prisma studio` or a
   migration if needed).
+- `mfaEnabled`, `mfaRequired`, `totpSecretEncrypted`, `totpLastUsedStep`,
+  `mfaFailedAttempts`, `mfaLockedUntil` back TOTP-based MFA (fictional
+  accounts only — see `docs/SECURITY.md`'s "MFA/2FA status"). `mfaEnabled`
+  and `mfaRequired` are deliberately separate: a user can be required to
+  enroll without having done so yet, which the login flow needs to tell
+  apart from "not required at all." `totpSecretEncrypted` is AES-256-GCM
+  ciphertext, never plaintext. `totpLastUsedStep` and
+  `mfaFailedAttempts`/`mfaLockedUntil` exist purely for TOTP replay
+  prevention and MFA-step brute-force lockout, respectively — see
+  `lib/auth/mfa/`.
+
+### MfaRecoveryCode
+One-time-use recovery code for MFA, bcrypt-hashed (`codeHash`); `used`/
+`usedAt` enforce single redemption. Plaintext codes are shown to the user
+exactly once, at generation time, and never persisted. See
+`docs/SECURITY.md`'s "MFA/2FA status".
+
+### MfaChallengeTicket
+Short-lived, single-use server-side state for the parts of the MFA flow
+that happen before a real session exists (password verified, awaiting
+second factor; second factor verified, awaiting sign-in) or that must not
+touch `User` until confirmed (in-progress enrollment) — `purpose`
+(`MFA_PENDING` | `MFA_VERIFIED` | `MFA_ENROLLMENT`), `payload` (encrypted
+pending TOTP secret, `MFA_ENROLLMENT` only), `expiresAt`, `consumedAt`. The
+browser only ever holds a signed reference to a row's `id`; this table is
+the authoritative record of validity. See `lib/auth/mfa/tickets.ts` and
+`docs/SECURITY.md`.
 
 ### Client
 Person or entity the firm represents.
