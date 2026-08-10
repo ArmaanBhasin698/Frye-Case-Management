@@ -882,6 +882,118 @@ export async function updateMatter(
   redirect(`/matters/${matterId}`);
 }
 
+// --- Archive / reactivate ---------------------------------------------------
+//
+// Reversible removal from default active lists/pickers (see
+// Matter.archived in prisma/schema.prisma) — a pure visibility flag, never
+// a delete and never a case-outcome change: `status`/`closedDate` and
+// every associated Note/Task/Deadline/Document/Discovery/Call/
+// MatterAssignment/AuditEvent are left completely untouched either way.
+// Existing matter-level authorization (`assertMatterAccess`,
+// `matterIdFilterFor`/`matterScopeFilterFor`) is unaffected too — archiving
+// only changes whether a Matter shows up in the *default* list/picker view,
+// never who may directly access it (see docs/SECURITY.md).
+//
+// Gated by the same rule `updateMatter` above already uses for editing a
+// Matter's own fields — no new permission is invented: ADMIN, or an
+// ATTORNEY actually assigned to this specific matter
+// (lib/auth/access.ts#canEditMatter). PARALEGAL/STAFF can never archive or
+// reactivate a Matter, same as they can never edit one.
+
+const archiveMatterSchema = z.object({ matterId: cuid });
+
+export async function archiveMatter(input: { matterId: string }): Promise<ActionResult> {
+  const user = await requireCurrentUser();
+
+  const parsed = archiveMatterSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+  const { matterId } = parsed.data;
+
+  // Scoped by matterId, not just role (see updateMatter above) — an
+  // ATTORNEY who isn't assigned to this particular matter, or a forged id
+  // for a matter outside the caller's access, gets the same generic
+  // not-found response as a nonexistent matter.
+  if (!(await canEditMatter(user, matterId))) {
+    return NOT_FOUND;
+  }
+
+  const matter = await prisma.matter.findUnique({ where: { id: matterId }, select: { archived: true } });
+  if (!matter) {
+    return NOT_FOUND;
+  }
+  if (matter.archived) {
+    return { ok: false, error: "This matter is already archived." };
+  }
+
+  await prisma.matter.update({
+    where: { id: matterId },
+    data: { archived: true, archivedAt: new Date(), archivedById: user.id },
+  });
+
+  await prisma.auditEvent.create({
+    data: {
+      actorId: user.id,
+      action: "UPDATE",
+      entityType: "Matter",
+      entityId: matterId,
+      matterId,
+      metadata: { archived: true },
+    },
+  });
+
+  revalidatePath(`/matters/${matterId}`);
+  revalidatePath(`/matters/${matterId}/edit`);
+  revalidatePath("/matters");
+  revalidatePath("/");
+  return { ok: true, data: undefined };
+}
+
+export async function reactivateMatter(input: { matterId: string }): Promise<ActionResult> {
+  const user = await requireCurrentUser();
+
+  const parsed = archiveMatterSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+  const { matterId } = parsed.data;
+
+  if (!(await canEditMatter(user, matterId))) {
+    return NOT_FOUND;
+  }
+
+  const matter = await prisma.matter.findUnique({ where: { id: matterId }, select: { archived: true } });
+  if (!matter) {
+    return NOT_FOUND;
+  }
+  if (!matter.archived) {
+    return { ok: false, error: "This matter is not archived." };
+  }
+
+  await prisma.matter.update({
+    where: { id: matterId },
+    data: { archived: false, archivedAt: null, archivedById: null },
+  });
+
+  await prisma.auditEvent.create({
+    data: {
+      actorId: user.id,
+      action: "UPDATE",
+      entityType: "Matter",
+      entityId: matterId,
+      matterId,
+      metadata: { archived: false },
+    },
+  });
+
+  revalidatePath(`/matters/${matterId}`);
+  revalidatePath(`/matters/${matterId}/edit`);
+  revalidatePath("/matters");
+  revalidatePath("/");
+  return { ok: true, data: undefined };
+}
+
 // --- Matter assignments ----------------------------------------------------
 
 const addAssignmentSchema = z.object({

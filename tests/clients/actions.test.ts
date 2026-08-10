@@ -8,6 +8,7 @@ const { requireCurrentUserMock, prismaMock, revalidatePathMock, redirectMock } =
   }),
   prismaMock: {
     client: { create: vi.fn(), update: vi.fn(), findUnique: vi.fn() },
+    matter: { count: vi.fn() },
     auditEvent: { create: vi.fn() },
   },
 }));
@@ -17,7 +18,7 @@ vi.mock("next/navigation", () => ({ redirect: redirectMock }));
 vi.mock("@/lib/auth/session", () => ({ requireCurrentUser: requireCurrentUserMock }));
 vi.mock("@/lib/db", () => ({ prisma: prismaMock }));
 
-const { createClient, updateClient } = await import("@/lib/clients/actions");
+const { archiveClient, createClient, reactivateClient, updateClient } = await import("@/lib/clients/actions");
 
 const admin = { id: "user-admin", role: "ADMIN" as const };
 const attorney = { id: "user-attorney", role: "ATTORNEY" as const };
@@ -169,5 +170,130 @@ describe("updateClient", () => {
     prismaMock.client.update.mockResolvedValue({});
     await expect(updateClient({ error: null }, clientFormData(validFields))).rejects.toThrow("NEXT_REDIRECT");
     expect(prismaMock.auditEvent.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("archiveClient", () => {
+  const clientId = "client-1";
+
+  it("denies archiving for a role that isn't ADMIN or ATTORNEY", async () => {
+    requireCurrentUserMock.mockResolvedValue(staff);
+    const result = await archiveClient({ clientId });
+    expect(result).toEqual({ ok: false, error: "Not found or access denied." });
+    expect(prismaMock.client.update).not.toHaveBeenCalled();
+  });
+
+  it("allows ADMIN as well as ATTORNEY", async () => {
+    requireCurrentUserMock.mockResolvedValue(admin);
+    prismaMock.client.findUnique.mockResolvedValue({ archived: false });
+    prismaMock.matter.count.mockResolvedValue(0);
+    prismaMock.client.update.mockResolvedValue({});
+    const result = await archiveClient({ clientId });
+    expect(result).toEqual({ ok: true, data: undefined });
+  });
+
+  it("returns a generic not-found for a nonexistent client id (a forged id can't be distinguished from denial)", async () => {
+    prismaMock.client.findUnique.mockResolvedValue(null);
+    const result = await archiveClient({ clientId: "client-does-not-exist" });
+    expect(result).toEqual({ ok: false, error: "Not found or access denied." });
+    expect(prismaMock.client.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses to re-archive an already-archived client", async () => {
+    prismaMock.client.findUnique.mockResolvedValue({ archived: true });
+    const result = await archiveClient({ clientId });
+    expect(result).toEqual({ ok: false, error: "This client is already archived." });
+    expect(prismaMock.client.update).not.toHaveBeenCalled();
+  });
+
+  it("blocks archival with a clear message while the client still has an OPEN or PENDING matter", async () => {
+    prismaMock.client.findUnique.mockResolvedValue({ archived: false });
+    prismaMock.matter.count.mockResolvedValue(2);
+    const result = await archiveClient({ clientId });
+    expect(result).toEqual({ ok: false, error: expect.stringContaining("2 active") });
+    expect(prismaMock.matter.count).toHaveBeenCalledWith({
+      where: { clientId, status: { in: ["OPEN", "PENDING"] } },
+    });
+    expect(prismaMock.client.update).not.toHaveBeenCalled();
+    expect(prismaMock.auditEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("allows archival when the client's only matters are CLOSED", async () => {
+    prismaMock.client.findUnique.mockResolvedValue({ archived: false });
+    prismaMock.matter.count.mockResolvedValue(0);
+    prismaMock.client.update.mockResolvedValue({});
+    const result = await archiveClient({ clientId });
+    expect(result).toEqual({ ok: true, data: undefined });
+    expect(prismaMock.client.update).toHaveBeenCalledWith({
+      where: { id: clientId },
+      data: { archived: true, archivedAt: expect.any(Date), archivedById: attorney.id },
+    });
+  });
+
+  it("writes a safe UPDATE audit event with no client PII", async () => {
+    prismaMock.client.findUnique.mockResolvedValue({ archived: false });
+    prismaMock.matter.count.mockResolvedValue(0);
+    prismaMock.client.update.mockResolvedValue({});
+    await archiveClient({ clientId });
+    expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
+      data: {
+        actorId: attorney.id,
+        action: "UPDATE",
+        entityType: "Client",
+        entityId: clientId,
+        metadata: { archived: true },
+      },
+    });
+  });
+});
+
+describe("reactivateClient", () => {
+  const clientId = "client-1";
+
+  it("denies reactivation for a role that isn't ADMIN or ATTORNEY", async () => {
+    requireCurrentUserMock.mockResolvedValue(staff);
+    const result = await reactivateClient({ clientId });
+    expect(result).toEqual({ ok: false, error: "Not found or access denied." });
+    expect(prismaMock.client.update).not.toHaveBeenCalled();
+  });
+
+  it("returns a generic not-found for a nonexistent client id", async () => {
+    prismaMock.client.findUnique.mockResolvedValue(null);
+    const result = await reactivateClient({ clientId });
+    expect(result).toEqual({ ok: false, error: "Not found or access denied." });
+  });
+
+  it("refuses to reactivate a client that isn't archived", async () => {
+    prismaMock.client.findUnique.mockResolvedValue({ archived: false });
+    const result = await reactivateClient({ clientId });
+    expect(result).toEqual({ ok: false, error: "This client is not archived." });
+    expect(prismaMock.client.update).not.toHaveBeenCalled();
+  });
+
+  it("never checks active matters on the way back in — reactivation is unconditional once archived", async () => {
+    prismaMock.client.findUnique.mockResolvedValue({ archived: true });
+    prismaMock.client.update.mockResolvedValue({});
+    const result = await reactivateClient({ clientId });
+    expect(result).toEqual({ ok: true, data: undefined });
+    expect(prismaMock.matter.count).not.toHaveBeenCalled();
+  });
+
+  it("clears archived/archivedAt/archivedById and writes a safe UPDATE audit event", async () => {
+    prismaMock.client.findUnique.mockResolvedValue({ archived: true });
+    prismaMock.client.update.mockResolvedValue({});
+    await reactivateClient({ clientId });
+    expect(prismaMock.client.update).toHaveBeenCalledWith({
+      where: { id: clientId },
+      data: { archived: false, archivedAt: null, archivedById: null },
+    });
+    expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
+      data: {
+        actorId: attorney.id,
+        action: "UPDATE",
+        entityType: "Client",
+        entityId: clientId,
+        metadata: { archived: false },
+      },
+    });
   });
 });

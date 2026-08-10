@@ -220,6 +220,24 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
     every submitted `clientId` and assignment `userId` server-side (the
     client must exist; every assigned user must exist and be `active`)
     rather than trusting the form.
+  - **Reversible Client/Matter archival (added the seventeenth session):**
+    `archiveMatter`/`reactivateMatter` (`lib/matters/actions.ts`) reuse
+    `canEditMatter` exactly as `updateMatter` does — no new permission was
+    invented, and a `matterId` outside the caller's access is denied
+    exactly like a nonexistent one. `archiveClient`/`reactivateClient`
+    (`lib/clients/actions.ts`) reuse `canManageClientsAndMatters` exactly
+    as `updateClient` does. Archiving/reactivating never changes
+    matter-level or client-level authorization itself — `Client.archived`/
+    `Matter.archived` (`prisma/schema.prisma`) is a pure default-list
+    visibility flag (`lib/matters/queries.ts#listMatters`,
+    `lib/clients/queries.ts#listClients`, both defaulting to `view:
+    "active"`), so a direct link to an archived record a user is otherwise
+    authorized for still works exactly as before, and one they aren't
+    authorized for still 404s exactly as before — archiving cannot be used
+    to bypass or widen access either way (see
+    `tests/matters/queries.test.ts`/`tests/clients/queries.test.ts` for the
+    regression coverage proving the archived filter is always `AND`-ed
+    with the existing scope, never substituted for it).
   - **Deadlines and Calendar Events (tenth session)** use the plain
     matter-access rule above — `hasMatterAccess`, the same as Notes/Tasks/
     Calls — not the stricter `ADMIN`/`ATTORNEY` Client/Matter management
@@ -415,6 +433,11 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
     deadline complete/incomplete is its own auditable action with legal
     significance (see `docs/DATA_MODEL.md`'s note on why Deadline has its
     own satisfied/audit lifecycle), not just an incidental field change.
+  - `archiveMatter`/`reactivateMatter`/`archiveClient`/`reactivateClient`
+    (seventeenth session) log their own `UPDATE` event
+    (`metadata: {archived: true}` / `{archived: false}`) — same pattern as
+    `setDeadlineSatisfied` above, a single safe boolean, never any other
+    field on the record.
 - Sensitive read actions that matter for accountability (e.g., viewing/
   exporting discovery, exporting a client's full file) should also be
   logged, not just writes. **Implemented** for discovery file downloads —

@@ -167,13 +167,15 @@ below for what's still open.
 
 - [x] Client *create/list/view/edit* with server-side validation. Real as
       of the ninth session (see milestone above) — `ADMIN`/`ATTORNEY`
-      only. Deletion/archival intentionally not built (no safe pattern
-      existed yet to build it on).
+      only. *Deletion* remains deliberately out of scope; reversible
+      *archival* is real as of the seventeenth session (see milestone
+      below) — a permanent delete still has no safe pattern to build on.
 - [x] Matter *read* (list + detail) — done in the milestone above.
 - [x] Matter *create/edit* with server-side validation. Real as of the
       ninth session — `ADMIN`/`ATTORNEY` only, and edit additionally
-      requires the caller be assigned to that specific matter. *Deletion*
-      still not built, same reasoning as Client.
+      requires the caller be assigned to that specific matter. Reversible
+      *archival* is real as of the seventeenth session too; *deletion*
+      still isn't built, same reasoning as Client.
 - [x] `MatterAssignment` exists in the schema and is displayed (assigned
       staff shown on Matter overview); a UI to change assignments now
       exists too — required at Matter creation (at least one), and
@@ -197,7 +199,9 @@ below for what's still open.
 **Exit criteria:** a staff member can create a client, open a matter for
 them, assign staff to it, and have that access properly restricted and
 audited. **Met as of the ninth session** for `ADMIN`/`ATTORNEY` staff;
-Client/Matter deletion remains open for a future phase.
+reversible Client/Matter archival was added the seventeenth session (see
+milestone below) — permanent deletion remains open for a future phase, if
+ever.
 
 ## Phase 3 — Case workflow essentials
 
@@ -1043,6 +1047,141 @@ contents — see `docs/SECURITY.md`); a PDF/CSV export button (out of scope
 for this pass — nothing here changes what's already exportable per
 `docs/SECURITY.md`'s existing rules); and a third-party charting library
 (a CSS-only bar was judged sufficient for this data).
+
+## Milestone — Reversible Client/Matter archival (seventeenth session)
+
+Adds a safe, reversible archive/deactivate model for Clients and Matters
+— the "no safe archival pattern exists yet" caveat repeated throughout
+Phases 2–4 above is now resolved for these two entities. This *does*
+require a Prisma migration (see below); every other firm-wide session so
+far has been additive-only against the existing schema, so this one
+explicitly stopped for approval before touching `schema.prisma`, per the
+operator's safety policy.
+
+- **Schema (additive-only migration
+  `20260810024733_add_client_matter_archival`):** `Client` and `Matter`
+  each gain `archived Boolean @default(false)`, `archivedAt DateTime?`,
+  `archivedById String?` (FK → `User`, `onDelete: SetNull`) — the same
+  boolean+timestamp+actor shape this schema already used for
+  `Deadline.satisfied`/`satisfiedAt` and `Call.filedById`/`filedAt`, and
+  the same plain reversible gate `User.active` already established.
+  Deliberately **not** a new `MatterStatus` value or a reuse of `CLOSED`:
+  `archived` is fully orthogonal to `status`, so archiving/reactivating
+  never touches `status`/`closedDate`, and a matter's real-world case
+  status is never conflated with whether it's hidden from default views.
+  Every new column is nullable or defaulted, so every pre-existing row
+  stays exactly as visible as it was before this migration.
+- **`lib/matters/actions.ts#archiveMatter`/`reactivateMatter`** and
+  **`lib/clients/actions.ts#archiveClient`/`reactivateClient`** — new
+  Server Actions, each independently re-checking authorization (see
+  `docs/SECURITY.md`'s Authorization section): Matter archival reuses
+  `canEditMatter` exactly as `updateMatter` does (`ADMIN`, or an `ATTORNEY`
+  actually assigned to that matter); Client archival reuses
+  `canManageClientsAndMatters` exactly as `updateClient` does
+  (`ADMIN`/`ATTORNEY`, no per-client scoping — Clients aren't matter-scoped
+  in this data model). No new permission was invented for either. Each
+  action is a pure visibility flip: `archived`/`archivedAt`/`archivedById`
+  are the only fields ever written, and each logs its own `UPDATE`
+  `AuditEvent` with `metadata: {archived: true|false}` — the same safe,
+  single-boolean pattern `setDeadlineSatisfied` already established, never
+  any other field, note text, phone number, or document content.
+- **Client archival is blocked while the Client has any `OPEN`/`PENDING`
+  Matter** — the safest reversible answer to "what if a client still has
+  active matters," chosen over silently orphaning/hiding an active case or
+  cascading the archive onto its Matters (which `Matter.archived`'s
+  independence from `Client.archived` deliberately doesn't support — a
+  Client and its Matters are archived one at a time, on purpose). The
+  error names exactly how many active matters are in the way. A Client
+  whose Matters are all `CLOSED` (or has none yet) can always be archived.
+  Matter archival itself has no such precondition — any accessible Matter,
+  active or not, can be archived or reactivated.
+- **`lib/matters/queries.ts#listMatters`** and
+  **`lib/clients/queries.ts#listClients`** both gained a `{ view?: "active"
+  | "archived" }` option, defaulting to `"active"` (`archived: false`) —
+  every existing call site (the Matters/Clients pages themselves, and
+  every firm-wide filter bar's matter picker: Tasks/Calendar/Discovery/
+  Communications/Reports, all of which call `listMatters(user)`
+  positionally) keeps its exact current behavior and now never surfaces an
+  archived record by accident. `listClientsForPicker` (the New Matter
+  page's client picker) always excludes archived Clients unconditionally,
+  no `view` option — starting a new Matter under an already-archived
+  Client was judged out of scope for this pass. The archived filter is
+  layered on top of the existing `matterIdFilterFor`/authorization scoping
+  via a flat `AND`, never a substitute for it — a caller's own scope is
+  always applied regardless of which view they request (see
+  `tests/matters/queries.test.ts`/`tests/clients/queries.test.ts`).
+- **Both list pages** (`app/(dashboard)/matters`,
+  `app/(dashboard)/clients`) gained a simple Active/Archived toggle
+  (`?archived=1`) — two query-param links, the simplest pattern
+  consistent with this app's other "Clear filters" links, rather than a
+  full filter-bar component for one binary choice. An archived row shows a
+  secondary "Archived" badge alongside its existing status badge.
+- **The Matter layout header** (`app/(dashboard)/matters/[matterId]/
+  layout.tsx`) and **Client detail page**
+  (`app/(dashboard)/clients/[clientId]/page.tsx`) each gained an "Archived"
+  badge plus an Archive/Reactivate button
+  (`components/shared/archive-matter-button.tsx`/`archive-client-button.tsx`)
+  next to the existing "Edit Matter"/"Edit Client" button, visible under
+  the same `canManageClientsAndMatters` UI-convenience check the Edit
+  button already uses — real enforcement stays server-side in the action
+  itself, same posture as every other button in this app. Both buttons
+  call their Server Action directly and track pending/error state locally,
+  the same pattern `components/shared/deadline-list.tsx`'s "Mark complete"
+  toggle already established, rather than a `<form>`/`useActionState`
+  flow for a single boolean.
+- **Direct/historical access is completely unaffected by archival**:
+  `assertMatterAccess`, `hasMatterAccess`, `canEditMatter`,
+  `assertCanManageClientsAndMatters`, and `matterScopeFilterFor` were not
+  touched — an archived Matter/Client a user is otherwise authorized for
+  still opens exactly as before via a direct link or a filter-bar's
+  `matterId` query param (its data, sub-resources, and links all stay
+  coherent); one they aren't authorized for still 404s exactly as before.
+  Archiving only ever changes *default list/picker visibility*, never
+  *who* may reach a record directly — browser-verified with a forged
+  `matterId` for an archived-but-inaccessible matter (see below).
+- 35 new focused tests: `tests/matters/actions.test.ts` (`archiveMatter`/
+  `reactivateMatter` — ADMIN and assigned-ATTORNEY success, an
+  unassigned/forged matterId denied exactly like a nonexistent one,
+  already-archived/not-archived guard errors, the exact `data`/`metadata`
+  written, and that `status`/`closedDate` are never touched), the mirrored
+  set in `tests/clients/actions.test.ts` for `archiveClient`/
+  `reactivateClient` (plus the active-matters block, both blocked and
+  allowed paths, and that reactivation never re-checks active matters),
+  and new `tests/matters/queries.test.ts`/`tests/clients/queries.test.ts`
+  proving the `view` filter defaults correctly, combines with (never
+  replaces) the caller's existing matter-id scope, and — via simulated
+  Prisma filtering, same technique every other firm-wide queries test
+  already uses — never lets an inaccessible or wrong-view record leak into
+  the result.
+- Browser-verified against the local dev server (fictional seed data):
+  unauthenticated routes still redirect to `/login`; an `ADMIN` archived
+  and reactivated a Matter and a Client, each disappearing from/
+  reappearing in the default list and the Tasks/Calendar/Discovery/
+  Communications/Reports matter pickers, while still opening correctly via
+  its direct URL the whole time; a restricted `STAFF`/`ATTORNEY` account
+  saw the Archive/Reactivate controls exactly where `canEditMatter`/
+  `canManageClientsAndMatters` already gate other actions, and got the
+  same generic denial from the action itself when attempting one outside
+  their access; a forged `matterId`/`clientId` for a record outside the
+  caller's scope was denied without revealing whether it exists; archiving
+  a Client with an `OPEN` Matter was blocked with the expected message,
+  and succeeded once that Matter was set to `CLOSED`; and the Dashboard,
+  Matters, Clients, Tasks, Calendar, Communications, Discovery, Reports,
+  and representative per-matter tabs were all re-checked and still render.
+
+**Deliberately not done here:** any cascade — archiving a Client never
+archives its Matters, and archiving a Matter never touches its
+Notes/Tasks/Deadlines/Documents/Discovery/Calls/MatterAssignments/
+AuditEvents, all of which remain fully intact and queryable regardless of
+either record's archived state; permanent deletion of any kind (still out
+of scope, per every earlier session's "Deliberately not done here" above);
+blocking `createMatter` from linking a brand-new Matter to an archived
+Client at the Server Action level (the New Matter picker already excludes
+archived Clients from its dropdown, and adding a second server-side check
+for a scenario with no UI path to it was judged speculative for this
+pass); and any bulk/batch archive operation (one record at a time, via the
+button described above, matches every other write path's granularity in
+this app).
 
 ## Phase 4 — Discovery management (core differentiator)
 

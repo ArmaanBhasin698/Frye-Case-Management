@@ -2,14 +2,23 @@ import Link from "next/link";
 
 import { requireCurrentUser } from "@/lib/auth/session";
 import { assertCanManageClientsAndMatters } from "@/lib/auth/access";
-import { listClients } from "@/lib/clients/queries";
+import { listClients, type ClientListView } from "@/lib/clients/queries";
 import { formatClientName } from "@/lib/matters/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
-export default async function ClientsPage() {
+function readParam(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+/** Active/Archived toggle — same simple query-param pattern as the Matters page. */
+export default async function ClientsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   const user = await requireCurrentUser();
   // Client records are gated by the same conservative role rule as
   // creating a Matter — see lib/auth/authorization.ts#canManageClientsAndMatters
@@ -17,7 +26,10 @@ export default async function ClientsPage() {
   // via a Matter they're assigned to; this firm-wide roster is ADMIN/ATTORNEY only.
   assertCanManageClientsAndMatters(user);
 
-  const clients = await listClients();
+  const params = await searchParams;
+  const view: ClientListView = readParam(params.archived) === "1" ? "archived" : "active";
+
+  const clients = await listClients({ view });
 
   return (
     <div className="space-y-6">
@@ -25,11 +37,21 @@ export default async function ClientsPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Clients</h1>
           <p className="text-sm text-muted-foreground">
-            {clients.length} {clients.length === 1 ? "client" : "clients"} on file.
+            {clients.length} {clients.length === 1 ? "client" : "clients"}
+            {view === "archived" ? " archived." : " on file."}
           </p>
         </div>
         <Button size="sm" asChild>
           <Link href="/clients/new">New Client</Link>
+        </Button>
+      </div>
+
+      <div className="flex gap-2">
+        <Button variant={view === "active" ? "default" : "outline"} size="sm" asChild>
+          <Link href="/clients">Active</Link>
+        </Button>
+        <Button variant={view === "archived" ? "default" : "outline"} size="sm" asChild>
+          <Link href="/clients?archived=1">Archived</Link>
         </Button>
       </div>
 
@@ -42,6 +64,7 @@ export default async function ClientsPage() {
                 <TableHead>Email</TableHead>
                 <TableHead>Phone</TableHead>
                 <TableHead>Matters</TableHead>
+                {view === "archived" && <TableHead>Status</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -63,12 +86,17 @@ export default async function ClientsPage() {
                       </Badge>
                     )}
                   </TableCell>
+                  {view === "archived" && (
+                    <TableCell>
+                      <Badge variant="secondary">Archived</Badge>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
               {clients.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={4} className="py-6 text-center text-sm text-muted-foreground">
-                    No clients yet.
+                  <TableCell colSpan={view === "archived" ? 5 : 4} className="py-6 text-center text-sm text-muted-foreground">
+                    {view === "archived" ? "No archived clients." : "No clients yet."}
                   </TableCell>
                 </TableRow>
               )}

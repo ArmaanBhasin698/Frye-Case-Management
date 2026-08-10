@@ -9,6 +9,7 @@ import { formatClientName, matterStatusLabel, matterStatusVariant, matterTitle }
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ArchiveClientButton } from "@/components/shared/archive-client-button";
 
 export default async function ClientDetailPage({
   params,
@@ -29,11 +30,22 @@ export default async function ClientDetailPage({
           <Link href="/clients" className="text-sm text-muted-foreground hover:text-foreground">
             &larr; All clients
           </Link>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight">{formatClientName(client)}</h1>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-semibold tracking-tight">{formatClientName(client)}</h1>
+            {client.archived && <Badge variant="secondary">Archived</Badge>}
+          </div>
+          {client.archived && client.archivedAt && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Archived {format(client.archivedAt, "MMM d, yyyy")}
+            </p>
+          )}
         </div>
-        <Button variant="outline" size="sm" asChild>
-          <Link href={`/clients/${client.id}/edit`}>Edit Client</Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" asChild>
+            <Link href={`/clients/${client.id}/edit`}>Edit Client</Link>
+          </Button>
+          <ArchiveClientButton clientId={client.id} archived={client.archived} />
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">

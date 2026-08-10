@@ -137,6 +137,33 @@ validation + audit logging on every write — see `docs/SECURITY.md`):
   the server's local time zone, the same convention the Dashboard and
   Calendar already use. See `docs/ROADMAP.md`'s Phase 7 entry for the full
   writeup.
+- **Reversible Client/Matter archival** — Clients and Matters can now be
+  archived and reactivated (`Client.archived`/`Matter.archived` in
+  `prisma/schema.prisma`, `lib/matters/actions.ts#archiveMatter`/
+  `reactivateMatter`, `lib/clients/actions.ts#archiveClient`/
+  `reactivateClient`) instead of only ever being permanently deleted (which
+  remains unbuilt — see "What's mocked" below). Archiving is a pure
+  visibility flag: it never deletes anything and never touches a Matter's
+  `status`/`closedDate` or any associated Note/Task/Deadline/Document/
+  Discovery/Call/MatterAssignment/AuditEvent, all of which stay exactly as
+  they were. An archived Matter/Client disappears from the default
+  Matters/Clients lists and every firm-wide filter-bar's matter picker
+  (Tasks/Calendar/Discovery/Communications/Reports all call
+  `listMatters`'s new `{ view: "active" }` default), but a direct link to
+  it still works exactly as before — archiving never changes matter-level
+  authorization, only default-list visibility. Both lists have an
+  Active/Archived toggle to view archived records explicitly. Archiving a
+  Matter uses the exact same role rule as editing one
+  (`lib/auth/access.ts#canEditMatter`: `ADMIN`, or an `ATTORNEY` actually
+  assigned to it); archiving a Client uses the exact same rule as editing a
+  Client (`canManageClientsAndMatters`: `ADMIN`/`ATTORNEY`) — no new
+  permission was invented for this. Archiving a Client is blocked with a
+  clear error while it still has any `OPEN`/`PENDING` Matter, so a case
+  that's still active can never be silently hidden; a Client whose Matters
+  are all `CLOSED` (or has none) can always be archived. No Prisma
+  migration risk: the new columns are additive and default-`false`/null,
+  so every existing row stays visible exactly as before. See
+  `docs/ROADMAP.md`'s seventeenth-session milestone for the full writeup.
 
 See "Demo login credentials" below to sign in, "What's mocked / not
 implemented yet" below for exactly what still isn't real, and
@@ -327,12 +354,11 @@ this password anywhere real** — see `docs/SECURITY.md`.
 
 ## What's mocked / not implemented yet
 
-- **No Client/Matter *deletion*, archival, or deactivation.** Create and
-  edit are real (see "Current status" and "Who can create/edit a Client or
-  Matter" above) — deletion was explicitly out of scope for this pass, and
-  the existing architecture has no defined safe archival/deactivation
-  pattern to build it on yet (a closed `Matter` just gets `status: CLOSED`,
-  which already existed).
+- **No Client/Matter *deletion*.** Create, edit, and — as of the
+  seventeenth session — reversible archive/reactivate are all real (see
+  "Current status" and "Who can create/edit a Client or Matter" above);
+  permanent deletion remains explicitly out of scope, since nothing in
+  this system's data model supports safely un-deleting a case record.
 - **No Note/Task deletion.** Create and edit are real (Note edit as of the
   twelfth session, Task edit as of the twelfth session — see "Current
   status" above); deletion wasn't built, same reasoning as Client/Matter

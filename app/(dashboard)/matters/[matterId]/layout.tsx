@@ -17,6 +17,7 @@ import { canManageClientsAndMatters } from "@/lib/auth/authorization";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { MatterTabs } from "@/components/shared/matter-tabs";
+import { ArchiveMatterButton } from "@/components/shared/archive-matter-button";
 
 export default async function MatterLayout({
   children,
@@ -58,10 +59,14 @@ export default async function MatterLayout({
               <Badge variant={matterStatusVariant(matter.status)}>
                 {matterStatusLabel(matter.status)}
               </Badge>
+              {matter.archived && <Badge variant="secondary">Archived</Badge>}
               {canManageClientsAndMatters(user) && (
                 <Button variant="outline" size="sm" asChild>
                   <Link href={`/matters/${matter.id}/edit`}>Edit Matter</Link>
                 </Button>
+              )}
+              {canManageClientsAndMatters(user) && (
+                <ArchiveMatterButton matterId={matter.id} archived={matter.archived} />
               )}
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
@@ -80,6 +85,12 @@ export default async function MatterLayout({
                 {matter.assignments
                   .map((a) => `${a.user.name} (${assignmentRoleLabel(a.role)})`)
                   .join(", ")}
+              </p>
+            )}
+            {matter.archived && matter.archivedAt && (
+              <p>
+                Archived {format(matter.archivedAt, "MMM d, yyyy")}
+                {matter.archivedBy ? ` by ${matter.archivedBy.name}` : ""}
               </p>
             )}
           </div>

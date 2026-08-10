@@ -90,6 +90,10 @@ Firm staff account.
 Person or entity the firm represents.
 - `id`, `firstName`, `lastName`, `dateOfBirth`, `email`, `phone`, `address`,
   `notes`, `createdAt`, `updatedAt`.
+- `archived` (boolean, default `false`), `archivedAt`, `archivedById` (FK →
+  User, nullable) — reversible removal from the default active Clients
+  roster (real as of the seventeenth session, see `docs/ROADMAP.md`).
+  Archiving a Client is blocked while it has any `OPEN`/`PENDING` Matter.
 - One Client can have multiple Matters over time (repeat client).
 
 ### Contact
@@ -103,6 +107,12 @@ A single case.
 - `id`, `clientId` (FK → Client), `caseNumber`, `court`, `charges`
   (text/array), `status` (`open` | `closed` | `pending`), `openedDate`,
   `closedDate`, `createdAt`, `updatedAt`.
+- `archived` (boolean, default `false`), `archivedAt`, `archivedById` (FK →
+  User, nullable) — reversible removal from the default active Matters
+  list and every firm-wide matter picker (real as of the seventeenth
+  session, see `docs/ROADMAP.md`). Fully orthogonal to `status`: archiving
+  never changes `status`/`closedDate`, and never affects matter-level
+  authorization — only default-list visibility.
 
 ### MatterAssignment
 Join table: staff assigned to a matter.
