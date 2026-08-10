@@ -48,9 +48,19 @@ export async function getFirmWideCalls(
   const scopeWhere = await matterScopeFilterFor(user);
   const mayViewUnfiled = canManageClientsAndMatters(user);
 
-  const visibility: Prisma.CallWhereInput = mayViewUnfiled
-    ? { OR: [{ matterId: null }, scopeWhere] }
-    : scopeWhere;
+  // `scopeWhere` is `{}` (no keys) for an admin's unrestricted scope — Prisma
+  // only treats `{}` as "match everything" at the top level of `where`, not
+  // when nested as an OR branch, where it instead contributes zero rows (see
+  // tests/communications/queries.test.ts for the regression coverage). An
+  // admin nested inside `OR: [{ matterId: null }, {}]` would therefore see
+  // ONLY unfiled calls — every filed call silently disappears. Skip the OR
+  // entirely once the scope is already unrestricted.
+  const scopeIsUnrestricted = Object.keys(scopeWhere).length === 0;
+  const visibility: Prisma.CallWhereInput = scopeIsUnrestricted
+    ? {}
+    : mayViewUnfiled
+      ? { OR: [{ matterId: null }, scopeWhere] }
+      : scopeWhere;
 
   const conditions: Prisma.CallWhereInput[] = [visibility];
   if (filters.matterId) conditions.push({ matterId: filters.matterId });
