@@ -66,7 +66,7 @@ function navItemsFor(role: string): NavItem[] {
     { href: "/tasks", label: "Tasks", icon: CheckSquare },
     { href: "/calendar", label: "Calendar", icon: CalendarDays },
     { href: "/discovery", label: "Discovery", icon: FileSearch, disabled: true },
-    { href: "/communications", label: "Communications", icon: Phone, disabled: true },
+    { href: "/communications", label: "Communications", icon: Phone },
     { href: "/reports", label: "Reports", icon: BarChart3, disabled: true },
   ];
 }

@@ -6,6 +6,7 @@ import { formatCallDuration, matterTitle as formatMatterTitle } from "@/lib/matt
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { AttachCallList } from "@/components/shared/attach-call-list";
+import { LogCallForm } from "@/components/shared/log-call-form";
 
 export default async function MatterCallsPage({
   params,
@@ -48,9 +49,12 @@ export default async function MatterCallsPage({
       )}
 
       <div>
-        <h2 className="mb-3 text-sm font-semibold text-foreground">
-          Calls on {formatMatterTitle(matter)}
-        </h2>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-foreground">
+            Calls on {formatMatterTitle(matter)}
+          </h2>
+          <LogCallForm matterId={matterId} />
+        </div>
         {calls.length === 0 ? (
           <Card>
             <CardContent className="p-6 text-sm text-muted-foreground">

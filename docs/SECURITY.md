@@ -23,11 +23,12 @@ following pieces of it are **actually implemented**, not just planned:
 
 Also now real:
 
-- **Write actions** for Task status changes, Notes, Tasks, attaching a Call
-  to a matter, Client create/edit, Matter create/edit, MatterAssignment
-  add/remove, Deadline create/update/status-change, CalendarEvent
-  create/update, general Document upload/metadata-edit, and the
-  Discovery/Bates engine (creating a production, registering a file,
+- **Write actions** for Task status changes, Notes, Tasks, logging a
+  brand-new Call (filed or unfiled) and attaching an already-existing
+  unfiled Call to a matter, Client create/edit, Matter create/edit,
+  MatterAssignment add/remove, Deadline create/update/status-change,
+  CalendarEvent create/update, general Document upload/metadata-edit, and
+  the Discovery/Bates engine (creating a production, registering a file,
   running a comparison) — see `lib/matters/actions.ts`,
   `lib/clients/actions.ts`, `lib/documents/actions.ts`, and
   `lib/discovery/actions.ts`. Each independently re-checks authentication
@@ -57,9 +58,9 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
 
 - Client/Matter/Deadline/CalendarEvent/Document/Note/Task *deletion* or
   archival (create/edit are real as of the ninth through twelfth sessions
-  — see `docs/ROADMAP.md`) and logging a brand-new Call (only attaching an
-  existing unfiled one) — none of those have a write path yet, so
-  `AuditEvent` for them is still only seeded demo data.
+  — see `docs/ROADMAP.md`) — none of those have a write path yet, so
+  `AuditEvent` for them is still only seeded demo data. Logging a
+  brand-new Call is now real too (fourteenth session, see below).
 - The **production** Dropbox integration (a firm-wide app, a real per-matter
   folder convention, encrypted-at-rest token storage, monitoring) — see
   "Third-party integrations" below. What exists now is a development/test
@@ -290,6 +291,32 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
   row's title links back to the existing per-matter Tasks or Deadlines &
   Calendar tab for editing, not a new write path, so no existing
   per-matter authorization rule changed.
+- **Manual Call logging & firm-wide Communications (fourteenth session):**
+  `lib/matters/actions.ts#createCall` uses the same plain matter-access
+  rule as every other per-matter sub-resource (`hasMatterAccess`, any
+  assigned role) when a `matterId` is submitted — not the stricter
+  `ADMIN`/`ATTORNEY` Client/Matter rule — and re-verifies that `matterId`
+  server-side regardless of what the form's picker offered, denying a
+  forged/inaccessible one with the same generic error every other write
+  action uses. An omitted `matterId` (an unfiled call) skips that check
+  entirely, since there's no matter to check access against — the same
+  posture `attachCallToMatter`'s destination-matter check already had.
+  `app/(dashboard)/communications` (`lib/communications/queries.ts#getFirmWideCalls`)
+  introduces one new authorization decision, not a new mechanism: filed
+  calls reuse `matterScopeFilterFor` exactly like firm-wide Tasks/Calendar
+  above, but unfiled calls have no assignment/ownership column of their
+  own to scope by (`Call` only has `filedById`/`filedAt`, which stay null
+  until filed — see `docs/DATA_MODEL.md`). Rather than invent a new
+  scoping concept or expose every unfiled call's phone numbers/notes to
+  every authenticated user firm-wide, unfiled-call visibility reuses the
+  existing `canManageClientsAndMatters` (`ADMIN`/`ATTORNEY`) gate already
+  documented above for Client/Matter origination — the same "no
+  assignment to check against" reasoning applies. A `PARALEGAL`/`STAFF`
+  caller therefore never sees an unfiled call on this page, including one
+  they logged themselves; the existing per-matter "attach an unfiled
+  call" workflow (`attachCallToMatter`, `getUnfiledCalls`) is unchanged
+  and still has no role gate of its own — preserved, not modified, by
+  this session.
 - All authorization checks happen **server-side** — `proxy.ts` gates
   "is anyone logged in," and every Server Component that reads matter data
   re-checks independently rather than trusting the proxy alone (see
@@ -323,18 +350,25 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
   CalendarEvent, Communication, Call, Document, DiscoveryProduction, and
   DiscoveryFile produces an `AuditEvent` (see `docs/DATA_MODEL.md`).
   **Implemented so far** for: Note create/update, Task create/update/status
-  update, Call attach-to-matter (`lib/matters/actions.ts`), Client
-  create/update, Matter create/update, MatterAssignment create/delete
-  (`lib/clients/actions.ts`, `lib/matters/actions.ts`, ninth session),
-  Deadline create/update/status-change, CalendarEvent create/update
-  (`lib/matters/actions.ts`, tenth session), general Document
-  upload/metadata-edit/download (`lib/documents/actions.ts` and its
-  download Route Handler, eleventh session), Note/Task `UPDATE`
+  update, Call create and attach-to-matter (`lib/matters/actions.ts`),
+  Client create/update, Matter create/update, MatterAssignment
+  create/delete (`lib/clients/actions.ts`, `lib/matters/actions.ts`, ninth
+  session), Deadline create/update/status-change, CalendarEvent
+  create/update (`lib/matters/actions.ts`, tenth session), general
+  Document upload/metadata-edit/download (`lib/documents/actions.ts` and
+  its download Route Handler, eleventh session), Note/Task `UPDATE`
   (`lib/matters/actions.ts#updateNote`/`updateTask`, twelfth session), and
   Discovery production create, file registration, Bates generation, and
   comparison (`lib/discovery/actions.ts`). Every other entity/action in
   that list still has no write path at all, so there's nothing yet to log
   for them (see `docs/ROADMAP.md`).
+  - `createCall` (fourteenth session) logs a `CREATE` event with
+    restrained metadata only — `direction`, `filed` (whether a `matterId`
+    was supplied), `flagged`, and `notesProvided` (a boolean, never the
+    notes text itself, same restraint pattern as `Note.body`/
+    `Task.description`/`Client.notes` below) — and deliberately never the
+    raw `fromNumber`/`toNumber` either, since a phone number alone can
+    identify a client or witness even without a matter attached.
   - Registering a PDF logs **two** events: a `CREATE` for the file itself
     and a separate `UPDATE` carrying `metadata.event: "bates_generated"`
     with the assigned range — Bates generation is its own auditable action,

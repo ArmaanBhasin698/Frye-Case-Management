@@ -7,6 +7,7 @@ import { Prisma } from "@prisma/client";
 import type {
   AssignmentRole,
   CalendarEventType,
+  CallDirection,
   DeadlineType,
   MatterStatus,
   TaskPriority,
@@ -69,6 +70,7 @@ const CALENDAR_EVENT_TYPE_VALUES = [
   "MEETING",
   "OTHER",
 ] as const satisfies readonly CalendarEventType[];
+const CALL_DIRECTION_VALUES = ["INBOUND", "OUTBOUND"] as const satisfies readonly CallDirection[];
 
 const cuid = z.string().min(1, "Required.");
 
@@ -464,6 +466,137 @@ export async function updateTaskStatus(input: {
 }
 
 // --- Calls -------------------------------------------------------------
+//
+// `createCall` is the first real write path for logging a brand-new Call
+// (as opposed to `attachCallToMatter` below, which only ever files an
+// already-existing unfiled row — see docs/ROADMAP.md). No Vonage/telephony
+// integration exists yet; every Call created here is manually logged by a
+// staff member, using exactly the fields already on `Call` (see
+// docs/DATA_MODEL.md) so a future Vonage sync can feed the same model
+// without changing this action's shape.
+
+const phoneNumberSchema = z
+  .string()
+  .trim()
+  .min(7, "Enter a valid phone number.")
+  .max(20, "Phone number is too long.")
+  .regex(/^[0-9+().\-\s]+$/, "Enter a valid phone number.");
+
+const createCallSchema = z.object({
+  // No matter-management role gate here, unlike Client/Matter creation —
+  // logging a call is the same "any staff member on the phone" action
+  // Notes/Tasks/Calls already treat as available to every assigned role
+  // (see docs/SECURITY.md). A submitted matterId is still independently
+  // verified below via `hasMatterAccess` — never trusted from the form.
+  matterId: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => (v ? v : undefined)),
+  direction: z.enum(CALL_DIRECTION_VALUES),
+  contactName: z
+    .string()
+    .trim()
+    .max(200, "Contact name is too long.")
+    .optional()
+    .transform((v) => (v ? v : undefined)),
+  fromNumber: phoneNumberSchema,
+  toNumber: phoneNumberSchema,
+  occurredAt: z.string().refine((v) => !Number.isNaN(Date.parse(v)), "Invalid date/time."),
+  durationSeconds: z.coerce
+    .number()
+    .int("Duration must be a whole number of seconds.")
+    .min(0, "Duration cannot be negative.")
+    .max(24 * 60 * 60, "Duration is too long."),
+  notes: z
+    .string()
+    .trim()
+    .max(4_000, "Notes are too long.")
+    .optional()
+    .transform((v) => (v ? v : undefined)),
+  flagged: z.boolean(),
+});
+
+/**
+ * Logs a brand-new Call. If `matterId` is supplied and the caller has
+ * access to it, the call is created already filed to that matter
+ * (`filedById`/`filedAt` set, same meaning `attachCallToMatter` gives
+ * those columns) — otherwise it's created unfiled, exactly like a call
+ * a future Vonage sync would drop into the unfiled pool for later review.
+ * A `matterId` the caller can't access fails with the same generic error
+ * as every other write action, rather than silently dropping it and
+ * creating an unfiled call instead — the caller asked to file it, and
+ * silently not doing that would hide a real authorization denial.
+ */
+export async function createCall(
+  _prevState: FormActionState,
+  formData: FormData,
+): Promise<FormActionState> {
+  const user = await requireCurrentUser();
+
+  const parsed = createCallSchema.safeParse({
+    matterId: formData.get("matterId") ?? undefined,
+    direction: formData.get("direction"),
+    contactName: formData.get("contactName") ?? undefined,
+    fromNumber: formData.get("fromNumber"),
+    toNumber: formData.get("toNumber"),
+    occurredAt: formData.get("occurredAt"),
+    durationSeconds: formData.get("durationSeconds"),
+    notes: formData.get("notes") ?? undefined,
+    flagged: formData.get("flagged") === "on",
+  });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+  const { matterId, direction, contactName, fromNumber, toNumber, occurredAt, durationSeconds, notes, flagged } =
+    parsed.data;
+
+  if (matterId && !(await hasMatterAccess(user, matterId))) {
+    return { error: NOT_FOUND.error };
+  }
+
+  const filed = Boolean(matterId);
+  const call = await prisma.call.create({
+    data: {
+      matterId: matterId ?? null,
+      contactName: contactName ?? null,
+      direction,
+      fromNumber,
+      toNumber,
+      occurredAt: new Date(occurredAt),
+      durationSeconds,
+      notes: notes ?? null,
+      flagged,
+      filedById: filed ? user.id : null,
+      filedAt: filed ? new Date() : null,
+    },
+  });
+
+  // Minimal, non-sensitive metadata only — never the notes text itself
+  // (same restraint `Note.body`/`Task.description`/`Client.notes` already
+  // get, see docs/SECURITY.md's audit logging guidance) and never the raw
+  // phone numbers either, since those alone can identify a client or
+  // witness even without a matter attached.
+  await prisma.auditEvent.create({
+    data: {
+      actorId: user.id,
+      action: "CREATE",
+      entityType: "Call",
+      entityId: call.id,
+      matterId: matterId ?? null,
+      metadata: { direction, filed, flagged, notesProvided: Boolean(notes) },
+    },
+  });
+
+  if (matterId) {
+    revalidatePath(`/matters/${matterId}/calls`);
+    revalidatePath(`/matters/${matterId}`);
+    revalidatePath(`/matters/${matterId}/timeline`);
+  }
+  revalidatePath("/communications");
+  revalidatePath("/");
+  return { ...FORM_OK };
+}
 
 const attachCallSchema = z.object({
   matterId: cuid,
