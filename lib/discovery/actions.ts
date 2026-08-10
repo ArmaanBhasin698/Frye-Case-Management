@@ -246,7 +246,12 @@ export async function registerDiscoveryFile(
       entityType: "DiscoveryFile",
       entityId: createdFile.id,
       matterId,
-      metadata: { fileType, originalFilename: createdFile.originalFilename, sizeBytes: createdFile.sizeBytes },
+      // No `originalFilename` here — an evidence filename (e.g.
+      // "Doe_medical_records.pdf") can itself disclose a client's name or
+      // case specifics, the same reason lib/documents/actions.ts#uploadDocument
+      // keeps it out of its own audit metadata. `identifier` is the safe,
+      // server-generated Bates/evidence label meant to be referenced.
+      metadata: { fileType, identifier: createdFile.identifier, sizeBytes: createdFile.sizeBytes },
     },
   });
 

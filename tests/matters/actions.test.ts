@@ -584,7 +584,20 @@ describe("createCall", () => {
 });
 
 describe("attachCallToMatter", () => {
-  it("denies attaching when the user lacks matter access", async () => {
+  // Unfiled calls are only ever visible to ADMIN/ATTORNEY (see
+  // lib/communications/queries.ts#getCallVisibilityFilter) — filing one
+  // must be gated the same way, or a PARALEGAL/STAFF caller could file a
+  // call they were never authorized to see in the first place.
+  it("denies PARALEGAL/STAFF regardless of matter access", async () => {
+    requireCurrentUserMock.mockResolvedValue(user); // STAFF
+    hasMatterAccessMock.mockResolvedValue(true);
+    const result = await attachCallToMatter({ matterId, callId: "call-1" });
+    expect(result).toEqual({ ok: false, error: "Not found or access denied." });
+    expect(prismaMock.call.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("denies attaching when the ATTORNEY lacks matter access", async () => {
+    requireCurrentUserMock.mockResolvedValue(attorney);
     hasMatterAccessMock.mockResolvedValue(false);
     const result = await attachCallToMatter({ matterId, callId: "call-1" });
     expect(result).toEqual({ ok: false, error: "Not found or access denied." });
@@ -592,23 +605,27 @@ describe("attachCallToMatter", () => {
   });
 
   it("only attaches calls that are still unfiled, and reports failure otherwise", async () => {
+    requireCurrentUserMock.mockResolvedValue(attorney);
+    hasMatterAccessMock.mockResolvedValue(true);
     prismaMock.call.updateMany.mockResolvedValue({ count: 0 });
     const result = await attachCallToMatter({ matterId, callId: "already-filed-call" });
     expect(result.ok).toBe(false);
     expect(prismaMock.call.updateMany).toHaveBeenCalledWith({
       where: { id: "already-filed-call", matterId: null },
-      data: expect.objectContaining({ matterId, filedById: user.id }),
+      data: expect.objectContaining({ matterId, filedById: attorney.id }),
     });
     expect(prismaMock.auditEvent.create).not.toHaveBeenCalled();
   });
 
   it("attaches an unfiled call and writes an audit event on success", async () => {
+    requireCurrentUserMock.mockResolvedValue(attorney);
+    hasMatterAccessMock.mockResolvedValue(true);
     prismaMock.call.updateMany.mockResolvedValue({ count: 1 });
     const result = await attachCallToMatter({ matterId, callId: "call-1" });
     expect(result).toEqual({ ok: true, data: undefined });
     expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
       data: {
-        actorId: user.id,
+        actorId: attorney.id,
         action: "UPDATE",
         entityType: "Call",
         entityId: "call-1",

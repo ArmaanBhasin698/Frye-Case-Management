@@ -15,7 +15,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   // proxy instead of requiring an exact AUTH_URL match. Revisit before any
   // real deployment (see docs/SECURITY.md).
   trustHost: true,
-  session: { strategy: "jwt" },
+  // A privileged-case-data session shouldn't stay valid for next-auth's
+  // 30-day JWT default. Shorter-lived sessions bound how long a stolen
+  // cookie or a deactivated-but-not-yet-expired account remains usable —
+  // see docs/SECURITY.md's "Known remaining risks" for why this isn't a
+  // full fix (JWT sessions aren't revocable server-side before they
+  // expire; that needs either a DB check on every request or a switch to
+  // the database session strategy, deferred until real deployment).
+  session: { strategy: "jwt", maxAge: 12 * 60 * 60, updateAge: 60 * 60 },
   pages: { signIn: "/login" },
   providers: [
     Credentials({

@@ -1,21 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { matterFindManyMock, matterAssignmentFindManyMock } = vi.hoisted(() => ({
+const { matterFindManyMock, matterAssignmentFindManyMock, callFindManyMock } = vi.hoisted(() => ({
   matterFindManyMock: vi.fn(),
   matterAssignmentFindManyMock: vi.fn(),
+  callFindManyMock: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
   prisma: {
     matter: { findMany: matterFindManyMock },
     matterAssignment: { findMany: matterAssignmentFindManyMock },
+    call: { findMany: callFindManyMock },
   },
 }));
 
-const { listMatters } = await import("@/lib/matters/queries");
+const { getUnfiledCalls, listMatters } = await import("@/lib/matters/queries");
 
 const admin = { id: "user-admin", role: "ADMIN" as const };
+const attorney = { id: "user-attorney", role: "ATTORNEY" as const };
 const staff = { id: "user-staff", role: "STAFF" as const };
+const paralegal = { id: "user-paralegal", role: "PARALEGAL" as const };
 
 /** First call's first argument, typed at the call site. */
 function firstArg<T>(mock: { mock: { calls: unknown[][] } }): T {
@@ -90,5 +94,32 @@ describe("listMatters — the archived filter never replaces matter-level author
     expect(result).toHaveLength(1);
     expect(result[0]?.id).toBe("matter-1");
     expect(JSON.stringify(result)).not.toContain("confidential");
+  });
+});
+
+describe("getUnfiledCalls — restricted to ADMIN/ATTORNEY", () => {
+  it("queries unfiled calls for an ADMIN", async () => {
+    callFindManyMock.mockResolvedValueOnce([{ id: "call-1" }]);
+    const result = await getUnfiledCalls(admin);
+    expect(result).toEqual([{ id: "call-1" }]);
+    expect(callFindManyMock).toHaveBeenCalledWith({
+      where: { matterId: null },
+      orderBy: { occurredAt: "desc" },
+    });
+  });
+
+  it("queries unfiled calls for an ATTORNEY", async () => {
+    callFindManyMock.mockResolvedValueOnce([{ id: "call-1" }]);
+    const result = await getUnfiledCalls(attorney);
+    expect(result).toEqual([{ id: "call-1" }]);
+    expect(callFindManyMock).toHaveBeenCalled();
+  });
+
+  it("returns an empty list for PARALEGAL/STAFF without ever querying the database", async () => {
+    const staffResult = await getUnfiledCalls(staff);
+    const paralegalResult = await getUnfiledCalls(paralegal);
+    expect(staffResult).toEqual([]);
+    expect(paralegalResult).toEqual([]);
+    expect(callFindManyMock).not.toHaveBeenCalled();
   });
 });

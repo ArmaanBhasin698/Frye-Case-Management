@@ -154,16 +154,27 @@ describe("uploadDocument", () => {
         storageKey: expect.stringMatching(/^matters\/matter-1\/documents\/[0-9a-f-]{36}\/original$/),
       }),
     });
+    // The audit log must never carry the raw uploaded filename — it can
+    // disclose a client's real name or case details (see the comment
+    // above `storageKey` in lib/documents/actions.ts). Only safe, derived
+    // fields belong here.
     expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
+      data: {
         actorId: user.id,
         action: "CREATE",
         entityType: "Document",
         entityId: "doc-1",
         matterId,
-        metadata: expect.objectContaining({ originalFilename: "entry.pdf" }),
-      }),
+        metadata: { sizeBytes: validFile.content.length, category: "PLEADING" },
+      },
     });
+    expect(prismaMock.auditEvent.create).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          metadata: expect.objectContaining({ originalFilename: expect.anything() }),
+        }),
+      }),
+    );
   });
 
   it("gives two uploads sharing a filename distinct storage keys, so neither overwrites the other", async () => {

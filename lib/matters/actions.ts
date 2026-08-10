@@ -616,6 +616,15 @@ export async function attachCallToMatter(input: {
   }
   const { matterId, callId } = parsed.data;
 
+  // Unfiled calls are only ever visible to ADMIN/ATTORNEY (see
+  // lib/communications/queries.ts#getCallVisibilityFilter) — a PARALEGAL/
+  // STAFF caller can't legitimately know an unfiled `callId` exists, so
+  // this mirrors that same gate rather than relying on `hasMatterAccess`
+  // alone, which only confirms they can see the *destination* matter.
+  if (!canManageClientsAndMatters(user)) {
+    return NOT_FOUND;
+  }
+
   if (!(await hasMatterAccess(user, matterId))) {
     return NOT_FOUND;
   }
@@ -651,10 +660,14 @@ export async function attachCallToMatter(input: {
 
 // --- Matters -------------------------------------------------------------
 //
-// Creating or editing a Matter's own fields (as opposed to its
-// sub-resources above) is gated by `canManageClientsAndMatters` — see
-// lib/auth/authorization.ts for why this is a separate, more conservative
-// rule than the matter-assignment check every action above uses.
+// A Matter's own fields (as opposed to its sub-resources above) are gated
+// more conservatively than the plain matter-assignment check every action
+// above uses: `createMatter` requires `canManageClientsAndMatters` (no
+// existing matter to be assigned to yet — see lib/auth/authorization.ts),
+// and `updateMatter`/`archiveMatter`/`reactivateMatter`/assignment-roster
+// edits below require `canEditMatter`, which layers matter-assignment on
+// top of that same role check (see lib/auth/access.ts#canEditMatter) so an
+// ATTORNEY can't edit a matter they aren't actually assigned to.
 
 const assignmentInputSchema = z
   .array(
@@ -1419,15 +1432,17 @@ export async function updateCalendarEvent(
     },
   });
 
-  const changed = diffFields(before, {
-    title,
-    type,
-    startTime: nextStartTime,
-    endTime: nextEndTime,
-    location: location ?? null,
-    notes: notes ?? null,
-  });
-  if (Object.keys(changed).length > 0) {
+  // `location`/`notes` are free text (a full address, or anything a staff
+  // member typed) — never dump their before/after values into the audit
+  // log (see docs/SECURITY.md), same treatment Note.body/Document.notes
+  // already get. Record only that they changed.
+  const locationChanged = (before.location ?? null) !== (location ?? null);
+  const notesChanged = (before.notes ?? null) !== (notes ?? null);
+  const changed = diffFields(
+    { title: before.title, type: before.type, startTime: before.startTime, endTime: before.endTime },
+    { title, type, startTime: nextStartTime, endTime: nextEndTime },
+  );
+  if (Object.keys(changed).length > 0 || locationChanged || notesChanged) {
     await prisma.auditEvent.create({
       data: {
         actorId: user.id,
@@ -1435,7 +1450,7 @@ export async function updateCalendarEvent(
         entityType: "CalendarEvent",
         entityId: eventId,
         matterId,
-        metadata: { changed },
+        metadata: { changed, locationChanged, notesChanged },
       },
     });
   }

@@ -3,6 +3,7 @@ import { Flag, Mic, MicOff, PhoneIncoming, PhoneOutgoing } from "lucide-react";
 
 import { getMatterCalls, getMatterHeader, getUnfiledCalls } from "@/lib/matters/queries";
 import { formatCallDuration, matterTitle as formatMatterTitle } from "@/lib/matters/format";
+import { requireCurrentUser } from "@/lib/auth/session";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { AttachCallList } from "@/components/shared/attach-call-list";
@@ -14,10 +15,11 @@ export default async function MatterCallsPage({
   params: Promise<{ matterId: string }>;
 }) {
   const { matterId } = await params;
+  const user = await requireCurrentUser();
   const [matter, calls, unfiledCalls] = await Promise.all([
     getMatterHeader(matterId),
     getMatterCalls(matterId),
-    getUnfiledCalls(),
+    getUnfiledCalls(user),
   ]);
 
   if (!matter) return null;
