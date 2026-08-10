@@ -117,6 +117,26 @@ validation + audit logging on every write — see `docs/SECURITY.md`):
   its matter's own Discovery tab rather than duplicating registration,
   comparison, or authenticated download logic. See `docs/ROADMAP.md`'s
   fifteenth-session milestone for the full writeup.
+- **Firm-wide Reports** — the sidebar's "Reports" item is now a real,
+  authorized operational reporting aggregate (`app/(dashboard)/reports`,
+  `lib/reports/queries.ts#getFirmReportSummary`) over the existing
+  `Task`/`Deadline`/`Document`/`DiscoveryFile`/`DiscoveryProduction`/`Call`/
+  `Note` rows every other firm-wide page already reads — not a new record,
+  a business-intelligence platform, or an export/integration project. It
+  shows active-matter/task/deadline/document/discovery/call counts and
+  status breakdowns (by matter, by assignee, by priority/status/type), plus
+  a short recent-activity window (7/30/90 days or all time), all scoped the
+  same way Tasks/Calendar/Communications/Discovery already are: an `ADMIN`
+  sees firm-wide totals, everyone else only totals over matters they're
+  assigned to, and the unfiled-call count uses the same `ADMIN`/`ATTORNEY`
+  visibility rule Communications does. It deliberately reports only what
+  the schema actually proves — no financial, billing, settlement, win-rate,
+  case-outcome, or time-entry metrics exist to report. No third-party
+  charting package was added; breakdowns use a small CSS-only bar
+  component (`components/shared/stat-bar.tsx`). Date-window filtering uses
+  the server's local time zone, the same convention the Dashboard and
+  Calendar already use. See `docs/ROADMAP.md`'s Phase 7 entry for the full
+  writeup.
 
 See "Demo login credentials" below to sign in, "What's mocked / not
 implemented yet" below for exactly what still isn't real, and
@@ -335,14 +355,14 @@ this password anywhere real** — see `docs/SECURITY.md`.
   existed** (see `prisma/seed.ts`) remain in the database as illustrative
   historical data with no real stored files behind them — anything created
   through the Discovery tab's UI is real.
-- **Sidebar items other than Dashboard/Matters/Clients/Tasks/Calendar/
-  Communications/Discovery** (Reports) are shown but disabled ("Soon") —
-  present for layout/orientation, not yet functional as their own
-  firm-wide section. Tasks and Calendar are real firm-wide aggregate views
-  as of the thirteenth session, Communications as of the fourteenth, and
-  Discovery as of the fifteenth (see "Current status" above). Clients is
-  real but shown as "Restricted" for `PARALEGAL`/`STAFF` accounts (see "Who
-  can create/edit a Client or Matter" above).
+- **Every sidebar item is now real.** Tasks and Calendar are real firm-wide
+  aggregate views as of the thirteenth session, Communications as of the
+  fourteenth, Discovery as of the fifteenth, and Reports as of the
+  sixteenth (see "Current status" above). Clients is real but shown as
+  "Restricted" for `PARALEGAL`/`STAFF` accounts (see "Who can create/edit a
+  Client or Matter" above). Reports does not report financial, billing,
+  settlement, win-rate, case-outcome, or time-entry metrics — that data
+  doesn't exist in the schema yet (see `docs/DATA_MODEL.md`).
 - **Authentication is real, but incomplete for production use:** no MFA,
   no rate-limiting/lockout on failed logins, no forced sign-out when a
   user's role or assignments change mid-session, no HTTPS enforcement, and

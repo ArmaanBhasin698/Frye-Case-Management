@@ -40,11 +40,15 @@ export type FirmCallFilters = {
 
 export type FirmCallSort = "recent" | "oldest";
 
-export async function getFirmWideCalls(
+/**
+ * The `Call` visibility rule documented above, factored out so other
+ * firm-wide aggregates (lib/reports/queries.ts) can reuse the exact same
+ * authorization decision instead of re-deriving it — see CLAUDE.md,
+ * section 4.6 ("don't duplicate authorization logic").
+ */
+export async function getCallVisibilityFilter(
   user: AuthorizableUser,
-  filters: FirmCallFilters = {},
-  sort: FirmCallSort = "recent",
-) {
+): Promise<{ where: Prisma.CallWhereInput; mayViewUnfiled: boolean }> {
   const scopeWhere = await matterScopeFilterFor(user);
   const mayViewUnfiled = canManageClientsAndMatters(user);
 
@@ -56,11 +60,21 @@ export async function getFirmWideCalls(
   // ONLY unfiled calls — every filed call silently disappears. Skip the OR
   // entirely once the scope is already unrestricted.
   const scopeIsUnrestricted = Object.keys(scopeWhere).length === 0;
-  const visibility: Prisma.CallWhereInput = scopeIsUnrestricted
+  const where: Prisma.CallWhereInput = scopeIsUnrestricted
     ? {}
     : mayViewUnfiled
       ? { OR: [{ matterId: null }, scopeWhere] }
       : scopeWhere;
+
+  return { where, mayViewUnfiled };
+}
+
+export async function getFirmWideCalls(
+  user: AuthorizableUser,
+  filters: FirmCallFilters = {},
+  sort: FirmCallSort = "recent",
+) {
+  const { where: visibility } = await getCallVisibilityFilter(user);
 
   const conditions: Prisma.CallWhereInput[] = [visibility];
   if (filters.matterId) conditions.push({ matterId: filters.matterId });

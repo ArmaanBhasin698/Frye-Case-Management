@@ -917,7 +917,8 @@ already existed — see `docs/DATA_MODEL.md`.
 - Sidebar: `components/shared/app-shell.tsx`'s "Discovery" item is no
   longer `disabled` — same active-state/navigation styling as
   Dashboard/Matters/Clients/Tasks/Calendar/Communications. Reports remains
-  disabled/"Soon," unchanged.
+  disabled/"Soon" as of this session (see the sixteenth session's milestone
+  below for when that changed).
 - 14 new focused tests (`tests/discovery/queries.test.ts`) covering ADMIN
   unrestricted visibility (including the not-nested-under-`production`
   regression), non-admin scoping to exactly assigned matters, a simulated-
@@ -942,6 +943,106 @@ this per file and per production, and a dedicated range-query control
 would be a speculative addition beyond what was asked for), and any change
 to the discovery file download Route Handler, registration, or comparison
 Server Actions — all preserved exactly as the sixth session built them.
+
+## Milestone — Firm-wide Reports (sixteenth session)
+
+Turns the long-disabled sidebar "Reports" item into a real, authorized
+operational-reporting aggregate — same pattern the thirteenth session's
+firm-wide Tasks/Calendar, the fourteenth session's Communications, and the
+fifteenth session's Discovery established, extended to a small set of
+scoped `count`/`groupBy` aggregates instead of a row-level list. No Prisma
+migration was needed: every metric reported (task/deadline/document/
+discovery/call counts and status breakdowns, a short recent-activity
+window) is derived from fields that already existed — see
+`docs/DATA_MODEL.md`. This is deliberately an operational-reporting pass,
+not a business-intelligence platform or an export/integration project, and
+it reports nothing the schema doesn't actually prove: no financial,
+billing, settlement, win-rate, case-outcome, or time-entry metrics exist to
+report.
+
+- **`lib/reports/queries.ts#getFirmReportSummary`** — the query layer
+  behind `app/(dashboard)/reports`. Resolves "what matters can this caller
+  see" exactly once per report (`getMatterScopes`, wrapping the same pure
+  `buildMatterIdFilter`/`buildMatterScopeFilter` rules
+  `lib/auth/access.ts#matterIdFilterFor`/`matterScopeFilterFor` use for
+  every other firm-wide page) rather than re-querying `MatterAssignment`
+  once per section, then builds each section's scoped aggregate from that.
+  For Calls, `lib/communications/queries.ts#getCallVisibilityFilter` was
+  extracted from `getFirmWideCalls` (unchanged behavior, regression-tested)
+  so Reports reuses the exact same unfiled-call visibility rule
+  (`ADMIN`/`ATTORNEY` only) instead of re-deriving it — the report's
+  `calls.unfiled` field is `null` (not `0`) for anyone who can't see
+  unfiled calls at all, so a `STAFF`/`PARALEGAL` caller is never shown a
+  count that reads as "there are none" when the truth is "you can't see
+  them."
+- Every count/breakdown is its own scoped `count`/`groupBy` query — no
+  section loads a full row set into memory to bucket it in JavaScript. The
+  one exception is resolving the small, `take`-limited set of matter/user
+  ids a "by matter"/"by assignee" breakdown names back to their
+  titles/names, and that matter lookup is re-intersected with the caller's
+  own scope as defense in depth even though the ids it's given were
+  already produced from a scoped `where` (see
+  `tests/reports/queries.test.ts`'s inaccessible-matter regression tests).
+- A `matterId` filter is always `AND`-combined with the caller's scope,
+  never substituted for it — passing an inaccessible matter's id resolves
+  to zeroed totals and empty breakdowns, not an error and not that
+  matter's data (browser-verified: a `STAFF` account forging another
+  matter's id in the URL saw every count reset to zero, with the other
+  matter's case number absent from the response entirely).
+- An activity window (7/30/90 days, or all time; default 30) reports
+  recently-created Tasks/Notes/Documents/filed-visibility Calls/Discovery
+  files — all matter-scoped the same way the totals above are, using each
+  model's own timestamp column (`createdAt`, or `uploadedAt` for
+  `Document`, which has no `createdAt`). Uses `new Date()` server-local
+  time, the same convention `lib/dashboard/queries.ts` and
+  `lib/calendar/queries.ts` already rely on — no timezone framework was
+  added.
+- Breakdowns render as small CSS-only horizontal bars
+  (`components/shared/stat-bar.tsx`) rather than a charting library — no
+  new dependency was added for this. Every "by matter" row links back to
+  that matter's own page, and every KPI card links back to the relevant
+  firm-wide workflow (Tasks, Calendar, Discovery, Communications) with the
+  same matter filter carried over, rather than duplicating any of those
+  pages' own record-level views here.
+- Sidebar: `components/shared/app-shell.tsx`'s "Reports" item is no longer
+  `disabled` — every sidebar item is now a real firm-wide section.
+- 26 new focused tests (`tests/reports/queries.test.ts`) covering `ADMIN`
+  firm-wide metrics, non-admin scoping to exactly assigned matters (with
+  the `matterAssignment` lookup resolved only twice per report — once for
+  `getMatterScopes`, once inside the reused `getCallVisibilityFilter` —
+  not once per section), a `matterId` filter both combined via `AND` with
+  an unrestricted and a restricted scope, a simulated-Prisma-filtering
+  case proving an inaccessible matter can neither inflate a total nor
+  surface its case number through a breakdown, empty-assignment/empty-
+  result handling with every enum bucket still zero-filled, the overdue/
+  upcoming/satisfied deadline date math, the overdue-task date math, the
+  30-day-default and `all`-window activity behavior, and that no client
+  PII, user credentials, or other sensitive field ever appears in the
+  returned summary (client phone/notes, user password hash/email). The
+  fourteenth session's 16 Communications tests were re-run unmodified and
+  continue to pass after `getCallVisibilityFilter`'s extraction.
+- Browser-verified against the local dev server (fictional seed data,
+  `STORAGE_PROVIDER=local`): unauthenticated `/reports` redirects to
+  `/login`; an `ADMIN` session's KPI totals were cross-checked against
+  direct read-only Prisma counts and matched exactly; a `STAFF` account
+  assigned to a single matter saw only that matter's totals and only that
+  matter in every dropdown/breakdown; an `ATTORNEY` session (two assigned
+  matters) saw the unfiled-call count while the `STAFF` session did not,
+  matching Communications' rule; every KPI-card and breakdown-row link was
+  followed and resolved (200) for an authorized account; and the
+  Dashboard, Matters, Tasks, Calendar, Communications, Discovery, and every
+  per-matter tab (Documents, Calls, Notes, Deadlines, Timeline) were
+  re-checked and still render.
+
+**Deliberately not done here:** any per-matter or firm-wide financial/
+billing/time-entry reporting (no such data exists in the schema — adding
+placeholder numbers would misrepresent real firm data); a raw
+`AuditEvent` feed or export (Reports surfaces only derived counts, never
+audit metadata, note bodies, call notes, phone numbers, or document
+contents — see `docs/SECURITY.md`); a PDF/CSV export button (out of scope
+for this pass — nothing here changes what's already exportable per
+`docs/SECURITY.md`'s existing rules); and a third-party charting library
+(a CSS-only bar was judged sufficient for this data).
 
 ## Phase 4 — Discovery management (core differentiator)
 
@@ -1023,9 +1124,19 @@ save recording" workflow described in the project goals works end-to-end.
 
 ## Phase 7 — Reporting & polish
 
-- [ ] Reporting views (caseload by attorney, upcoming deadlines firm-wide,
-      discovery status, etc.).
+- [x] Reporting views (caseload by attorney, upcoming deadlines firm-wide,
+      discovery status, etc.). *Real as of the sixteenth session (see
+      milestone above) — `app/(dashboard)/reports` reports active-matter,
+      task (by status/priority/matter/assignee), deadline (by status/type),
+      document, discovery (by review status/file type), and call (by
+      direction) counts, plus a recent-activity window. Still open: any
+      financial/billing/time-entry reporting, which the schema doesn't
+      support yet.*
 - [ ] Full audit/activity history views per matter and firm-wide (admin).
+      **Not started for a firm-wide raw audit feed** — the per-matter
+      Timeline (`getMatterAuditEvents`) already exists; Reports' "Activity"
+      section (sixteenth session) reports derived counts only, not a raw
+      `AuditEvent` feed, by design (see `docs/SECURITY.md`).
 - [ ] UI/UX polish pass.
 
 ## Later / not yet scheduled
