@@ -1,9 +1,9 @@
 import type { CalendarEventType, DeadlineType } from "@prisma/client";
 
 import { prisma } from "@/lib/db";
-import { getAssignedMatterIds, matterIdFilterFor, matterScopeFilterFor } from "@/lib/auth/access";
-import { isAdmin } from "@/lib/auth/authorization";
+import { matterIdFilterFor, matterScopeFilterFor } from "@/lib/auth/access";
 import type { AuthorizableUser } from "@/lib/auth/authorization";
+import { getCallVisibilityFilter } from "@/lib/communications/queries";
 
 /**
  * Cross-matter aggregate reads for the firm-wide dashboard home page.
@@ -11,14 +11,21 @@ import type { AuthorizableUser } from "@/lib/auth/authorization";
  * Every function here takes the current user and scopes its results to
  * matters they're allowed to see (see CLAUDE.md, section 4.4): admins get
  * everything, everyone else only what they're assigned to. Unfiled calls
- * (`matterId: null`) are the one exception — they aren't attached to any
- * matter yet, so matter-level authorization doesn't apply to them; they're
- * firm-wide intake visible to any authenticated staff member.
+ * (`matterId: null`) are the one exception — matter-level authorization
+ * doesn't apply to them since they aren't attached to any matter, but
+ * they're still not firm-wide-visible: only ADMIN/ATTORNEY may see them
+ * (same rule as the Communications page and `attachCallToMatter` — see
+ * lib/communications/queries.ts#getCallVisibilityFilter, reused here rather
+ * than re-derived so this can't drift from that rule again).
  */
 
 export async function getDashboardStats(user: AuthorizableUser) {
   const now = new Date();
-  const [matterWhere, scopeWhere] = await Promise.all([matterIdFilterFor(user), matterScopeFilterFor(user)]);
+  const [matterWhere, scopeWhere, callVisibility] = await Promise.all([
+    matterIdFilterFor(user),
+    matterScopeFilterFor(user),
+    getCallVisibilityFilter(user),
+  ]);
 
   const [activeMatters, openTasks, upcomingDeadlines, upcomingCourtDates, unfiledCalls] =
     await Promise.all([
@@ -26,7 +33,7 @@ export async function getDashboardStats(user: AuthorizableUser) {
       prisma.task.count({ where: { ...scopeWhere, status: { in: ["OPEN", "IN_PROGRESS"] } } }),
       prisma.deadline.count({ where: { ...scopeWhere, satisfied: false, date: { gte: now } } }),
       prisma.calendarEvent.count({ where: { ...scopeWhere, startTime: { gte: now } } }),
-      prisma.call.count({ where: { matterId: null } }),
+      callVisibility.mayViewUnfiled ? prisma.call.count({ where: { matterId: null } }) : 0,
     ]);
 
   return { activeMatters, openTasks, upcomingDeadlines, upcomingCourtDates, unfiledCalls };
@@ -126,9 +133,7 @@ export async function getRecentDiscoveryAcrossMatters(user: AuthorizableUser, li
 }
 
 export async function getRecentCallsAcrossMatters(user: AuthorizableUser, limit = 6) {
-  const where = isAdmin(user)
-    ? {}
-    : { OR: [{ matterId: null }, { matterId: { in: await getAssignedMatterIds(user.id) } }] };
+  const { where } = await getCallVisibilityFilter(user);
 
   return prisma.call.findMany({
     where,

@@ -1183,6 +1183,109 @@ pass); and any bulk/batch archive operation (one record at a time, via the
 button described above, matches every other write path's granularity in
 this app).
 
+## Milestone — Security & production-readiness hardening (eighteenth session)
+
+No new product features — a targeted security/hardening pass over
+everything built through the seventeenth session (archival/reactivation),
+per an explicit request to prepare the app for eventual real-firm use
+without adding scope. No schema/migration changes, no new dependencies, no
+external integration work.
+
+- **Fixed a real authorization gap: unfiled calls were reaching
+  `PARALEGAL`/`STAFF`.** The fourteenth session's Communications milestone
+  documented that unfiled calls (phone numbers, contact names, notes) must
+  only be visible to `ADMIN`/`ATTORNEY` (`getCallVisibilityFilter`,
+  `lib/communications/queries.ts`) — but two other read paths never picked
+  up that rule: `lib/dashboard/queries.ts#getRecentCallsAcrossMatters`/
+  `getDashboardStats` derived their own ad hoc unfiled-call scoping (missing
+  the role gate entirely) instead of reusing `getCallVisibilityFilter`, and
+  `lib/matters/queries.ts#getUnfiledCalls` (the Matter Calls tab's "Attach to
+  Matter" pool, since the third-session milestone) had no gate at all. Fixed
+  by having all three reuse `getCallVisibilityFilter`/
+  `canManageClientsAndMatters` instead of re-deriving the rule, and closed
+  the matching write-side gap: `lib/matters/actions.ts#attachCallToMatter`
+  could previously file an unfiled call for any caller with access to the
+  destination matter, regardless of role — it now requires
+  `canManageClientsAndMatters` too, consistent with what a caller is even
+  allowed to know exists. See `docs/SECURITY.md`'s Authorization section for
+  the full write-up and `tests/dashboard/queries.test.ts` (new),
+  `tests/matters/queries.test.ts`, `tests/matters/actions.test.ts` for
+  regression coverage.
+- **Closed three audit-metadata leaks** where free text or a
+  client-suppliable filename reached `AuditEvent.metadata`, contradicting
+  this app's own documented restraint pattern (`Note.body`/`Task.description`/
+  `Client.notes` excluded from diffs since the fifth/ninth sessions):
+  `updateCalendarEvent` was diffing `location`/`notes` directly into the
+  audit log (now `locationChanged`/`notesChanged` booleans, matching
+  `updateNote`); `uploadDocument` and `registerDiscoveryFile` were both
+  writing the raw uploaded filename into audit metadata — directly
+  undermining the eleventh/sixth sessions' own reasoning for keeping
+  filenames out of storage keys ("a client-supplied name could contain the
+  client's real name or case details"). Fixed by dropping `originalFilename`
+  from both audit events (discovery keeps the safe, server-generated
+  `identifier`/Bates label instead) — the filename is still preserved as DB
+  metadata (`Document.originalFilename`/`DiscoveryFile.originalFilename`),
+  gated by the same matter-level authorization as the record itself, just
+  never duplicated into the audit trail.
+- **Session hardening**: `lib/auth/config.ts`'s JWT session now expires
+  after 12 hours (`updateAge` 1 hour) instead of Auth.js's 30-day default —
+  bounds how long a stolen session cookie stays useful. **Known remaining
+  gap, not fixed this session**: a JWT session still isn't revocable
+  server-side before it expires, so deactivating a user (there's no UI for
+  this yet — see Phase 2 above) or changing their role doesn't take effect
+  until their session naturally expires or they sign out. Closing that
+  fully needs either a DB check added to the `jwt` callback on every request
+  (a latency/DB-load trade-off, deferred until user management ships) or a
+  switch to the database session strategy — see `docs/SECURITY.md`'s
+  Authentication section.
+- **Baseline security response headers** (`next.config.mjs#headers`):
+  `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: strict-origin-when-cross-origin`, a restrictive
+  `Permissions-Policy`, and `Strict-Transport-Security` (a no-op over local
+  HTTP, only honored by browsers over real HTTPS). **Deliberately no
+  Content-Security-Policy** — Radix UI's inline `style` attributes for
+  positioning would need a real nonce/`style-src` strategy to not break the
+  UI, judged out of scope for a pass that must not risk breaking local dev;
+  tracked as follow-up work.
+- **Reviewed and left unchanged, with reasoning recorded**: cookie
+  settings (Auth.js defaults are already correct — `httpOnly`, `SameSite:
+  Lax`, `secure` derived from the request's protocol); `trustHost: true`
+  (already flagged in `lib/auth/config.ts` as a dev-only convenience
+  requiring a trusted reverse proxy before real deployment, unchanged);
+  Dropbox/discovery-file `Content-Type` on download reflecting a
+  caller-declared (not server-validated) MIME type for non-PDF evidence —
+  low residual risk given downloads are always forced `attachment`, and a
+  full MIME allowlist would conflict with Discovery's intentionally broad
+  `OTHER` evidence category; login rate-limiting (would need Redis/an
+  external store or a reverse-proxy/WAF layer to work correctly across
+  multiple instances — an in-memory limiter was rejected as a fake fix per
+  this session's explicit instruction not to build one).
+- Added `tests/discovery/route.test.ts` (new — the discovery file download
+  Route Handler had no dedicated test file, unlike the document download
+  route's `tests/documents/route.test.ts`) covering the same
+  unauthenticated/no-access/cross-matter-probe/storage-failure/success cases,
+  plus a `?variant=stamped`-on-a-non-PDF case specific to discovery. 26 new
+  or updated tests total across `tests/dashboard/queries.test.ts` (new),
+  `tests/matters/queries.test.ts`, `tests/matters/actions.test.ts`,
+  `tests/documents/actions.test.ts`, and `tests/discovery/route.test.ts`.
+- Full verification: `vitest run` (340 tests), `eslint`, `tsc --noEmit`, and
+  `next build` all passed with no unrelated regressions. Runtime-verified
+  against the local dev server with the real Auth.js credentials flow for
+  `alex.rivera` (`ADMIN`) and `taylor.brooks` (`STAFF`): unauthenticated
+  requests still redirect to `/login`; the new response headers are present
+  on a real response; `STAFF` is still denied `/clients/new` (404) and no
+  longer sees the "Unfiled calls awaiting review" card on an assigned
+  matter's Calls tab (seed data has unfiled calls, so this was previously
+  visible); `ADMIN` still sees that same card on the same page.
+
+**Deliberately not done here:** MFA/2FA (still not implemented — see
+`docs/SECURITY.md`'s Authentication section for exactly what's required
+before staff accounts go live), real login rate-limiting/lockout (documented
+requirement, no fake in-memory version built), a Content-Security-Policy,
+forced sign-out on role/deactivation change (documented gap, see above), any
+new product feature, and any Dropbox/Vonage/Loop/MyCase/QuickBooks
+integration work.
+
 ## Phase 4 — Discovery management (core differentiator)
 
 - [x] `DiscoveryProduction` and `DiscoveryFile` create. *Real as of the

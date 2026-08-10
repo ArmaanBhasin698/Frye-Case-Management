@@ -20,6 +20,8 @@ following pieces of it are **actually implemented**, not just planned:
   "Authorization" below.
 - **Route-level login gating** via `proxy.ts` for every page except
   `/login`.
+- **Baseline security response headers** (`next.config.mjs`) — see
+  "Security headers" below.
 
 Also now real:
 
@@ -66,7 +68,9 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
   "Third-party integrations" below. What exists now is a development/test
   integration behind the same interface, not that.
 - No MFA, no rate limiting on failed logins, no forced sign-out on
-  role/assignment change.
+  role/assignment change (see "Authentication" and "Security hardening
+  pass (eighteenth session)" below for exactly what's required to close
+  each of these before real staff accounts go live).
 - No HTTPS enforcement (this is a local-dev prototype; see
   `AuthConfig.trustHost` in `lib/auth/config.ts`, which is itself a
   dev-only convenience that needs revisiting before any real deployment).
@@ -120,25 +124,90 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
   (`lib/auth/config.ts`); no OAuth/SSO provider is configured.
 - Passwords hashed with bcrypt (`bcryptjs`, 10 rounds), never stored or
   logged in plaintext. **Implemented.**
-- Session-based auth via Auth.js, JWT strategy. **Implemented** — but
-  session expiry is Auth.js's default and there is no way yet to force a
-  sign-out on role/assignment change (e.g., if someone is unassigned from
-  a matter mid-session, their existing session still carries the old
-  assignment until the JWT is next refreshed/re-issued). **Not
-  implemented.**
+- Session-based auth via Auth.js, JWT strategy. **Partially implemented** —
+  as of the eighteenth session's hardening pass, the session now expires
+  after 12 hours (`session.maxAge`, `lib/auth/config.ts`) instead of
+  Auth.js's 30-day default, bounding how long a stolen session cookie stays
+  useful. **Still not implemented**: there is no way to force a sign-out on
+  role/assignment change or account deactivation before that expiry — a JWT
+  session isn't revocable server-side once issued. There's also no UI yet
+  to deactivate a user or change their role after creation (see Phase 2,
+  `docs/ROADMAP.md`), so this is currently a latent gap, not one reachable
+  through the app itself. Closing it fully needs one of: (a) a DB check
+  added to the `jwt` callback on every request (works today, but adds a
+  query to every session check — a deliberate latency/DB-load trade-off to
+  make once user deactivation actually ships), or (b) switching to the
+  database session strategy (a session row per login, revocable by
+  deleting it) — a larger, deliberate architecture change, not something to
+  do incidentally alongside an unrelated feature.
 - Design the auth flow so multi-factor authentication (TOTP) can be added
   later without restructuring. **Not implemented** — no MFA yet, but
   nothing in the current design blocks adding it (Auth.js supports
-  additional verification steps without a rewrite).
+  additional verification steps without a rewrite). **Required before any
+  real staff account is created** (see "MFA/2FA status" below for exactly
+  what that requires).
 - Failed login attempts are logged and rate-limited to slow credential
   stuffing/brute force. **Not implemented.** Failed `authorize()` calls
   currently just return `null` (Auth.js shows a generic error) with no
   logging or throttling — acceptable for five fictional dev accounts
-  behind a private environment, not for a real deployment.
+  behind a private environment, not for a real deployment. See "Rate
+  limiting status" below for what a real fix requires and why it wasn't
+  built as part of this pass.
 - Every seeded account uses one shared password
   (`FryeDemo!2026` — see README's demo credentials table) purely so a demo
   doesn't require memorizing five passwords. This must never happen with
   real accounts.
+
+### MFA/2FA status
+
+Not implemented, and deliberately not attempted in the eighteenth session's
+hardening pass (explicitly out of scope for that pass — this is staff/
+infrastructure work, not a code-only fix). Before any real staff account is
+created:
+
+- Add a TOTP (authenticator app) second factor to the Credentials sign-in
+  flow — Auth.js's Credentials provider supports an extra verification step
+  without restructuring the current `authorize()` flow; this is additive,
+  not a rewrite.
+- Decide and document an account-recovery path for a lost second factor
+  (e.g., admin-issued reset) before enabling MFA, so a locked-out attorney
+  doesn't become an outage.
+- Roll out to every real staff account before that account is used with
+  real case data — not optional, not phased in gradually per-user.
+
+### Rate limiting status
+
+Not implemented. No in-memory/fake limiter was built as a placeholder — a
+per-process in-memory counter would silently stop working the moment the
+app runs behind more than one instance or restarts (a redeploy would reset
+every counter to zero), which is worse than no limiter at all if anyone
+starts relying on it. A real fix needs one of:
+
+- A rate-limiting/WAF layer in front of the app (e.g., the hosting
+  provider's platform-level protection, or a reverse proxy/CDN rule)
+  covering `/login` and the Auth.js credentials callback route at minimum.
+- An external shared store (Redis or equivalent) backing a proper limiter
+  library, so limits are enforced consistently across every instance.
+
+Either requires infrastructure decisions beyond this codebase — tracked
+here as a hard requirement before real deployment, not a "nice to have."
+
+### Security headers
+
+Implemented as of the eighteenth session (`next.config.mjs#headers`),
+applied to every route: `X-Content-Type-Options: nosniff`,
+`X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`,
+a restrictive `Permissions-Policy` (camera/microphone/geolocation all
+denied), and `Strict-Transport-Security` (a no-op over local HTTP; only
+honored by browsers over a real HTTPS response, so it doesn't need to be
+conditionally applied). **Deliberately not implemented: a
+Content-Security-Policy.** Radix UI (used throughout `components/ui`)
+relies on inline `style` attributes for positioning popovers/dialogs/menus,
+which a meaningfully strict `style-src` would break without a nonce-based
+or `unsafe-inline`-permitting policy — that needs real testing across every
+interactive component, not a one-line addition, and risks breaking local
+development if done carelessly. Tracked as follow-up work, not attempted in
+this pass.
 
 ## Authorization
 
@@ -355,6 +424,29 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
   for registration, comparison, and authenticated download — none of that
   logic (including the discovery file download Route Handler below) was
   duplicated or modified.
+- **Security hardening pass (eighteenth session) — fixed a real gap in
+  unfiled-call visibility:** the fourteenth session's rule above (unfiled
+  calls visible only to `ADMIN`/`ATTORNEY`, via
+  `lib/communications/queries.ts#getCallVisibilityFilter`) had two
+  call sites that never actually applied it. `lib/dashboard/queries.ts#
+  getRecentCallsAcrossMatters`/`getDashboardStats` derived their own ad hoc
+  unfiled-call scoping instead of reusing `getCallVisibilityFilter`, and
+  missed the role gate entirely — a `PARALEGAL`/`STAFF` viewer's Dashboard
+  home page was showing unfiled calls' contact names and durations.
+  `lib/matters/queries.ts#getUnfiledCalls` (the per-matter Calls tab's
+  "Attach to Matter" pool, unchanged since the third session) had **no**
+  gate at all, on any role, since it predates the fourteenth session's rule
+  and was never revisited when that rule was written. Both now reuse
+  `getCallVisibilityFilter`/`canManageClientsAndMatters` instead of
+  re-deriving the rule, so it can't drift again. The matching write path,
+  `lib/matters/actions.ts#attachCallToMatter`, previously let any caller
+  with access to the destination matter file an unfiled call regardless of
+  role — it now also requires `canManageClientsAndMatters`, since a caller
+  who can't legitimately know an unfiled call exists shouldn't be able to
+  act on one via a forged `callId` either. See `docs/ROADMAP.md`'s
+  eighteenth-session milestone for the full write-up and test coverage
+  (`tests/dashboard/queries.test.ts`, `tests/matters/queries.test.ts`,
+  `tests/matters/actions.test.ts`).
 - All authorization checks happen **server-side** — `proxy.ts` gates
   "is anyone logged in," and every Server Component that reads matter data
   re-checks independently rather than trusting the proxy alone (see
@@ -438,6 +530,24 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
     (`metadata: {archived: true}` / `{archived: false}`) — same pattern as
     `setDeadlineSatisfied` above, a single safe boolean, never any other
     field on the record.
+  - **Security hardening pass (eighteenth session) — three metadata leaks
+    closed**, all contradicting this same restraint pattern rather than
+    introducing a new rule: `updateCalendarEvent` was diffing `location`/
+    `notes` directly into `metadata.changed` instead of excluding them like
+    `updateNote`/`updateDocumentMetadata` already do (now
+    `locationChanged`/`notesChanged` booleans); `uploadDocument` and
+    `registerDiscoveryFile` were both writing the raw uploaded filename
+    into `metadata.originalFilename` — directly contradicting the
+    eleventh/sixth sessions' own reasoning for keeping filenames out of
+    storage keys in the first place ("a client-supplied name could contain
+    the client's real name or case details," `lib/documents/actions.ts`'s
+    comment above `storageKey`). Both now omit the filename from audit
+    metadata entirely; `registerDiscoveryFile`'s event carries the safe,
+    server-generated `identifier` (Bates/evidence label) instead. The
+    filename itself is unaffected as DB metadata
+    (`Document.originalFilename`/`DiscoveryFile.originalFilename`), gated
+    by the same matter-level authorization as the record — only the audit
+    trail changed.
 - Sensitive read actions that matter for accountability (e.g., viewing/
   exporting discovery, exporting a client's full file) should also be
   logged, not just writes. **Implemented** for discovery file downloads —
@@ -489,6 +599,19 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
   defense-in-depth check `LocalDocumentStore` already applied for the
   filesystem. Uploaded documents are never executed, previewed, or
   transformed server-side — only stored and served back byte-for-byte.
+  **Reviewed, not changed, in the eighteenth session:** unlike general
+  Documents, Discovery file registration (`lib/discovery/actions.ts#
+  registerDiscoveryFile`) does not validate the uploaded file's MIME type
+  against an allowlist — only the coarse `fileType` category (PDF/VIDEO/
+  AUDIO/PHOTO/OTHER). The caller-declared MIME type is later echoed as the
+  `Content-Type` response header on download. Accepted as low residual
+  risk rather than fixed: the download route always forces
+  `Content-Disposition: attachment`, which keeps a browser from rendering
+  the response inline regardless of `Content-Type`, and Discovery's
+  `OTHER`/video/audio evidence categories are intentionally broad — an
+  allowlist tight enough to matter would conflict with that by design.
+  Revisit if evidence-preview functionality is ever added, since that would
+  remove the `attachment`-disposition mitigation.
 - Discovery files and, as of the eleventh session, general documents are
   downloaded only through the app's own authenticated Route Handlers
   (`app/(dashboard)/matters/[matterId]/discovery/files/[fileId]/route.ts`

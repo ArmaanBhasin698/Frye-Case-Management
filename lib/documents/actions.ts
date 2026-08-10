@@ -134,7 +134,14 @@ export async function uploadDocument(
       entityType: "Document",
       entityId: document.id,
       matterId,
-      metadata: { originalFilename: file.name, sizeBytes: buffer.byteLength, category },
+      // No `originalFilename` here — the whole point of keeping it out of
+      // the storage key (see the comment above `storageKey`) is that a
+      // client-supplied filename can carry a client's real name or case
+      // details; the audit log is exactly the kind of place that must
+      // never end up holding it either. It's still preserved as DB
+      // metadata (`Document.originalFilename`), gated by the same
+      // matter-level authorization as the document itself.
+      metadata: { sizeBytes: buffer.byteLength, category },
     },
   });
 

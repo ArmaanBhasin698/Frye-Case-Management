@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { matterIdFilterFor } from "@/lib/auth/access";
+import { canManageClientsAndMatters } from "@/lib/auth/authorization";
 import type { AuthorizableUser } from "@/lib/auth/authorization";
 
 /**
@@ -173,8 +174,17 @@ export function getMatterAuditEvents(matterId: string) {
  * member picks from when filing a call. Global (not matter-scoped) by
  * definition; the Calls tab uses this to power the mocked "Attach to
  * Matter" workflow (see components/shared/attach-call-list.tsx).
+ *
+ * Unfiled calls carry no matter assignment to check, so this needs its own
+ * gate rather than the matterId-already-checked-by-the-caller convention
+ * every other function here relies on: only ADMIN/ATTORNEY may see them,
+ * the same rule lib/communications/queries.ts#getCallVisibilityFilter
+ * enforces for the firm-wide Communications page and
+ * lib/matters/actions.ts#attachCallToMatter enforces for filing one.
+ * PARALEGAL/STAFF get an empty list, not an error.
  */
-export function getUnfiledCalls() {
+export function getUnfiledCalls(user: AuthorizableUser) {
+  if (!canManageClientsAndMatters(user)) return Promise.resolve([]);
   return prisma.call.findMany({
     where: { matterId: null },
     orderBy: { occurredAt: "desc" },
