@@ -22,6 +22,7 @@ import {
   formatClientName,
   formatRelativeDays,
   humanizeEntityType,
+  todayAsStoredDate,
 } from "@/lib/matters/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -56,9 +57,10 @@ export default async function MatterOverviewPage({
   const flaggedCalls = calls.filter((c) => c.flagged);
 
   const now = new Date();
+  const today = todayAsStoredDate();
   const keyDates: KeyDate[] = [
     ...deadlines
-      .filter((d) => !d.satisfied && d.date >= now)
+      .filter((d) => !d.satisfied && d.date >= today)
       .map((d) => ({
         kind: "deadline" as const,
         id: d.id,

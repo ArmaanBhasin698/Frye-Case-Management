@@ -3,6 +3,7 @@ import type { Prisma, TaskPriority, TaskStatus } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { matterScopeFilterFor } from "@/lib/auth/access";
 import type { AuthorizableUser } from "@/lib/auth/authorization";
+import { todayAsStoredDate } from "@/lib/matters/format";
 
 /**
  * Firm-wide Task aggregate query (see CLAUDE.md, section 4.4 and
@@ -45,7 +46,7 @@ export async function getFirmWideTasks(
   if (filters.assignedToId) conditions.push({ assignedToId: filters.assignedToId });
   if (filters.matterId) conditions.push({ matterId: filters.matterId });
   if (filters.overdueOnly) {
-    conditions.push({ dueDate: { lt: new Date() }, status: { in: OPEN_STATUSES } });
+    conditions.push({ dueDate: { lt: todayAsStoredDate() }, status: { in: OPEN_STATUSES } });
   }
 
   const orderBy: Prisma.TaskOrderByWithRelationInput[] =

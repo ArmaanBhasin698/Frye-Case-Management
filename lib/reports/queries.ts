@@ -13,7 +13,7 @@ import { getAssignedMatterIds } from "@/lib/auth/access";
 import { getCallVisibilityFilter } from "@/lib/communications/queries";
 import { buildMatterIdFilter, buildMatterScopeFilter, isAdmin } from "@/lib/auth/authorization";
 import type { AuthorizableUser } from "@/lib/auth/authorization";
-import { matterTitle } from "@/lib/matters/format";
+import { matterTitle, todayAsStoredDate } from "@/lib/matters/format";
 
 /**
  * Firm-wide Reports aggregate queries (see CLAUDE.md, section 4.4 and
@@ -216,7 +216,7 @@ async function getTaskSummary(
   const where = combine<Prisma.TaskWhereInput>([scopeWhere, ...(matterIdCond ? [matterIdCond] : [])]);
   const overdueWhere = combine<Prisma.TaskWhereInput>([
     where,
-    { dueDate: { lt: new Date() }, status: { in: OPEN_TASK_STATUSES } },
+    { dueDate: { lt: todayAsStoredDate() }, status: { in: OPEN_TASK_STATUSES } },
   ]);
 
   const [total, statusGroups, overdue, priorityGroups, matterGroups, assigneeGroups] = await Promise.all([
@@ -303,13 +303,13 @@ async function getDeadlineSummary(
   matterIdCond: { matterId: string } | undefined,
 ): Promise<ReportSummary["deadlines"]> {
   const where = combine<Prisma.DeadlineWhereInput>([scopeWhere, ...(matterIdCond ? [matterIdCond] : [])]);
-  const now = new Date();
+  const today = todayAsStoredDate();
 
   const [total, satisfied, upcoming, overdue, typeGroups] = await Promise.all([
     prisma.deadline.count({ where }),
     prisma.deadline.count({ where: combine([where, { satisfied: true }]) }),
-    prisma.deadline.count({ where: combine([where, { satisfied: false, date: { gte: now } }]) }),
-    prisma.deadline.count({ where: combine([where, { satisfied: false, date: { lt: now } }]) }),
+    prisma.deadline.count({ where: combine([where, { satisfied: false, date: { gte: today } }]) }),
+    prisma.deadline.count({ where: combine([where, { satisfied: false, date: { lt: today } }]) }),
     prisma.deadline.groupBy({ by: ["type"], where, _count: true }),
   ]);
 

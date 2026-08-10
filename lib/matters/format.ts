@@ -33,6 +33,24 @@ export function asCalendarDate(date: Date): Date {
   return new Date(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
 }
 
+/**
+ * Today's local calendar day, encoded the same way a date-only column is
+ * written (UTC midnight of that Y/M/D — see `asCalendarDate` above).
+ * "Upcoming"/"overdue" queries that compare Deadline.date or Task.dueDate
+ * against a true instant (`new Date()`) treat an item due today as already
+ * past for most of the local day in any time zone behind UTC, since the
+ * stored value is UTC midnight while the current instant has already
+ * advanced hours into that UTC day. Compare date-only columns against this
+ * instead of `new Date()` so "due today" holds for the full local calendar
+ * day. Never use this for a true-instant comparison (CalendarEvent
+ * start/end, Call.occurredAt, createdAt/updatedAt, audit timestamps) — use
+ * `new Date()` there.
+ */
+export function todayAsStoredDate(): Date {
+  const now = new Date();
+  return new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+}
+
 export function formatClientName(client: { firstName: string; lastName: string }) {
   return `${client.firstName} ${client.lastName}`;
 }
