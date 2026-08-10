@@ -877,6 +877,72 @@ audit trail already records who logged every call; adding a column was
 judged unnecessary for this pass's conservative unfiled-visibility rule —
 see the known limitation above).
 
+## Milestone — Firm-wide Discovery (fifteenth session)
+
+Turns the long-disabled sidebar "Discovery" item into a real, authorized
+aggregate view over the existing per-matter Discovery/Bates engine — same
+pattern the thirteenth session's firm-wide Tasks/Calendar and the
+fourteenth session's firm-wide Communications established. No Prisma
+migration was needed: every field the aggregate view surfaces
+(`DiscoveryFile.originalFilename`/`fileType`/`identifier`/`sizeBytes`/
+`registeredAt`/`registeredBy`, `DiscoveryProduction.label`/`reviewStatus`)
+already existed — see `docs/DATA_MODEL.md`.
+
+- **`lib/discovery/queries.ts#getFirmWideDiscoveryFiles`** — the query
+  behind `app/(dashboard)/discovery`. Reads the exact same `DiscoveryFile`
+  rows `lib/discovery/actions.ts#registerDiscoveryFile` and
+  `lib/matters/queries.ts#getMatterDiscoveryProductions` already write/read,
+  not a second record. `DiscoveryFile` has no `matterId` column of its
+  own — unlike every other model these aggregate queries scope
+  (`Task`/`Deadline`/`CalendarEvent`/filed `Call`/`DiscoveryProduction`),
+  it only reaches a matter through its parent `DiscoveryProduction` — so
+  `matterScopeFilterFor`'s result is nested under a `production` relation
+  filter rather than applied directly, with an `ADMIN`'s unrestricted `{}`
+  scope kept at the top level of `where` instead of nested (the same
+  "empty object means something different when nested" caution the
+  fourteenth session's `getFirmWideCalls` documents for `OR` branches — see
+  `tests/discovery/queries.test.ts`'s regression test).
+- The Discovery page supports filtering (matter, file type, review status)
+  and recent/oldest sort (by `createdAt`, which is always populated, rather
+  than the nullable `registeredAt` — pre-engine seeded files display "—"
+  for registration date/by, same as the per-matter Discovery tab already
+  does for those rows), same URL-driven, server-scoped-before-render
+  convention as every other firm-wide filter bar
+  (`components/shared/discovery-filter-bar.tsx`).
+- Every row links back to its matter's own Discovery tab
+  (`/matters/[matterId]/discovery`) rather than duplicating registration,
+  comparison, or the authenticated download Route Handler
+  (`app/(dashboard)/matters/[matterId]/discovery/files/[fileId]/route.ts`) —
+  none of that logic changed in this session.
+- Sidebar: `components/shared/app-shell.tsx`'s "Discovery" item is no
+  longer `disabled` — same active-state/navigation styling as
+  Dashboard/Matters/Clients/Tasks/Calendar/Communications. Reports remains
+  disabled/"Soon," unchanged.
+- 14 new focused tests (`tests/discovery/queries.test.ts`) covering ADMIN
+  unrestricted visibility (including the not-nested-under-`production`
+  regression), non-admin scoping to exactly assigned matters, a simulated-
+  Prisma-filtering case proving a `STAFF` caller's result never contains
+  another matter's confidential filename, empty-assignment and empty-result
+  handling, each filter individually and combined with the matter scope via
+  `AND`, both sort orders, and the exact `include` shape the page's row
+  rendering (matter/client links, registeredBy) depends on. The existing
+  56 Discovery/Bates tests (`tests/discovery/{actions,bates,compare,hash,
+  pdf}.test.ts`) were re-run unmodified and continue to pass — this session
+  touched no per-matter Discovery code.
+- Browser-verified against the local dev server (fictional seed data,
+  `STORAGE_PROVIDER=local`).
+
+**Deliberately not done here:** any per-file "latest comparison match
+status" column (that lives on `DiscoveryFileMatch`, one level removed from
+`DiscoveryFile`, and isn't every file's status — only files that appeared
+in a comparison run; adding it was judged out of scope for a first pass —
+production-level `reviewStatus` is surfaced/filterable instead), a
+Bates-range-only filter (the existing `identifier` field already encodes
+this per file and per production, and a dedicated range-query control
+would be a speculative addition beyond what was asked for), and any change
+to the discovery file download Route Handler, registration, or comparison
+Server Actions — all preserved exactly as the sixth session built them.
+
 ## Phase 4 — Discovery management (core differentiator)
 
 - [x] `DiscoveryProduction` and `DiscoveryFile` create. *Real as of the
