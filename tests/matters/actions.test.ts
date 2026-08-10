@@ -34,6 +34,7 @@ vi.mock("@/lib/db", () => ({ prisma: prismaMock }));
 
 const {
   addMatterAssignment,
+  archiveMatter,
   attachCallToMatter,
   createCalendarEvent,
   createCall,
@@ -41,6 +42,7 @@ const {
   createMatter,
   createNote,
   createTask,
+  reactivateMatter,
   removeMatterAssignment,
   setDeadlineSatisfied,
   updateCalendarEvent,
@@ -53,6 +55,7 @@ const {
 
 const user = { id: "user-1", role: "STAFF" as const };
 const attorney = { id: "user-2", role: "ATTORNEY" as const };
+const admin = { id: "user-admin", role: "ADMIN" as const };
 const matterId = "matter-1";
 
 function formData(fields: Record<string, string>) {
@@ -795,6 +798,120 @@ describe("updateMatter", () => {
     };
     await expect(updateMatter({ error: null }, matterFormData(unchanged))).rejects.toThrow("NEXT_REDIRECT");
     expect(prismaMock.auditEvent.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("archiveMatter", () => {
+  it("denies archiving when the caller can't edit this matter (e.g. an unassigned ATTORNEY, or a forged/inaccessible matter id)", async () => {
+    canEditMatterMock.mockResolvedValue(false);
+    const result = await archiveMatter({ matterId });
+    expect(result).toEqual({ ok: false, error: "Not found or access denied." });
+    expect(prismaMock.matter.update).not.toHaveBeenCalled();
+    expect(prismaMock.auditEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("allows an ADMIN to archive any accessible matter", async () => {
+    requireCurrentUserMock.mockResolvedValue(admin);
+    prismaMock.matter.findUnique.mockResolvedValue({ archived: false });
+    prismaMock.matter.update.mockResolvedValue({});
+    const result = await archiveMatter({ matterId });
+    expect(result).toEqual({ ok: true, data: undefined });
+  });
+
+  it("allows an ATTORNEY assigned to this matter (canEditMatter true) to archive it", async () => {
+    requireCurrentUserMock.mockResolvedValue(attorney);
+    prismaMock.matter.findUnique.mockResolvedValue({ archived: false });
+    prismaMock.matter.update.mockResolvedValue({});
+    const result = await archiveMatter({ matterId });
+    expect(result).toEqual({ ok: true, data: undefined });
+  });
+
+  it("returns a generic not-found for a nonexistent matter id, not a distinct error", async () => {
+    prismaMock.matter.findUnique.mockResolvedValue(null);
+    const result = await archiveMatter({ matterId: "matter-does-not-exist" });
+    expect(result).toEqual({ ok: false, error: "Not found or access denied." });
+    expect(prismaMock.matter.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses to re-archive an already-archived matter", async () => {
+    prismaMock.matter.findUnique.mockResolvedValue({ archived: true });
+    const result = await archiveMatter({ matterId });
+    expect(result).toEqual({ ok: false, error: "This matter is already archived." });
+    expect(prismaMock.matter.update).not.toHaveBeenCalled();
+  });
+
+  it("sets archived/archivedAt/archivedById and writes a safe UPDATE audit event", async () => {
+    prismaMock.matter.findUnique.mockResolvedValue({ archived: false });
+    prismaMock.matter.update.mockResolvedValue({});
+    await archiveMatter({ matterId });
+
+    expect(prismaMock.matter.update).toHaveBeenCalledWith({
+      where: { id: matterId },
+      data: { archived: true, archivedAt: expect.any(Date), archivedById: user.id },
+    });
+    expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
+      data: {
+        actorId: user.id,
+        action: "UPDATE",
+        entityType: "Matter",
+        entityId: matterId,
+        matterId,
+        metadata: { archived: true },
+      },
+    });
+  });
+
+  it("never touches status/closedDate or any sub-resource — only the archived fields", async () => {
+    prismaMock.matter.findUnique.mockResolvedValue({ archived: false });
+    prismaMock.matter.update.mockResolvedValue({});
+    await archiveMatter({ matterId });
+    const call = prismaMock.matter.update.mock.calls.at(0)?.[0];
+    expect(call.data).not.toHaveProperty("status");
+    expect(call.data).not.toHaveProperty("closedDate");
+  });
+});
+
+describe("reactivateMatter", () => {
+  it("denies reactivation when the caller can't edit this matter", async () => {
+    canEditMatterMock.mockResolvedValue(false);
+    const result = await reactivateMatter({ matterId });
+    expect(result).toEqual({ ok: false, error: "Not found or access denied." });
+    expect(prismaMock.matter.update).not.toHaveBeenCalled();
+  });
+
+  it("returns a generic not-found for a nonexistent matter id", async () => {
+    prismaMock.matter.findUnique.mockResolvedValue(null);
+    const result = await reactivateMatter({ matterId });
+    expect(result).toEqual({ ok: false, error: "Not found or access denied." });
+  });
+
+  it("refuses to reactivate a matter that isn't archived", async () => {
+    prismaMock.matter.findUnique.mockResolvedValue({ archived: false });
+    const result = await reactivateMatter({ matterId });
+    expect(result).toEqual({ ok: false, error: "This matter is not archived." });
+    expect(prismaMock.matter.update).not.toHaveBeenCalled();
+  });
+
+  it("clears archived/archivedAt/archivedById and writes a safe UPDATE audit event", async () => {
+    prismaMock.matter.findUnique.mockResolvedValue({ archived: true });
+    prismaMock.matter.update.mockResolvedValue({});
+    const result = await reactivateMatter({ matterId });
+
+    expect(result).toEqual({ ok: true, data: undefined });
+    expect(prismaMock.matter.update).toHaveBeenCalledWith({
+      where: { id: matterId },
+      data: { archived: false, archivedAt: null, archivedById: null },
+    });
+    expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
+      data: {
+        actorId: user.id,
+        action: "UPDATE",
+        entityType: "Matter",
+        entityId: matterId,
+        matterId,
+        metadata: { archived: false },
+      },
+    });
   });
 });
 

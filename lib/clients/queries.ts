@@ -12,8 +12,18 @@ import { prisma } from "@/lib/db";
  * narrower "which clients can this ADMIN/ATTORNEY see" filter to apply.
  */
 
-export function listClients() {
+export type ClientListView = "active" | "archived";
+
+/**
+ * `view` defaults to "active" (`archived: false`), so the firm-wide
+ * Clients roster never surfaces an archived Client unless the caller
+ * explicitly asks for the archived view (see
+ * app/(dashboard)/clients/page.tsx) — same convention as
+ * `lib/matters/queries.ts#listMatters`.
+ */
+export function listClients(options: { view?: ClientListView } = {}) {
   return prisma.client.findMany({
+    where: { archived: (options.view ?? "active") === "archived" },
     include: { matters: { select: { id: true, caseNumber: true, status: true } } },
     orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
   });
@@ -26,9 +36,15 @@ export function getClientById(clientId: string) {
   });
 }
 
-/** Lightweight list for the "link to an existing client" picker on New Matter. */
+/**
+ * Lightweight list for the "link to an existing client" picker on New
+ * Matter — always excludes archived Clients unconditionally (no `view`
+ * option): there's no scenario where starting a brand-new Matter under an
+ * already-archived Client is the intended workflow.
+ */
 export function listClientsForPicker() {
   return prisma.client.findMany({
+    where: { archived: false },
     select: { id: true, firstName: true, lastName: true },
     orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
   });

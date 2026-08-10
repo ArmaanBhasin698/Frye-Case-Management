@@ -14,10 +14,23 @@ import type { AuthorizableUser } from "@/lib/auth/authorization";
  * check themselves.
  */
 
-export async function listMatters(user: AuthorizableUser) {
+export type MatterListView = "active" | "archived";
+
+/**
+ * `view` defaults to "active" (`archived: false`) — every existing
+ * call site (the Matters page itself, and every firm-wide filter bar's
+ * matter picker: Tasks/Calendar/Discovery/Communications/Reports) keeps
+ * its current behavior unchanged and never surfaces an archived Matter.
+ * Pass `{ view: "archived" }` only for the explicit archived-records view
+ * (see app/(dashboard)/matters/page.tsx). This is a plain visibility
+ * filter, layered on top of `matterIdFilterFor`'s existing authorization
+ * scoping, never a substitute for it — an archived Matter the caller isn't
+ * otherwise authorized to see still never appears in either view.
+ */
+export async function listMatters(user: AuthorizableUser, options: { view?: MatterListView } = {}) {
   const where = await matterIdFilterFor(user);
   return prisma.matter.findMany({
-    where,
+    where: { ...where, archived: (options.view ?? "active") === "archived" },
     include: {
       client: true,
       assignments: { include: { user: true } },
@@ -32,6 +45,7 @@ export function getMatterHeader(matterId: string) {
     include: {
       client: true,
       assignments: { include: { user: true } },
+      archivedBy: true,
     },
   });
 }

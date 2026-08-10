@@ -139,21 +139,32 @@ model User {
   registeredDiscoveryFiles DiscoveryFile[]       @relation("DiscoveryFileRegisteredBy")
   ranDiscoveryComparisons  DiscoveryComparison[] @relation("DiscoveryComparisonRunBy")
   auditEvents              AuditEvent[]
+  archivedClients          Client[]              @relation("ClientArchivedBy")
+  archivedMatters          Matter[]              @relation("MatterArchivedBy")
 }
 
 /// A person or entity the firm represents. One Client can have multiple
 /// Matters over time (repeat client).
 model Client {
-  id          String    @id @default(cuid())
-  firstName   String
-  lastName    String
-  dateOfBirth DateTime?
-  email       String?
-  phone       String?
-  address     String?
-  notes       String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id           String    @id @default(cuid())
+  firstName    String
+  lastName     String
+  dateOfBirth  DateTime?
+  email        String?
+  phone        String?
+  address      String?
+  notes        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  /// Reversible removal from default active lists/pickers — orthogonal to
+  /// any Matter's own `status` (see Matter.archived below). Never cascades:
+  /// archiving a Client never touches its Matters (see
+  /// lib/clients/actions.ts#archiveClient, which blocks archival while any
+  /// Matter of this Client is still OPEN/PENDING).
+  archived     Boolean   @default(false)
+  archivedAt   DateTime?
+  archivedById String?
+  archivedBy   User?     @relation("ClientArchivedBy", fields: [archivedById], references: [id], onDelete: SetNull)
 
   matters Matter[]
 }
@@ -161,17 +172,27 @@ model Client {
 /// A single criminal matter/case for a Client. This is the hub every other
 /// entity in this slice hangs off of.
 model Matter {
-  id         String       @id @default(cuid())
-  clientId   String
-  client     Client       @relation(fields: [clientId], references: [id])
-  caseNumber String       @unique
-  court      String
-  charges    String
-  status     MatterStatus @default(OPEN)
-  openedDate DateTime
-  closedDate DateTime?
-  createdAt  DateTime     @default(now())
-  updatedAt  DateTime     @updatedAt
+  id           String       @id @default(cuid())
+  clientId     String
+  client       Client       @relation(fields: [clientId], references: [id])
+  caseNumber   String       @unique
+  court        String
+  charges      String
+  status       MatterStatus @default(OPEN)
+  openedDate   DateTime
+  closedDate   DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  /// Reversible removal from default active lists/pickers — orthogonal to
+  /// `status`: archiving/reactivating never changes `status`/`closedDate`,
+  /// so a reactivated Matter reappears exactly as it was (see
+  /// lib/matters/actions.ts#archiveMatter/reactivateMatter). Existing
+  /// authorization (`assertMatterAccess`) is unaffected either way — this
+  /// only gates default list/picker visibility, never direct access.
+  archived     Boolean      @default(false)
+  archivedAt   DateTime?
+  archivedById String?
+  archivedBy   User?        @relation("MatterArchivedBy", fields: [archivedById], references: [id], onDelete: SetNull)
 
   assignments          MatterAssignment[]
   notes                Note[]
