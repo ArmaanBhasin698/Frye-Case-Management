@@ -1286,6 +1286,43 @@ forced sign-out on role/deactivation change (documented gap, see above), any
 new product feature, and any Dropbox/Vonage/Loop/MyCase/QuickBooks
 integration work.
 
+## Milestone — Final pre-production validation pass (nineteenth session)
+
+A fictional-data smoke test and production-readiness review, not a feature
+pass — no code changes were needed or made. Full detail (blockers, staff
+dependencies, manual click-check list) now lives in
+`docs/PRODUCTION_READINESS.md`; summarized here for the session history:
+
+- **No bugs found.** `vitest run` (340 tests, unchanged), `eslint`,
+  `tsc --noEmit`, and `next build` all passed cleanly with zero code
+  changes.
+- Runtime-verified against the local dev server with the real Auth.js
+  credentials flow for `alex.rivera` (`ADMIN`) and `taylor.brooks`
+  (`STAFF`): unauthenticated redirect, ADMIN full access, STAFF
+  matter-scoped access with safe 404s on forged/unassigned matter URLs,
+  the eighteenth session's unfiled-call visibility fix (confirmed STAFF
+  still can't see unfiled call content even with the filter forced to
+  `unfiled`, while ADMIN can), and firm-wide Tasks/Calendar/Discovery/
+  Communications/Reports scoping (including a forged `matterId` on Reports
+  returning zero leaked rows) — all matched documented behavior.
+- Document/Discovery authenticated downloads confirmed to return a
+  uniform 404 for every failure mode (no access, wrong matter, content
+  never stored) per `docs/SECURITY.md`'s "can't be used to probe for what
+  exists" design — verified against seed rows that predate real file
+  storage (documented in `prisma/seed.ts`) rather than a real upload.
+- **Not exercised this pass:** Client/Matter create/edit, the
+  Archive/Reactivate UI flow, Task/Deadline/CalendarEvent create/edit, and
+  Document upload/download-exact-bytes/edit-metadata. These are all React
+  Server Actions; reconstructing their progressive-enhancement form POST
+  via `curl` hit Turbopack dev mode's "Failed to find Server Action" churn
+  (the action-reference manifest invalidates across recompiles), and no
+  headless-browser tool was available without an approval-gated install.
+  Each has passing unit-level authorization/validation coverage already
+  (`tests/clients/actions.test.ts`, `tests/matters/actions.test.ts`,
+  `tests/documents/actions.test.ts`), but see
+  `docs/PRODUCTION_READINESS.md`'s manual click-check list before
+  go-live.
+
 ## Phase 4 — Discovery management (core differentiator)
 
 - [x] `DiscoveryProduction` and `DiscoveryFile` create. *Real as of the
