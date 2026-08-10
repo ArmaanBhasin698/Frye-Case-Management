@@ -116,11 +116,21 @@ enum AuditAction {
   EXPORT
 }
 
+enum MfaTicketPurpose {
+  MFA_PENDING
+  MFA_VERIFIED
+  MFA_ENROLLMENT
+}
+
 // --- Core entities ---------------------------------------------------------
 
-/// Firm staff account. Authentication is not wired up yet (Phase 1 of
-/// docs/ROADMAP.md) — these rows exist today so seed data can attribute
-/// notes, tasks, uploads, and audit events to a real "who did this."
+/// Firm staff account. `passwordHash` is the first authentication factor;
+/// `mfaEnabled`/`totpSecretEncrypted`/etc. back an optional TOTP second
+/// factor (see lib/auth/mfa/). `mfaRequired` is intentionally separate from
+/// `mfaEnabled` so the login flow can tell "not required" apart from
+/// "required but not yet enrolled" and route a required-but-unenrolled user
+/// into forced setup instead of either granting access or issuing a
+/// challenge it can't yet answer.
 model User {
   id           String   @id @default(cuid())
   email        String   @unique
@@ -130,6 +140,27 @@ model User {
   active       Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+
+  /// Set true only after a successful enrollment confirmation
+  /// (lib/auth/mfa/actions.ts) — never set directly.
+  mfaEnabled  Boolean @default(false)
+  /// Whether this account must enroll in MFA, independent of whether it
+  /// has done so yet.
+  mfaRequired Boolean @default(false)
+  /// AES-256-GCM ciphertext ("iv:authTag:ciphertext", base64) of the TOTP
+  /// secret, keyed from MFA_ENCRYPTION_KEY. Null until enrollment is
+  /// confirmed; never stored or logged in plaintext.
+  totpSecretEncrypted String?
+  /// Last TOTP time-step successfully consumed, so a captured still-valid
+  /// code can't be replayed within its own window (lib/auth/mfa/totp.ts
+  /// enforces this with an atomic conditional update).
+  totpLastUsedStep Int?
+  /// Consecutive failed second-factor attempts since the last success;
+  /// resets to 0 on success. Backs the MFA-step lockout below.
+  mfaFailedAttempts Int @default(0)
+  /// Set once mfaFailedAttempts crosses the lockout threshold; further
+  /// second-factor attempts are refused until this time passes.
+  mfaLockedUntil DateTime?
 
   assignments              MatterAssignment[]
   assignedTasks            Task[]                @relation("TaskAssignee")
@@ -141,6 +172,50 @@ model User {
   auditEvents              AuditEvent[]
   archivedClients          Client[]              @relation("ClientArchivedBy")
   archivedMatters          Matter[]              @relation("MatterArchivedBy")
+  mfaRecoveryCodes         MfaRecoveryCode[]
+  mfaChallengeTickets      MfaChallengeTicket[]
+}
+
+/// One-time-use recovery code for bypassing a lost TOTP device. Codes are
+/// shown to the user exactly once, at generation time; only a bcrypt hash
+/// is persisted (see lib/auth/mfa/recovery-codes.ts) — plaintext never
+/// touches the database, logs, or audit metadata. `used` flips exactly
+/// once, guarded by a `WHERE used = false` update, so concurrent
+/// redemption attempts can't double-spend the same code.
+model MfaRecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash  String
+  used      Boolean   @default(false)
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+/// Short-lived, single-use server-side state for the parts of the MFA flow
+/// that happen before a real application session exists (password verified,
+/// awaiting second factor; second factor verified, awaiting signIn) or that
+/// must not touch the User row until confirmed (in-progress enrollment).
+/// The browser only ever holds a signed reference to a row's `id`
+/// (lib/auth/mfa/tickets.ts) — this table, not the cookie, is the
+/// authoritative record of validity, and consumption is an atomic
+/// `WHERE consumedAt IS NULL AND expiresAt > now()` update so a ticket
+/// cannot be used twice even under concurrent requests. `payload` holds the
+/// encrypted pending TOTP secret for MFA_ENROLLMENT tickets only; it is
+/// null for every other purpose.
+model MfaChallengeTicket {
+  id         String           @id @default(cuid())
+  userId     String
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purpose    MfaTicketPurpose
+  payload    String?
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime         @default(now())
+
+  @@index([userId, purpose])
 }
 
 /// A person or entity the firm represents. One Client can have multiple

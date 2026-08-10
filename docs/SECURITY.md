@@ -13,7 +13,11 @@ following pieces of it are **actually implemented**, not just planned:
 
 - **Authentication** via Auth.js (NextAuth v5), credentials provider,
   session-based (JWT) — see "Authentication" below for what's real vs.
-  still open (MFA, rate limiting, HTTPS).
+  still open (rate limiting on the password step, HTTPS).
+- **TOTP-based MFA/2FA**, for fictional development accounts only (no real
+  staff account exists yet) — see "MFA/2FA status" below for the full
+  design, what's enforced server-side, and what's still deferred
+  (admin-assisted reset, org-wide required-MFA rollout).
 - **Matter-level authorization**, enforced server-side in
   `app/(dashboard)/matters/[matterId]/layout.tsx` and in every cross-matter
   query in `lib/dashboard/queries.ts` / `lib/matters/queries.ts` — see
@@ -67,10 +71,15 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
   folder convention, encrypted-at-rest token storage, monitoring) — see
   "Third-party integrations" below. What exists now is a development/test
   integration behind the same interface, not that.
-- No MFA, no rate limiting on failed logins, no forced sign-out on
-  role/assignment change (see "Authentication" and "Security hardening
-  pass (eighteenth session)" below for exactly what's required to close
-  each of these before real staff accounts go live).
+- No rate limiting on failed *password* attempts (the MFA code-entry step
+  now has its own DB-backed lockout — see "MFA/2FA status" and "Rate
+  limiting status" below), no forced sign-out on role/assignment change
+  (see "Authentication" and "Security hardening pass (eighteenth session)"
+  below for exactly what's required to close each of these before real
+  staff accounts go live).
+- No admin-assisted MFA reset for a user who has lost both their
+  authenticator and every recovery code — deliberately deferred (see "MFA/
+  2FA status" below for why).
 - No HTTPS enforcement (this is a local-dev prototype; see
   `AuthConfig.trustHost` in `lib/auth/config.ts`, which is itself a
   dev-only convenience that needs revisiting before any real deployment).
@@ -94,9 +103,14 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
 
 ## Secrets & configuration
 
-- All credentials (database URL, auth secret, Dropbox app key/secret/
-  refresh token, and future API keys for Vonage/QuickBooks/Loop) live in
-  environment variables, never in code or committed files.
+- All credentials (database URL, auth secret, `MFA_ENCRYPTION_KEY`, Dropbox
+  app key/secret/refresh token, and future API keys for
+  Vonage/QuickBooks/Loop) live in environment variables, never in code or
+  committed files. `MFA_ENCRYPTION_KEY` is deliberately a separate secret
+  from `AUTH_SECRET` — it's HKDF-split (`lib/auth/mfa/crypto.ts`) into a
+  subkey that encrypts TOTP secrets at rest and a subkey that signs MFA
+  challenge/enrollment ticket references, so rotating session signing and
+  rotating MFA secrets are independent operations.
 - `.env`, `.env.local`, `.env*.local` and similar are gitignored. Only
   `.env.example` (placeholders, no real values) is committed.
 - If a secret is ever accidentally committed, it must be rotated
@@ -140,12 +154,10 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
   database session strategy (a session row per login, revocable by
   deleting it) — a larger, deliberate architecture change, not something to
   do incidentally alongside an unrelated feature.
-- Design the auth flow so multi-factor authentication (TOTP) can be added
-  later without restructuring. **Not implemented** — no MFA yet, but
-  nothing in the current design blocks adding it (Auth.js supports
-  additional verification steps without a rewrite). **Required before any
-  real staff account is created** (see "MFA/2FA status" below for exactly
-  what that requires).
+- TOTP-based MFA, additive to the existing Credentials-provider flow.
+  **Implemented, for fictional development accounts only** — see "MFA/2FA
+  status" below for the full design and what's still deferred before any
+  real staff account can use it.
 - Failed login attempts are logged and rate-limited to slow credential
   stuffing/brute force. **Not implemented.** Failed `authorize()` calls
   currently just return `null` (Auth.js shows a generic error) with no
@@ -160,24 +172,91 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
 
 ### MFA/2FA status
 
-Not implemented, and deliberately not attempted in the eighteenth session's
-hardening pass (explicitly out of scope for that pass — this is staff/
-infrastructure work, not a code-only fix). Before any real staff account is
-created:
+**Implemented, for fictional development/demo accounts only** — no real
+Frye staff account has been created, and this feature must not be used with
+real accounts or real case data until the deferred items below are
+resolved. See `lib/auth/mfa/` and `prisma/schema.prisma`'s `User`/
+`MfaRecoveryCode`/`MfaChallengeTicket` models.
 
-- Add a TOTP (authenticator app) second factor to the Credentials sign-in
-  flow — Auth.js's Credentials provider supports an extra verification step
-  without restructuring the current `authorize()` flow; this is additive,
-  not a rewrite.
-- Decide and document an account-recovery path for a lost second factor
-  (e.g., admin-issued reset) before enabling MFA, so a locked-out attorney
-  doesn't become an outage.
-- Roll out to every real staff account before that account is used with
-  real case data — not optional, not phased in gradually per-user.
+**Design.** `User.mfaEnabled` and `User.mfaRequired` are intentionally
+separate: `mfaRequired` marks an account that must enroll, independent of
+whether it has done so yet, so the login flow can route a
+required-but-unenrolled account into forced setup
+(`/login/mfa/setup`) instead of either granting access or issuing a
+challenge it can't answer. `mfaEnabled` is set true only after a real TOTP
+code is confirmed at the end of enrollment.
+
+**How a password-only session is prevented.** The Credentials provider's
+`authorize()` (`lib/auth/config.ts`) refuses to complete sign-in whenever
+`mfaEnabled || mfaRequired` is true, regardless of how the request was
+made — the login Server Action never even calls `signIn` for such an
+account. The only other path that can complete sign-in is a second,
+internal-only Credentials provider (`mfa-complete`), whose sole credential
+is a challenge-ticket id that (a) is minted server-side only immediately
+after a real TOTP or recovery-code check succeeds, (b) is HMAC-signed
+(`lib/auth/mfa/crypto.ts`, keyed from `MFA_ENCRYPTION_KEY`) so a client
+can't forge or guess one, and (c) can be consumed exactly once — the
+`MfaChallengeTicket` row's `consumedAt IS NULL AND expiresAt > now()`
+condition is enforced as a single atomic conditional `UPDATE`, not a
+read-then-write check, so even two concurrent requests presenting the same
+ticket can't both succeed. No client-supplied field is ever trusted as "MFA
+passed" — that fact is only ever derived from a database check.
+
+**Enrollment.** A TOTP secret is generated and held only in an
+`MfaChallengeTicket` (purpose `MFA_ENROLLMENT`, encrypted, short-lived) —
+never written to the `User` row until a current code confirms it, so an
+abandoned enrollment leaves no trace. Confirmation also generates 10
+recovery codes, shown exactly once; only their bcrypt hashes are persisted
+(`MfaRecoveryCode`). Enrollment happens either from an existing session
+(`/account/security`, voluntary) or pre-session (`/login/mfa/setup`, when
+`mfaRequired && !mfaEnabled`) — both share the same confirmation logic in
+`lib/auth/mfa/actions.ts`.
+
+**Login challenge.** `/login/mfa` accepts a current TOTP code or an unused
+recovery code. TOTP replay is prevented by `User.totpLastUsedStep`: the
+library's `afterTimeStep` option rejects a code from an already-used time
+step, and the step is recorded via the same atomic conditional `UPDATE`
+pattern as ticket consumption, so a captured still-valid code can't be
+replayed even by a concurrent request. Recovery codes are single-use for
+the identical reason — redemption is a conditional `UPDATE ... WHERE
+used = false`.
+
+**Rate limiting on the MFA step.** `User.mfaFailedAttempts`/
+`mfaLockedUntil` lock further second-factor attempts for 15 minutes after 5
+consecutive failures — DB-backed, not an in-memory counter (see "Rate
+limiting status" below for why that distinction matters). This covers only
+the code-entry step; the password step's rate-limiting gap is unchanged
+and unrelated (still open, see below).
+
+**Deferred — required before any real staff account uses this:**
+
+- **Admin-assisted reset.** There is currently no way to recover an account
+  that has lost both its authenticator and every recovery code, other than
+  a developer manually clearing its MFA columns. Building an in-app
+  admin-reset action is explicitly *not* attempted here: it is, by
+  construction, a designed bypass of the entire second factor, and its
+  actual safety would depend entirely on off-platform identity
+  verification (a firm policy/process decision) that no amount of code can
+  enforce. This needs a firm decision on that process before it's built,
+  not just an engineering task.
+- **Required-MFA rollout mechanism.** `mfaRequired` exists in the schema
+  and the login-routing logic honors it, but there is no admin UI yet to
+  set it on a real account. Before real staff enrollment, decide whether
+  MFA is mandatory firm-wide (set `mfaRequired` on every real account
+  before it's used) or opt-in, and build whatever minimal tooling that
+  decision needs.
+- **`MFA_ENCRYPTION_KEY` secret handling.** Currently a `.env` value like
+  every other secret in this phase (see "Secrets & configuration" above);
+  revisit alongside every other secret before real deployment.
 
 ### Rate limiting status
 
-Not implemented. No in-memory/fake limiter was built as a placeholder — a
+Not implemented **for the password step**. (The MFA code-entry step now has
+its own DB-backed lockout — `User.mfaFailedAttempts`/`mfaLockedUntil`, 5
+attempts / 15 minutes — see "MFA/2FA status" above. That was built
+DB-backed specifically because of the in-memory-counter problem described
+below; it does not extend to `/login`'s password field.) No in-memory/fake
+limiter was built as a placeholder for the password step — a
 per-process in-memory counter would silently stop working the moment the
 app runs behind more than one instance or restarts (a redeploy would reset
 every counter to zero), which is worse than no limiter at all if anyone
@@ -701,4 +780,6 @@ Even at small scale, once real data is in the system:
 - Backup and disaster-recovery plan with tested restores.
 - Whether encryption-at-rest at the application layer (beyond disk/DB-level
   encryption) is needed for particularly sensitive fields.
-- MFA rollout plan for all staff accounts.
+- MFA rollout plan for all real staff accounts, including the
+  admin-assisted-reset and required-MFA-rollout decisions tracked under
+  "MFA/2FA status" above.

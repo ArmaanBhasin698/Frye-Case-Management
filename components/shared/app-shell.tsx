@@ -182,16 +182,22 @@ export function AppShell({
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="hidden text-right sm:block">
-              <p className="text-sm font-medium leading-none text-foreground">{user.name}</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">{roleLabel(user.role)}</p>
-            </div>
-            <Badge variant="outline" className="sm:hidden">
-              {roleLabel(user.role)}
-            </Badge>
-            <Avatar className="h-8 w-8">
-              <AvatarFallback>{initials(user.name ?? user.email ?? "?")}</AvatarFallback>
-            </Avatar>
+            <Link
+              href="/account/security"
+              className="flex items-center gap-3 rounded-md px-1 py-1 hover:bg-accent"
+              title="Two-factor authentication settings"
+            >
+              <div className="hidden text-right sm:block">
+                <p className="text-sm font-medium leading-none text-foreground">{user.name}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">{roleLabel(user.role)}</p>
+              </div>
+              <Badge variant="outline" className="sm:hidden">
+                {roleLabel(user.role)}
+              </Badge>
+              <Avatar className="h-8 w-8">
+                <AvatarFallback>{initials(user.name ?? user.email ?? "?")}</AvatarFallback>
+              </Avatar>
+            </Link>
             <LogoutButton />
           </div>
         </header>
