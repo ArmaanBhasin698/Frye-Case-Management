@@ -13,6 +13,7 @@ import type { DiscoveryFileType } from "@prisma/client";
 
 import { getMatterDiscoveryComparisons, getMatterDiscoveryProductions } from "@/lib/matters/queries";
 import {
+  asCalendarDate,
   discoveryFileTypeLabel,
   discoveryMatchStatusLabel,
   discoveryMatchStatusVariant,
@@ -115,7 +116,7 @@ export default async function MatterDiscoveryPage({
               <div>
                 <CardTitle>{production.label}</CardTitle>
                 <CardDescription>
-                  Received {format(production.receivedDate, "MMM d, yyyy")}
+                  Received {format(asCalendarDate(production.receivedDate), "MMM d, yyyy")}
                   {production.source ? ` from ${production.source}` : ""}
                   {production.batesPrefix && production.batesStart && production.batesEnd
                     ? ` · Bates ${production.batesPrefix}${String(production.batesStart).padStart(

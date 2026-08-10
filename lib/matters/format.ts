@@ -14,6 +14,25 @@ import type {
 } from "@prisma/client";
 import type { BadgeProps } from "@/components/ui/badge";
 
+/**
+ * Date-only fields (Deadline.date, Task.dueDate, Matter.openedDate/
+ * closedDate, Client.dateOfBirth, DiscoveryProduction.receivedDate) are
+ * written from a `<input type="date">` value via `new Date("2026-08-10")`,
+ * which the ECMA-262 date-only grammar parses as UTC midnight — the column
+ * holds an instant, but the app only ever cares about its calendar day.
+ * date-fns' `format`/`isPast`/`isToday`/`differenceInCalendarDays` all read
+ * the *local* wall-clock day, which is the previous day in any time zone
+ * behind UTC. Re-anchoring the stored instant's UTC year/month/day to local
+ * midnight before handing it to date-fns makes those calls render the same
+ * calendar day that was selected, regardless of server/browser time zone.
+ * Never use this on a true instant (CalendarEvent start/end times, call
+ * times, createdAt/updatedAt, audit timestamps) — those must keep reading
+ * in local time.
+ */
+export function asCalendarDate(date: Date): Date {
+  return new Date(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+}
+
 export function formatClientName(client: { firstName: string; lastName: string }) {
   return `${client.firstName} ${client.lastName}`;
 }

@@ -5,6 +5,7 @@ import type { TaskPriority, TaskStatus } from "@prisma/client";
 import { getFirmWideTasks, type FirmTaskFilters, type FirmTaskSort } from "@/lib/tasks/queries";
 import { listAssignableUsers, listMatters } from "@/lib/matters/queries";
 import {
+  asCalendarDate,
   formatClientName,
   matterTitle,
   taskPriorityLabel,
@@ -129,8 +130,8 @@ export default async function FirmTasksPage({
                     task.dueDate &&
                     task.status !== "DONE" &&
                     task.status !== "CANCELLED" &&
-                    isPast(task.dueDate) &&
-                    !isToday(task.dueDate);
+                    isPast(asCalendarDate(task.dueDate)) &&
+                    !isToday(asCalendarDate(task.dueDate));
                   return (
                     <TableRow key={task.id}>
                       <TableCell>
@@ -165,7 +166,7 @@ export default async function FirmTasksPage({
                             : "text-sm text-muted-foreground"
                         }
                       >
-                        {task.dueDate ? format(task.dueDate, "MMM d, yyyy") : "No due date"}
+                        {task.dueDate ? format(asCalendarDate(task.dueDate), "MMM d, yyyy") : "No due date"}
                         {overdueRow ? " · Overdue" : ""}
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">

@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { updateClient, type FormActionState } from "@/lib/clients/actions";
+import { asCalendarDate } from "@/lib/matters/format";
 
 type EditableClient = {
   id: string;
@@ -45,7 +46,7 @@ export function EditClientForm({ client }: { client: EditableClient }) {
             id="edit-client-dateOfBirth"
             name="dateOfBirth"
             type="date"
-            defaultValue={client.dateOfBirth ? format(client.dateOfBirth, "yyyy-MM-dd") : ""}
+            defaultValue={client.dateOfBirth ? format(asCalendarDate(client.dateOfBirth), "yyyy-MM-dd") : ""}
           />
         </div>
         <div className="space-y-1.5">

@@ -13,6 +13,7 @@ import {
   getMatterTasks,
 } from "@/lib/matters/queries";
 import {
+  asCalendarDate,
   assignmentRoleLabel,
   auditActionPastTense,
   calendarEventTypeLabel,
@@ -58,7 +59,13 @@ export default async function MatterOverviewPage({
   const keyDates: KeyDate[] = [
     ...deadlines
       .filter((d) => !d.satisfied && d.date >= now)
-      .map((d) => ({ kind: "deadline" as const, id: d.id, date: d.date, title: d.description, deadlineType: d.type })),
+      .map((d) => ({
+        kind: "deadline" as const,
+        id: d.id,
+        date: asCalendarDate(d.date),
+        title: d.description,
+        deadlineType: d.type,
+      })),
     ...events
       .filter((e) => e.startTime >= now)
       .map((e) => ({

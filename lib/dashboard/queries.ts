@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { matterIdFilterFor, matterScopeFilterFor } from "@/lib/auth/access";
 import type { AuthorizableUser } from "@/lib/auth/authorization";
 import { getCallVisibilityFilter } from "@/lib/communications/queries";
+import { asCalendarDate } from "@/lib/matters/format";
 
 /**
  * Cross-matter aggregate reads for the firm-wide dashboard home page.
@@ -92,7 +93,7 @@ export async function getUpcomingKeyDates(user: AuthorizableUser, limit = 6): Pr
     ...deadlines.map((d) => ({
       kind: "deadline" as const,
       id: d.id,
-      date: d.date,
+      date: asCalendarDate(d.date),
       title: d.description,
       deadlineType: d.type,
       matter: d.matter,

@@ -19,6 +19,7 @@ import {
   getUpcomingKeyDates,
 } from "@/lib/dashboard/queries";
 import {
+  asCalendarDate,
   calendarEventTypeLabel,
   deadlineTypeLabel,
   discoveryReviewStatusLabel,
@@ -149,7 +150,7 @@ export default async function DashboardPage() {
                         </Badge>
                         {task.dueDate && (
                           <span className="text-xs text-muted-foreground">
-                            {format(task.dueDate, "MMM d")}
+                            {format(asCalendarDate(task.dueDate), "MMM d")}
                           </span>
                         )}
                       </div>
@@ -222,7 +223,7 @@ export default async function DashboardPage() {
                       </div>
                       <p className="text-xs text-muted-foreground">
                         {matterTitle(production.matter)} &middot; {production.files.length} files
-                        &middot; received {format(production.receivedDate, "MMM d, yyyy")}
+                        &middot; received {format(asCalendarDate(production.receivedDate), "MMM d, yyyy")}
                       </p>
                     </li>
                   ))}
