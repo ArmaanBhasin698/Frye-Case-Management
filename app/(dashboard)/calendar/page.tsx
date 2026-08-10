@@ -82,7 +82,7 @@ export default async function FirmCalendarPage({
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Calendar</h1>
+        <h1 className="page-title">Calendar</h1>
         <p className="text-sm text-muted-foreground">
           Firm-wide deadlines and calendar events across every matter you have access to — an aggregate
           view over each matter&apos;s own Deadlines &amp; Calendar tab, not a separate record.

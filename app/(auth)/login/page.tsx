@@ -1,6 +1,5 @@
-import { Scale } from "lucide-react";
-
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Logo } from "@/components/shared/logo";
 import { LoginForm } from "./login-form";
 
 export default async function LoginPage({
@@ -13,12 +12,10 @@ export default async function LoginPage({
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted/30 p-4">
       <div className="w-full max-w-sm space-y-6">
-        <div className="flex flex-col items-center gap-2 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground">
-            <Scale className="h-6 w-6" />
-          </div>
+        <div className="flex flex-col items-center gap-3 text-center">
+          <Logo size="lg" />
           <div>
-            <h1 className="text-lg font-semibold text-foreground">Frye Law Group</h1>
+            <h1 className="font-serif text-lg font-semibold text-foreground">Frye Law Group</h1>
             <p className="text-sm text-muted-foreground">Case Management</p>
           </div>
         </div>

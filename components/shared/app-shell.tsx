@@ -12,7 +12,6 @@ import {
   LayoutDashboard,
   Menu,
   Phone,
-  Scale,
   Users,
 } from "lucide-react";
 
@@ -20,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { LogoutButton } from "@/components/shared/logout-button";
+import { Logo } from "@/components/shared/logo";
 import type { SessionUser } from "@/lib/auth/session";
 
 function initials(name: string) {
@@ -77,12 +77,11 @@ function SidebarContent({ role, onNavigate }: { role: string; onNavigate?: () =>
 
   return (
     <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
-      <div className="flex items-center gap-2 border-b border-sidebar-border px-4 py-5">
-        <Scale className="h-6 w-6 shrink-0" />
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold leading-none">Frye Law Group</p>
-          <p className="mt-1 text-xs text-sidebar-foreground/60">Case Management</p>
+      <div className="flex items-center gap-2.5 border-b border-sidebar-border px-4 py-4">
+        <div className="shrink-0 rounded-md bg-white p-1.5">
+          <Logo size="sm" />
         </div>
+        <p className="truncate text-xs text-sidebar-foreground/60">Case Management</p>
       </div>
 
       <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-4">
@@ -104,7 +103,7 @@ function SidebarContent({ role, onNavigate }: { role: string; onNavigate?: () =>
                   <Icon className="h-4 w-4" />
                   {item.label}
                 </span>
-                <span className="rounded-full bg-sidebar-accent px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sidebar-foreground/60">
+                <span className="rounded-full bg-sidebar-border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sidebar-foreground/60">
                   {item.disabledBadge ?? "Soon"}
                 </span>
               </div>
@@ -176,7 +175,8 @@ export function AppShell({
             >
               <Menu className="h-5 w-5" />
             </button>
-            <p className="hidden text-sm font-medium text-muted-foreground sm:block">
+            <Logo size="sm" className="md:hidden" />
+            <p className="hidden text-sm font-medium text-muted-foreground sm:block md:hidden">
               Internal case management
             </p>
           </div>

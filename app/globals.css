@@ -4,43 +4,48 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    /* Warm off-white — reads as paper/stationery rather than a screen-blue white. */
+    --background: 37.5 50% 96.9%;
+    --foreground: 22.5 12.5% 12.5%;
 
+    /* Cards sit on pure white so they lift slightly off the warm page background. */
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 22.5 12.5% 12.5%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
+    --popover-foreground: 22.5 12.5% 12.5%;
 
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
+    /* Deep brick/courtroom red — primary brand accent. */
+    --primary: 4.4 50.6% 31.8%;
+    --primary-foreground: 37.5 50% 96.9%;
 
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
+    /* Muted gold/tan — restrained secondary accent (e.g. "Archived" tags). */
+    --secondary: 39 47.3% 59.8%;
+    --secondary-foreground: 22.5 12.5% 12.5%;
 
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
+    --muted: 35.3 37.8% 91.2%;
+    --muted-foreground: 31.8 10.2% 32.7%;
 
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    --accent: 35.3 37.8% 91.2%;
+    --accent-foreground: 22.5 12.5% 12.5%;
 
-    --destructive: 0 72.2% 50.6%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 3.2 71.3% 41%;
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
+    --border: 36 29.4% 86.7%;
+    --input: 36 29.4% 86.7%;
+    --ring: 4.4 50.6% 31.8%;
 
-    --radius: 0.5rem;
+    --radius: 0.375rem;
 
-    /* Sidebar gets its own dark navy palette so the app shell reads as a
-       professional firm tool, independent of the (light) content theme. */
-    --sidebar-background: 222.2 47.4% 11.2%;
-    --sidebar-foreground: 210 40% 96.1%;
-    --sidebar-border: 217.2 32.6% 20%;
-    --sidebar-accent: 217.2 32.6% 17.5%;
-    --sidebar-accent-foreground: 210 40% 98%;
+    /* Sidebar gets its own near-black charcoal palette so the app shell reads
+       as a professional firm tool, independent of the (light) content theme.
+       Active nav state uses the brand's brick red rather than a generic tint. */
+    --sidebar-background: 22.5 13.8% 11.4%;
+    --sidebar-foreground: 37.5 50% 96.9%;
+    --sidebar-border: 25.7 13.7% 20%;
+    --sidebar-accent: 4.4 50.6% 31.8%;
+    --sidebar-accent-foreground: 0 0% 100%;
   }
 }
 
@@ -50,5 +55,17 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+@layer components {
+  /* Shared page-level heading treatment — selective serif influence for
+     top-level titles, kept off dense operational UI (tables, cards, badges)
+     so readability there stays purely sans-serif. */
+  .page-title {
+    @apply font-serif text-2xl font-semibold tracking-tight text-foreground;
+  }
+  .page-description {
+    @apply text-sm text-muted-foreground;
   }
 }

@@ -35,7 +35,7 @@ export default async function ClientsPage({
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Clients</h1>
+          <h1 className="page-title">Clients</h1>
           <p className="text-sm text-muted-foreground">
             {clients.length} {clients.length === 1 ? "client" : "clients"}
             {view === "archived" ? " archived." : " on file."}

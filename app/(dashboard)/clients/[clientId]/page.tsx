@@ -37,7 +37,7 @@ export default async function ClientDetailPage({
             &larr; All clients
           </Link>
           <div className="mt-1 flex flex-wrap items-center gap-2">
-            <h1 className="text-2xl font-semibold tracking-tight">{formatClientName(client)}</h1>
+            <h1 className="page-title">{formatClientName(client)}</h1>
             {client.archived && <Badge variant="secondary">Archived</Badge>}
           </div>
           {client.archived && client.archivedAt && (
