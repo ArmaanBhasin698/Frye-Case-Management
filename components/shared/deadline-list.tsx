@@ -6,7 +6,7 @@ import { format } from "date-fns";
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
 import type { DeadlineType } from "@prisma/client";
 
-import { deadlineTypeLabel } from "@/lib/matters/format";
+import { asCalendarDate, deadlineTypeLabel } from "@/lib/matters/format";
 import { setDeadlineSatisfied, updateDeadline, type FormActionState } from "@/lib/matters/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -36,12 +36,16 @@ function DeadlineEditForm({
   onDone: () => void;
 }) {
   const [state, formAction, isPending] = useActionState(updateDeadline, INITIAL_STATE);
-  const [prevState, setPrevState] = React.useState(state);
 
-  if (state !== prevState) {
-    setPrevState(state);
-    if (!state.error) onDone();
-  }
+  // Call onDone from an effect, not during render — the state transition
+  // means the update already committed, and this component's parent owns
+  // `editing`, so we can't update it synchronously while this component
+  // is still rendering.
+  React.useEffect(() => {
+    if (state !== INITIAL_STATE && !state.error) {
+      onDone();
+    }
+  }, [state, onDone]);
 
   return (
     <form action={formAction} className="space-y-3">
@@ -75,7 +79,7 @@ function DeadlineEditForm({
             name="date"
             type="date"
             required
-            defaultValue={format(deadline.date, "yyyy-MM-dd")}
+            defaultValue={format(asCalendarDate(deadline.date), "yyyy-MM-dd")}
           />
         </div>
         <div className="space-y-1.5">
@@ -148,7 +152,7 @@ function DeadlineRow({ matterId, deadline }: { matterId: string; deadline: Deadl
           <div>
             <p className="text-sm font-medium text-foreground">{deadline.description}</p>
             <p className="text-xs text-muted-foreground">
-              {deadlineTypeLabel(deadline.type)} &middot; {format(deadline.date, "MMM d, yyyy")}
+              {deadlineTypeLabel(deadline.type)} &middot; {format(asCalendarDate(deadline.date), "MMM d, yyyy")}
             </p>
             {error && (
               <p className="mt-1 text-xs font-medium text-destructive" role="alert">

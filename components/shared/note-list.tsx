@@ -30,12 +30,16 @@ function NoteEditForm({
   onDone: () => void;
 }) {
   const [state, formAction, isPending] = useActionState(updateNote, INITIAL_STATE);
-  const [prevState, setPrevState] = React.useState(state);
 
-  if (state !== prevState) {
-    setPrevState(state);
-    if (!state.error) onDone();
-  }
+  // Call onDone from an effect, not during render — the state transition
+  // means the update already committed, and this component's parent owns
+  // `editing`, so we can't update it synchronously while this component
+  // is still rendering.
+  React.useEffect(() => {
+    if (state !== INITIAL_STATE && !state.error) {
+      onDone();
+    }
+  }, [state, onDone]);
 
   return (
     <form action={formAction} className="space-y-2">

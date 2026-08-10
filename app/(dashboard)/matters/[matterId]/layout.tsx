@@ -5,6 +5,7 @@ import { format } from "date-fns";
 
 import { getMatterHeader } from "@/lib/matters/queries";
 import {
+  asCalendarDate,
   assignmentRoleLabel,
   formatClientName,
   matterStatusLabel,
@@ -77,8 +78,8 @@ export default async function MatterLayout({
           <div className="text-right text-sm text-muted-foreground">
             <p>Client: {formatClientName(matter.client)}</p>
             <p>
-              Opened {format(matter.openedDate, "MMM d, yyyy")}
-              {matter.closedDate ? ` · Closed ${format(matter.closedDate, "MMM d, yyyy")}` : ""}
+              Opened {format(asCalendarDate(matter.openedDate), "MMM d, yyyy")}
+              {matter.closedDate ? ` · Closed ${format(asCalendarDate(matter.closedDate), "MMM d, yyyy")}` : ""}
             </p>
             {matter.assignments.length > 0 && (
               <p>

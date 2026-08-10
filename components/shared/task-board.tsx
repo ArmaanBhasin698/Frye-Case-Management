@@ -6,7 +6,7 @@ import { format, isPast, isToday } from "date-fns";
 import type { TaskPriority, TaskStatus } from "@prisma/client";
 
 import { cn } from "@/lib/utils";
-import { taskPriorityLabel } from "@/lib/matters/format";
+import { asCalendarDate, taskPriorityLabel } from "@/lib/matters/format";
 import { updateTask, updateTaskStatus, type FormActionState } from "@/lib/matters/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -146,12 +146,16 @@ function TaskEditForm({
   onDone: () => void;
 }) {
   const [state, formAction, isPending] = useActionState(updateTask, INITIAL_STATE);
-  const [prevState, setPrevState] = React.useState(state);
 
-  if (state !== prevState) {
-    setPrevState(state);
-    if (!state.error) onDone();
-  }
+  // Call onDone from an effect, not during render — the state transition
+  // means the update already committed, and this component's parent owns
+  // `editing`, so we can't update it synchronously while this component
+  // is still rendering.
+  React.useEffect(() => {
+    if (state !== INITIAL_STATE && !state.error) {
+      onDone();
+    }
+  }, [state, onDone]);
 
   return (
     <form
@@ -190,7 +194,7 @@ function TaskEditForm({
             id={`task-dueDate-${task.id}`}
             name="dueDate"
             type="date"
-            defaultValue={task.dueDate ? format(task.dueDate, "yyyy-MM-dd") : ""}
+            defaultValue={task.dueDate ? format(asCalendarDate(task.dueDate), "yyyy-MM-dd") : ""}
           />
         </div>
         <div className="space-y-1">
@@ -267,8 +271,8 @@ function TaskCard({
     task.dueDate &&
     task.status !== "DONE" &&
     task.status !== "CANCELLED" &&
-    isPast(task.dueDate) &&
-    !isToday(task.dueDate);
+    isPast(asCalendarDate(task.dueDate)) &&
+    !isToday(asCalendarDate(task.dueDate));
 
   if (editing) {
     return (
@@ -325,7 +329,7 @@ function TaskCard({
           {task.dueDate && (
             <span className={cn("text-xs", overdue ? "font-medium text-destructive" : "text-muted-foreground")}>
               {overdue ? "Overdue " : ""}
-              {format(task.dueDate, "MMM d")}
+              {format(asCalendarDate(task.dueDate), "MMM d")}
             </span>
           )}
         </div>

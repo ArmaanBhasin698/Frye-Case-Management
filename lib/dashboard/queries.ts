@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { matterIdFilterFor, matterScopeFilterFor } from "@/lib/auth/access";
 import type { AuthorizableUser } from "@/lib/auth/authorization";
 import { getCallVisibilityFilter } from "@/lib/communications/queries";
+import { asCalendarDate, todayAsStoredDate } from "@/lib/matters/format";
 
 /**
  * Cross-matter aggregate reads for the firm-wide dashboard home page.
@@ -31,7 +32,7 @@ export async function getDashboardStats(user: AuthorizableUser) {
     await Promise.all([
       prisma.matter.count({ where: { ...matterWhere, status: { in: ["OPEN", "PENDING"] } } }),
       prisma.task.count({ where: { ...scopeWhere, status: { in: ["OPEN", "IN_PROGRESS"] } } }),
-      prisma.deadline.count({ where: { ...scopeWhere, satisfied: false, date: { gte: now } } }),
+      prisma.deadline.count({ where: { ...scopeWhere, satisfied: false, date: { gte: todayAsStoredDate() } } }),
       prisma.calendarEvent.count({ where: { ...scopeWhere, startTime: { gte: now } } }),
       callVisibility.mayViewUnfiled ? prisma.call.count({ where: { matterId: null } }) : 0,
     ]);
@@ -75,7 +76,7 @@ export async function getUpcomingKeyDates(user: AuthorizableUser, limit = 6): Pr
 
   const [deadlines, events] = await Promise.all([
     prisma.deadline.findMany({
-      where: { ...scopeWhere, satisfied: false, date: { gte: now } },
+      where: { ...scopeWhere, satisfied: false, date: { gte: todayAsStoredDate() } },
       include: { matter: { include: { client: true } } },
       orderBy: { date: "asc" },
       take: limit,
@@ -92,7 +93,7 @@ export async function getUpcomingKeyDates(user: AuthorizableUser, limit = 6): Pr
     ...deadlines.map((d) => ({
       kind: "deadline" as const,
       id: d.id,
-      date: d.date,
+      date: asCalendarDate(d.date),
       title: d.description,
       deadlineType: d.type,
       matter: d.matter,

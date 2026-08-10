@@ -5,7 +5,13 @@ import { format } from "date-fns";
 import { requireCurrentUser } from "@/lib/auth/session";
 import { assertCanManageClientsAndMatters } from "@/lib/auth/access";
 import { getClientById } from "@/lib/clients/queries";
-import { formatClientName, matterStatusLabel, matterStatusVariant, matterTitle } from "@/lib/matters/format";
+import {
+  asCalendarDate,
+  formatClientName,
+  matterStatusLabel,
+  matterStatusVariant,
+  matterTitle,
+} from "@/lib/matters/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -56,7 +62,7 @@ export default async function ClientDetailPage({
           <CardContent className="space-y-1.5 text-sm">
             <p>
               <span className="text-muted-foreground">Date of birth: </span>
-              {client.dateOfBirth ? format(client.dateOfBirth, "MMM d, yyyy") : "—"}
+              {client.dateOfBirth ? format(asCalendarDate(client.dateOfBirth), "MMM d, yyyy") : "—"}
             </p>
             <p>
               <span className="text-muted-foreground">Email: </span>

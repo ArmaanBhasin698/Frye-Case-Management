@@ -3,6 +3,7 @@ import type { CalendarEventType, DeadlineType, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { matterScopeFilterFor } from "@/lib/auth/access";
 import type { AuthorizableUser } from "@/lib/auth/authorization";
+import { asCalendarDate, todayAsStoredDate } from "@/lib/matters/format";
 
 /**
  * Firm-wide Calendar aggregate query (see CLAUDE.md, section 4.4 and
@@ -60,7 +61,7 @@ export async function getFirmWideCalendarItems(
 
   const deadlineConditions: Prisma.DeadlineWhereInput[] = [scopeWhere];
   if (filters.matterId) deadlineConditions.push({ matterId: filters.matterId });
-  if (!filters.includePast) deadlineConditions.push({ date: { gte: now } });
+  if (!filters.includePast) deadlineConditions.push({ date: { gte: todayAsStoredDate() } });
   if (filters.deadlineStatus) deadlineConditions.push({ satisfied: filters.deadlineStatus === "satisfied" });
 
   const eventConditions: Prisma.CalendarEventWhereInput[] = [scopeWhere];
@@ -88,7 +89,7 @@ export async function getFirmWideCalendarItems(
     ...deadlines.map((d) => ({
       kind: "deadline" as const,
       id: d.id,
-      date: d.date,
+      date: asCalendarDate(d.date),
       title: d.description,
       deadlineType: d.type,
       satisfied: d.satisfied,

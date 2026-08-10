@@ -2,7 +2,13 @@ import Link from "next/link";
 import { format } from "date-fns";
 
 import { listMatters, type MatterListView } from "@/lib/matters/queries";
-import { formatClientName, matterStatusLabel, matterStatusVariant, matterTitle } from "@/lib/matters/format";
+import {
+  asCalendarDate,
+  formatClientName,
+  matterStatusLabel,
+  matterStatusVariant,
+  matterTitle,
+} from "@/lib/matters/format";
 import { requireCurrentUser } from "@/lib/auth/session";
 import { canManageClientsAndMatters } from "@/lib/auth/authorization";
 import { Badge } from "@/components/ui/badge";
@@ -113,7 +119,7 @@ export default async function MattersPage({
                       {matter.assignments.map((a) => a.user.name).join(", ") || "Unassigned"}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {format(matter.openedDate, "MMM d, yyyy")}
+                      {format(asCalendarDate(matter.openedDate), "MMM d, yyyy")}
                     </TableCell>
                   </TableRow>
                 ))}

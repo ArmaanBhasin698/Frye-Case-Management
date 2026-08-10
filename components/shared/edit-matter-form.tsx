@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { updateMatter, type FormActionState } from "@/lib/matters/actions";
+import { asCalendarDate } from "@/lib/matters/format";
 
 type EditableMatter = {
   id: string;
@@ -58,7 +59,7 @@ export function EditMatterForm({ matter }: { matter: EditableMatter }) {
             name="openedDate"
             type="date"
             required
-            defaultValue={format(matter.openedDate, "yyyy-MM-dd")}
+            defaultValue={format(asCalendarDate(matter.openedDate), "yyyy-MM-dd")}
           />
         </div>
         <div className="space-y-1.5">
@@ -67,7 +68,7 @@ export function EditMatterForm({ matter }: { matter: EditableMatter }) {
             id="edit-matter-closedDate"
             name="closedDate"
             type="date"
-            defaultValue={matter.closedDate ? format(matter.closedDate, "yyyy-MM-dd") : ""}
+            defaultValue={matter.closedDate ? format(asCalendarDate(matter.closedDate), "yyyy-MM-dd") : ""}
           />
         </div>
       </div>
