@@ -103,6 +103,20 @@ validation + audit logging on every write — see `docs/SECURITY.md`):
   its matter's own Tasks or Deadlines & Calendar tab for editing — there is
   no separate edit path here. See `docs/ROADMAP.md`'s thirteenth-session
   milestone for the full writeup.
+- **Firm-wide Discovery** — the sidebar's "Discovery" item is now a real,
+  authorized aggregate view (`app/(dashboard)/discovery`,
+  `lib/discovery/queries.ts#getFirmWideDiscoveryFiles`) over the existing
+  per-matter `DiscoveryFile`/`DiscoveryProduction` rows the Discovery/Bates
+  engine already writes — not a second Discovery record or a new upload/
+  download path. An `ADMIN` sees every matter's discovery files, everyone
+  else sees only matters they're assigned to, using the same
+  `matterScopeFilterFor` helper the other firm-wide pages use, nested under
+  `DiscoveryFile`'s `production` relation since `DiscoveryFile` has no
+  `matterId` column of its own. The page supports filtering (matter, file
+  type, review status) and recent/oldest sort, and every row links back to
+  its matter's own Discovery tab rather than duplicating registration,
+  comparison, or authenticated download logic. See `docs/ROADMAP.md`'s
+  fifteenth-session milestone for the full writeup.
 
 See "Demo login credentials" below to sign in, "What's mocked / not
 implemented yet" below for exactly what still isn't real, and
@@ -322,14 +336,13 @@ this password anywhere real** — see `docs/SECURITY.md`.
   historical data with no real stored files behind them — anything created
   through the Discovery tab's UI is real.
 - **Sidebar items other than Dashboard/Matters/Clients/Tasks/Calendar/
-  Communications** (Discovery, Reports) are shown but disabled ("Soon") —
+  Communications/Discovery** (Reports) are shown but disabled ("Soon") —
   present for layout/orientation, not yet functional as their own
-  firm-wide sections (Discovery exists per-matter, under a Matter's tabs).
-  Tasks and Calendar are real firm-wide aggregate views as of the
-  thirteenth session, and Communications as of the fourteenth (see
-  "Current status" above). Clients is real but shown as "Restricted" for
-  `PARALEGAL`/`STAFF` accounts (see "Who can create/edit a Client or
-  Matter" above).
+  firm-wide section. Tasks and Calendar are real firm-wide aggregate views
+  as of the thirteenth session, Communications as of the fourteenth, and
+  Discovery as of the fifteenth (see "Current status" above). Clients is
+  real but shown as "Restricted" for `PARALEGAL`/`STAFF` accounts (see "Who
+  can create/edit a Client or Matter" above).
 - **Authentication is real, but incomplete for production use:** no MFA,
   no rate-limiting/lockout on failed logins, no forced sign-out when a
   user's role or assignments change mid-session, no HTTPS enforcement, and

@@ -317,6 +317,26 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
   call" workflow (`attachCallToMatter`, `getUnfiledCalls`) is unchanged
   and still has no role gate of its own — preserved, not modified, by
   this session.
+- **Firm-wide Discovery (fifteenth session):** `app/(dashboard)/discovery`
+  (`lib/discovery/queries.ts#getFirmWideDiscoveryFiles`) introduces no new
+  authorization rule and no new write path — it reuses the same
+  `matterScopeFilterFor` scoping every other firm-wide aggregate view
+  above uses. The one wrinkle: `DiscoveryFile` has no `matterId` column of
+  its own (unlike `Task`/`Deadline`/`CalendarEvent`/filed `Call`/
+  `DiscoveryProduction`) — it only reaches a matter through its parent
+  `DiscoveryProduction`, so the scope filter is nested under a `production`
+  relation filter instead of applied directly. An `ADMIN`'s unrestricted
+  scope (`{}`) is left at the top level of `where` rather than nested as
+  `{ production: {} }`, the same "don't nest an empty object" caution the
+  fourteenth session's `getFirmWideCalls` documents for `OR` branches —
+  see `tests/discovery/queries.test.ts` for the regression proving an
+  `ADMIN` still sees every file this way. Unlike Communications, there is
+  no "unfiled" analogue to reason about: every `DiscoveryFile` belongs to a
+  `DiscoveryProduction` which always belongs to a matter. The page is
+  read-only: every row links back to the existing per-matter Discovery tab
+  for registration, comparison, and authenticated download — none of that
+  logic (including the discovery file download Route Handler below) was
+  duplicated or modified.
 - All authorization checks happen **server-side** — `proxy.ts` gates
   "is anyone logged in," and every Server Component that reads matter data
   re-checks independently rather than trusting the proxy alone (see
