@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   matterCountMock,
+  matterFindManyMock,
   taskCountMock,
   deadlineCountMock,
   deadlineFindManyMock,
@@ -12,6 +13,7 @@ const {
   matterAssignmentFindManyMock,
 } = vi.hoisted(() => ({
   matterCountMock: vi.fn(),
+  matterFindManyMock: vi.fn(),
   taskCountMock: vi.fn(),
   deadlineCountMock: vi.fn(),
   deadlineFindManyMock: vi.fn(),
@@ -24,7 +26,7 @@ const {
 
 vi.mock("@/lib/db", () => ({
   prisma: {
-    matter: { count: matterCountMock },
+    matter: { count: matterCountMock, findMany: matterFindManyMock },
     task: { count: taskCountMock },
     deadline: { count: deadlineCountMock, findMany: deadlineFindManyMock },
     calendarEvent: { count: calendarEventCountMock, findMany: calendarEventFindManyMock },
@@ -33,7 +35,9 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
-const { getDashboardStats, getRecentCallsAcrossMatters, getUpcomingKeyDates } = await import("@/lib/dashboard/queries");
+const { getActiveMatters, getDashboardStats, getRecentCallsAcrossMatters, getUpcomingKeyDates } = await import(
+  "@/lib/dashboard/queries"
+);
 
 const admin = { id: "user-admin", role: "ADMIN" as const };
 const attorney = { id: "user-attorney", role: "ATTORNEY" as const };
@@ -50,6 +54,7 @@ function firstArg<T>(mock: { mock: { calls: unknown[][] } }): T {
 beforeEach(() => {
   vi.clearAllMocks();
   matterCountMock.mockResolvedValue(0);
+  matterFindManyMock.mockResolvedValue([]);
   taskCountMock.mockResolvedValue(0);
   deadlineCountMock.mockResolvedValue(0);
   deadlineFindManyMock.mockResolvedValue([]);
@@ -164,5 +169,47 @@ describe("getRecentCallsAcrossMatters — reuses the shared call-visibility rule
     expect(firstArg<{ where: unknown }>(callFindManyMock).where).toEqual({
       matterId: { in: ["matter-1"] },
     });
+  });
+});
+
+// Regression coverage for a real gap this pass fixed: archiving a Matter is
+// orthogonal to its status (an archived Matter can still be OPEN — see
+// lib/matters/actions.ts#archiveMatter), and matterIdFilterFor/
+// matterScopeFilterFor only scope by assignment, never by archived state.
+// Before this fix, an archived-but-still-OPEN matter kept counting as
+// "active" and its deadlines/court dates kept surfacing in "what's next" —
+// even though /matters' own active view already hides it.
+describe("dashboard widgets exclude archived matters", () => {
+  it("getDashboardStats' active-matter count excludes archived matters", async () => {
+    await getDashboardStats(admin);
+    expect(firstArg<{ where: { archived?: boolean } }>(matterCountMock).where.archived).toBe(false);
+  });
+
+  it("getDashboardStats' task/deadline/event counts are scoped to non-archived matters", async () => {
+    await getDashboardStats(admin);
+    expect(firstArg<{ where: { matter?: { archived: boolean } } }>(taskCountMock).where.matter).toEqual({
+      archived: false,
+    });
+    expect(firstArg<{ where: { matter?: { archived: boolean } } }>(deadlineCountMock).where.matter).toEqual({
+      archived: false,
+    });
+    expect(firstArg<{ where: { matter?: { archived: boolean } } }>(calendarEventCountMock).where.matter).toEqual({
+      archived: false,
+    });
+  });
+
+  it("getActiveMatters excludes archived matters", async () => {
+    await getActiveMatters(admin);
+    expect(firstArg<{ where: { archived?: boolean } }>(matterFindManyMock).where.archived).toBe(false);
+  });
+
+  it("getUpcomingKeyDates excludes deadlines/events on archived matters", async () => {
+    await getUpcomingKeyDates(admin);
+    expect(firstArg<{ where: { matter?: { archived: boolean } } }>(deadlineFindManyMock).where.matter).toEqual({
+      archived: false,
+    });
+    expect(
+      firstArg<{ where: { matter?: { archived: boolean } } }>(calendarEventFindManyMock).where.matter,
+    ).toEqual({ archived: false });
   });
 });

@@ -1,4 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma } from "@prisma/client";
+
+/** A real PrismaClientKnownRequestError instance, for exercising the P2002 catch path. */
+function fakePrismaError(code: string): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError(`Simulated ${code}`, { code, clientVersion: "test" });
+}
 
 const { prismaMock, requireCurrentUserMock, revalidatePathMock } = vi.hoisted(() => ({
   prismaMock: {
@@ -98,6 +104,19 @@ describe("createUser", () => {
 
     expect(result.status).toBe("error");
     expect(prismaMock.user.create).not.toHaveBeenCalled();
+  });
+
+  it("returns a clean duplicate-email message (not a raw DB error) when two concurrent creates race past the findUnique check", async () => {
+    requireCurrentUserMock.mockResolvedValueOnce(admin);
+    prismaMock.user.findUnique.mockResolvedValueOnce(null);
+    prismaMock.user.create.mockRejectedValueOnce(fakePrismaError("P2002"));
+
+    const result = await createUser(
+      undefined,
+      formData({ name: "Jordan Rivera", email: "jordan@fryelawgroup.example", role: "STAFF" }),
+    );
+
+    expect(result).toEqual({ status: "error", message: "A user with that email already exists." });
   });
 });
 
@@ -239,5 +258,12 @@ describe("setUserMfaRequired", () => {
         metadata: { field: "mfaRequired", from: false, to: true },
       },
     });
+  });
+
+  it("blocks changing your own mfaRequired through this action, matching setUserRole/setUserActive's self-guard", async () => {
+    requireCurrentUserMock.mockResolvedValueOnce(admin);
+    const result = await setUserMfaRequired(undefined, formData({ userId: "admin-1", mfaRequired: "false" }));
+    expect(result).toBeTruthy();
+    expect(prismaMock.user.update).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,8 +10,13 @@ import { createUser } from "@/lib/admin/users/actions";
 
 export function CreateUserForm() {
   const [result, formAction, isPending] = useActionState(createUser, undefined);
+  // Without this, once one user is created there is no way to create a
+  // second one short of a full page reload — the success view replaced
+  // the form permanently. Reset on the submit event itself (not an effect)
+  // so it's ready to show the *next* result once this submission resolves.
+  const [dismissed, setDismissed] = useState(false);
 
-  if (result?.status === "success") {
+  if (result?.status === "success" && !dismissed) {
     return (
       <div className="space-y-3 rounded-md border border-border bg-muted/40 p-4">
         <p className="text-sm font-medium text-foreground">
@@ -21,12 +26,15 @@ export function CreateUserForm() {
         <p className="rounded-md border border-border bg-background px-3 py-2 font-mono text-sm">
           {result.temporaryPassword}
         </p>
+        <Button type="button" variant="outline" size="sm" onClick={() => setDismissed(true)}>
+          Create another user
+        </Button>
       </div>
     );
   }
 
   return (
-    <form action={formAction} className="space-y-4">
+    <form action={formAction} className="space-y-4" onSubmit={() => setDismissed(false)}>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div className="space-y-1.5">
           <Label htmlFor="name">Name</Label>

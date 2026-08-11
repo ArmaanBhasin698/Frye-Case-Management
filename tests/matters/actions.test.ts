@@ -1,4 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma } from "@prisma/client";
+
+/** A real PrismaClientKnownRequestError instance, for exercising the isForeignKeyConstraintError/isUniqueConstraintError catch paths. */
+function fakePrismaError(code: string): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError(`Simulated ${code}`, { code, clientVersion: "test" });
+}
 
 const { requireCurrentUserMock, hasMatterAccessMock, canEditMatterMock, prismaMock, revalidatePathMock, redirectMock } =
   vi.hoisted(() => ({
@@ -16,7 +22,7 @@ const { requireCurrentUserMock, hasMatterAccessMock, canEditMatterMock, prismaMo
       client: { findUnique: vi.fn() },
       user: { findMany: vi.fn(), findUnique: vi.fn() },
       matter: { create: vi.fn(), update: vi.fn(), findUnique: vi.fn() },
-      matterAssignment: { create: vi.fn(), deleteMany: vi.fn() },
+      matterAssignment: { create: vi.fn(), deleteMany: vi.fn(), count: vi.fn() },
       deadline: { create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), findFirst: vi.fn() },
       calendarEvent: { create: vi.fn(), update: vi.fn(), findFirst: vi.fn() },
       auditEvent: { create: vi.fn() },
@@ -216,6 +222,12 @@ describe("createTask", () => {
     expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
       data: { actorId: user.id, action: "CREATE", entityType: "Task", entityId: "task-1", matterId },
     });
+  });
+
+  it("returns a generic not-found instead of throwing when matterId is a forged/nonexistent id (e.g. an ADMIN whose hasMatterAccess bypasses the assignment check)", async () => {
+    prismaMock.task.create.mockRejectedValue(fakePrismaError("P2003"));
+    const result = await createTask({ error: null }, formData({ matterId, title: "Follow up" }));
+    expect(result?.error).toBe("Not found or access denied.");
   });
 });
 
@@ -581,6 +593,12 @@ describe("createCall", () => {
       expect.objectContaining({ data: expect.objectContaining({ flagged: true }) }),
     );
   });
+
+  it("returns a generic not-found instead of throwing when matterId is a forged/nonexistent id", async () => {
+    prismaMock.call.create.mockRejectedValue(fakePrismaError("P2003"));
+    const result = await createCall({ error: null }, formData(validFields));
+    expect(result?.error).toBe("Not found or access denied.");
+  });
 });
 
 describe("attachCallToMatter", () => {
@@ -633,6 +651,14 @@ describe("attachCallToMatter", () => {
         metadata: { attached: true },
       },
     });
+  });
+
+  it("returns a generic not-found instead of throwing when matterId is a forged/nonexistent id", async () => {
+    requireCurrentUserMock.mockResolvedValue(attorney);
+    hasMatterAccessMock.mockResolvedValue(true);
+    prismaMock.call.updateMany.mockRejectedValue(fakePrismaError("P2003"));
+    const result = await attachCallToMatter({ matterId, callId: "call-1" });
+    expect(result).toEqual({ ok: false, error: "Not found or access denied." });
   });
 });
 
@@ -693,6 +719,30 @@ describe("createMatter", () => {
     const result = await createMatter({ error: null }, matterFormData(validFields));
     expect(result?.error).toBe("Selected client not found.");
     expect(prismaMock.matter.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a closed date before the opened date", async () => {
+    requireCurrentUserMock.mockResolvedValue(attorney);
+    const result = await createMatter(
+      { error: null },
+      matterFormData({ ...validFields, openedDate: "2026-08-10", closedDate: "2020-01-01" }),
+    );
+    expect(result?.error).toBe("Closed date can't be before the opened date.");
+    expect(prismaMock.matter.create).not.toHaveBeenCalled();
+  });
+
+  it("allows a closed date equal to the opened date", async () => {
+    requireCurrentUserMock.mockResolvedValue(attorney);
+    prismaMock.client.findUnique.mockResolvedValue({ id: "client-1" });
+    prismaMock.user.findMany.mockResolvedValue([{ id: "staff-1" }]);
+    prismaMock.matter.create.mockResolvedValue({ id: "matter-new", assignments: [] });
+    await expect(
+      createMatter(
+        { error: null },
+        matterFormData({ ...validFields, openedDate: "2026-08-10", closedDate: "2026-08-10", status: "CLOSED" }),
+      ),
+    ).rejects.toThrow("NEXT_REDIRECT");
+    expect(prismaMock.matter.create).toHaveBeenCalled();
   });
 
   it("rejects an assignment referencing an inactive or nonexistent user", async () => {
@@ -775,6 +825,15 @@ describe("updateMatter", () => {
       matterFormData({ ...validFields, caseNumber: "" }),
     );
     expect(result?.error).toBeTruthy();
+    expect(prismaMock.matter.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a closed date before the opened date", async () => {
+    const result = await updateMatter(
+      { error: null },
+      matterFormData({ ...validFields, openedDate: "2026-08-10", closedDate: "2020-01-01" }),
+    );
+    expect(result?.error).toBe("Closed date can't be before the opened date.");
     expect(prismaMock.matter.update).not.toHaveBeenCalled();
   });
 
@@ -983,6 +1042,7 @@ describe("removeMatterAssignment", () => {
   });
 
   it("removes the assignment and writes an audit event on success", async () => {
+    prismaMock.matterAssignment.count.mockResolvedValue(2);
     prismaMock.matterAssignment.deleteMany.mockResolvedValue({ count: 1 });
     const result = await removeMatterAssignment({ matterId, assignmentId: "assignment-1" });
     expect(result).toEqual({ ok: true, data: undefined });
@@ -994,6 +1054,14 @@ describe("removeMatterAssignment", () => {
         matterId,
       }),
     });
+  });
+
+  it("refuses to remove a matter's last remaining assignment, server-side, even if a caller bypasses the UI's own disabled-button guard", async () => {
+    prismaMock.matterAssignment.count.mockResolvedValue(1);
+    const result = await removeMatterAssignment({ matterId, assignmentId: "assignment-1" });
+    expect(result).toEqual({ ok: false, error: "A matter must always have at least one staff assignment." });
+    expect(prismaMock.matterAssignment.deleteMany).not.toHaveBeenCalled();
+    expect(prismaMock.auditEvent.create).not.toHaveBeenCalled();
   });
 });
 
@@ -1066,6 +1134,12 @@ describe("createDeadline", () => {
     expect(prismaMock.deadline.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ reminderDaysBefore: 7 }) }),
     );
+  });
+
+  it("returns a generic not-found instead of throwing when matterId is a forged/nonexistent id", async () => {
+    prismaMock.deadline.create.mockRejectedValue(fakePrismaError("P2003"));
+    const result = await createDeadline({ error: null }, matterFormData(validFields));
+    expect(result?.error).toBe("Not found or access denied.");
   });
 });
 
@@ -1261,6 +1335,12 @@ describe("createCalendarEvent", () => {
     expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ action: "CREATE", entityType: "CalendarEvent", entityId: "event-1", matterId }),
     });
+  });
+
+  it("returns a generic not-found instead of throwing when matterId is a forged/nonexistent id", async () => {
+    prismaMock.calendarEvent.create.mockRejectedValue(fakePrismaError("P2003"));
+    const result = await createCalendarEvent({ error: null }, matterFormData(validFields));
+    expect(result?.error).toBe("Not found or access denied.");
   });
 });
 

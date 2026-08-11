@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,20 @@ export function UserRow({ user, isCurrentAdmin }: { user: AdminUserSummary; isCu
   const [mfaRequiredError, mfaRequiredAction, mfaRequiredPending] = useActionState(setUserMfaRequired, undefined);
   const [resetError, resetAction, resetPending] = useActionState(adminResetMfa, undefined);
   const [showReset, setShowReset] = useState(false);
+
+  // Closes the reset form once a submission completes successfully (it
+  // returns undefined on success, same as disableMfa/regenerateRecoveryCodes
+  // elsewhere) — without this, the form stayed open with the admin's own
+  // password still sitting in the input, and once the target's mfaEnabled
+  // flips to false the "Reset MFA" toggle button that could close it
+  // disappears too, leaving it permanently stuck open.
+  const wasResetPending = useRef(false);
+  useEffect(() => {
+    if (wasResetPending.current && !resetPending && !resetError) {
+      setShowReset(false);
+    }
+    wasResetPending.current = resetPending;
+  }, [resetPending, resetError]);
 
   return (
     <div className="space-y-3 rounded-md border border-border p-3">
