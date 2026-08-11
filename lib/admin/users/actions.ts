@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
+import { Prisma } from "@prisma/client";
 import type { UserRole } from "@prisma/client";
 
 import { prisma } from "@/lib/db";
@@ -75,16 +76,29 @@ export async function createUser(
   const temporaryPassword = generateTemporaryPassword();
   const passwordHash = await bcrypt.hash(temporaryPassword, 10);
 
-  const user = await prisma.user.create({
-    data: {
-      name: parsed.data.name,
-      email: parsed.data.email,
-      passwordHash,
-      role: parsed.data.role,
-      mfaRequired: parsed.data.mfaRequired,
-      mustChangePassword: true,
-    },
-  });
+  let user;
+  try {
+    user = await prisma.user.create({
+      data: {
+        name: parsed.data.name,
+        email: parsed.data.email,
+        passwordHash,
+        role: parsed.data.role,
+        mfaRequired: parsed.data.mfaRequired,
+        mustChangePassword: true,
+      },
+    });
+  } catch (error) {
+    // Guards the race between the findUnique check above and this create —
+    // two concurrent submissions for the same email can both pass that
+    // check before either row exists. Without this, the loser surfaces a
+    // raw Prisma constraint error (a stack trace) instead of the same
+    // clean message the check above already gives the common case.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return { status: "error", message: "A user with that email already exists." };
+    }
+    throw error;
+  }
 
   await prisma.auditEvent.create({
     data: {
@@ -189,6 +203,9 @@ export async function setUserMfaRequired(
   const requiredValue = formData.get("mfaRequired");
   if (typeof userId !== "string" || !userId || (requiredValue !== "true" && requiredValue !== "false")) {
     return "Invalid request.";
+  }
+  if (userId === admin.id) {
+    return "MFA-required changes for your own account aren't available here.";
   }
   const mfaRequired = requiredValue === "true";
 

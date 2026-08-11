@@ -30,10 +30,17 @@ export async function getDashboardStats(user: AuthorizableUser) {
 
   const [activeMatters, openTasks, upcomingDeadlines, upcomingCourtDates, unfiledCalls] =
     await Promise.all([
-      prisma.matter.count({ where: { ...matterWhere, status: { in: ["OPEN", "PENDING"] } } }),
-      prisma.task.count({ where: { ...scopeWhere, status: { in: ["OPEN", "IN_PROGRESS"] } } }),
-      prisma.deadline.count({ where: { ...scopeWhere, satisfied: false, date: { gte: todayAsStoredDate() } } }),
-      prisma.calendarEvent.count({ where: { ...scopeWhere, startTime: { gte: now } } }),
+      // Archived is orthogonal to status (an OPEN matter can be archived —
+      // see lib/matters/actions.ts#archiveMatter), and `matterIdFilterFor`
+      // only scopes by assignment, never by archived state — without this,
+      // an archived-but-still-OPEN matter kept counting as "active" here
+      // even though /matters' own active view already hides it.
+      prisma.matter.count({ where: { ...matterWhere, status: { in: ["OPEN", "PENDING"] }, archived: false } }),
+      prisma.task.count({ where: { ...scopeWhere, status: { in: ["OPEN", "IN_PROGRESS"] }, matter: { archived: false } } }),
+      prisma.deadline.count({
+        where: { ...scopeWhere, satisfied: false, date: { gte: todayAsStoredDate() }, matter: { archived: false } },
+      }),
+      prisma.calendarEvent.count({ where: { ...scopeWhere, startTime: { gte: now }, matter: { archived: false } } }),
       callVisibility.mayViewUnfiled ? prisma.call.count({ where: { matterId: null } }) : 0,
     ]);
 
@@ -43,7 +50,7 @@ export async function getDashboardStats(user: AuthorizableUser) {
 export async function getActiveMatters(user: AuthorizableUser, limit = 5) {
   const where = await matterIdFilterFor(user);
   return prisma.matter.findMany({
-    where: { ...where, status: { in: ["OPEN", "PENDING"] } },
+    where: { ...where, status: { in: ["OPEN", "PENDING"] }, archived: false },
     include: { client: true, assignments: { include: { user: true } } },
     orderBy: { openedDate: "desc" },
     take: limit,
@@ -76,13 +83,13 @@ export async function getUpcomingKeyDates(user: AuthorizableUser, limit = 6): Pr
 
   const [deadlines, events] = await Promise.all([
     prisma.deadline.findMany({
-      where: { ...scopeWhere, satisfied: false, date: { gte: todayAsStoredDate() } },
+      where: { ...scopeWhere, satisfied: false, date: { gte: todayAsStoredDate() }, matter: { archived: false } },
       include: { matter: { include: { client: true } } },
       orderBy: { date: "asc" },
       take: limit,
     }),
     prisma.calendarEvent.findMany({
-      where: { ...scopeWhere, startTime: { gte: now } },
+      where: { ...scopeWhere, startTime: { gte: now }, matter: { archived: false } },
       include: { matter: { include: { client: true } } },
       orderBy: { startTime: "asc" },
       take: limit,

@@ -78,6 +78,21 @@ function isUniqueConstraintError(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
 }
 
+/**
+ * `hasMatterAccess` returns `true` for ADMIN unconditionally, without
+ * checking the matter actually exists (admins bypass the assignment check
+ * entirely — see lib/auth/authorization.ts#isAdmin). For every write path
+ * below that creates a *new* row referencing `matterId` as a foreign key
+ * (rather than looking up an existing row scoped by it, which would
+ * already fail gracefully for a nonexistent matter), a forged/nonexistent
+ * `matterId` from an ADMIN session reaches Postgres and fails the FK
+ * constraint. Caught here so that surfaces as the same generic
+ * "not found" every other denial gives, not an unhandled DB error.
+ */
+function isForeignKeyConstraintError(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2003";
+}
+
 // --- Notes -----------------------------------------------------------------
 
 const createNoteSchema = z.object({
@@ -238,15 +253,23 @@ export async function createTask(
     return { error: NOT_FOUND.error };
   }
 
-  const task = await prisma.task.create({
-    data: {
-      matterId,
-      title,
-      description,
-      dueDate: dueDate ? new Date(dueDate) : undefined,
-      priority,
-    },
-  });
+  let task;
+  try {
+    task = await prisma.task.create({
+      data: {
+        matterId,
+        title,
+        description,
+        dueDate: dueDate ? new Date(dueDate) : undefined,
+        priority,
+      },
+    });
+  } catch (error) {
+    if (isForeignKeyConstraintError(error)) {
+      return { error: NOT_FOUND.error };
+    }
+    throw error;
+  }
 
   await prisma.auditEvent.create({
     data: {
@@ -556,21 +579,29 @@ export async function createCall(
   }
 
   const filed = Boolean(matterId);
-  const call = await prisma.call.create({
-    data: {
-      matterId: matterId ?? null,
-      contactName: contactName ?? null,
-      direction,
-      fromNumber,
-      toNumber,
-      occurredAt: new Date(occurredAt),
-      durationSeconds,
-      notes: notes ?? null,
-      flagged,
-      filedById: filed ? user.id : null,
-      filedAt: filed ? new Date() : null,
-    },
-  });
+  let call;
+  try {
+    call = await prisma.call.create({
+      data: {
+        matterId: matterId ?? null,
+        contactName: contactName ?? null,
+        direction,
+        fromNumber,
+        toNumber,
+        occurredAt: new Date(occurredAt),
+        durationSeconds,
+        notes: notes ?? null,
+        flagged,
+        filedById: filed ? user.id : null,
+        filedAt: filed ? new Date() : null,
+      },
+    });
+  } catch (error) {
+    if (isForeignKeyConstraintError(error)) {
+      return { error: NOT_FOUND.error };
+    }
+    throw error;
+  }
 
   // Minimal, non-sensitive metadata only — never the notes text itself
   // (same restraint `Note.body`/`Task.description`/`Client.notes` already
@@ -632,10 +663,18 @@ export async function attachCallToMatter(input: {
   // Only ever attach a call that is still unfiled — never re-parent a call
   // that's already on another matter, and never leak whether `callId`
   // belongs to someone else's matter vs. not existing at all.
-  const result = await prisma.call.updateMany({
-    where: { id: callId, matterId: null },
-    data: { matterId, filedById: user.id, filedAt: new Date() },
-  });
+  let result;
+  try {
+    result = await prisma.call.updateMany({
+      where: { id: callId, matterId: null },
+      data: { matterId, filedById: user.id, filedAt: new Date() },
+    });
+  } catch (error) {
+    if (isForeignKeyConstraintError(error)) {
+      return NOT_FOUND;
+    }
+    throw error;
+  }
   if (result.count === 0) {
     return NOT_FOUND;
   }
@@ -682,20 +721,25 @@ const assignmentInputSchema = z
     "The same staff member was selected more than once.",
   );
 
-const createMatterSchema = z.object({
-  clientId: cuid,
-  caseNumber: z.string().trim().min(1, "Case number is required.").max(50, "Case number is too long."),
-  court: z.string().trim().min(1, "Court is required.").max(200, "Court is too long."),
-  charges: z.string().trim().min(1, "Charges are required.").max(500, "Charges description is too long."),
-  status: z.enum(MATTER_STATUS_VALUES).default("OPEN"),
-  openedDate: z.string().refine((v) => !Number.isNaN(Date.parse(v)), "Invalid opened date."),
-  closedDate: z
-    .string()
-    .optional()
-    .transform((v) => (v ? v : undefined))
-    .refine((v) => !v || !Number.isNaN(Date.parse(v)), "Invalid closed date."),
-  assignments: assignmentInputSchema,
-});
+const createMatterSchema = z
+  .object({
+    clientId: cuid,
+    caseNumber: z.string().trim().min(1, "Case number is required.").max(50, "Case number is too long."),
+    court: z.string().trim().min(1, "Court is required.").max(200, "Court is too long."),
+    charges: z.string().trim().min(1, "Charges are required.").max(500, "Charges description is too long."),
+    status: z.enum(MATTER_STATUS_VALUES).default("OPEN"),
+    openedDate: z.string().refine((v) => !Number.isNaN(Date.parse(v)), "Invalid opened date."),
+    closedDate: z
+      .string()
+      .optional()
+      .transform((v) => (v ? v : undefined))
+      .refine((v) => !v || !Number.isNaN(Date.parse(v)), "Invalid closed date."),
+    assignments: assignmentInputSchema,
+  })
+  .refine((data) => !data.closedDate || new Date(data.closedDate) >= new Date(data.openedDate), {
+    message: "Closed date can't be before the opened date.",
+    path: ["closedDate"],
+  });
 
 function readAssignmentRows(formData: FormData) {
   const userIds = formData.getAll("assignmentUserId").map(String);
@@ -794,19 +838,24 @@ export async function createMatter(
   redirect(`/matters/${matter.id}`);
 }
 
-const updateMatterSchema = z.object({
-  matterId: cuid,
-  caseNumber: z.string().trim().min(1, "Case number is required.").max(50, "Case number is too long."),
-  court: z.string().trim().min(1, "Court is required.").max(200, "Court is too long."),
-  charges: z.string().trim().min(1, "Charges are required.").max(500, "Charges description is too long."),
-  status: z.enum(MATTER_STATUS_VALUES),
-  openedDate: z.string().refine((v) => !Number.isNaN(Date.parse(v)), "Invalid opened date."),
-  closedDate: z
-    .string()
-    .optional()
-    .transform((v) => (v ? v : undefined))
-    .refine((v) => !v || !Number.isNaN(Date.parse(v)), "Invalid closed date."),
-});
+const updateMatterSchema = z
+  .object({
+    matterId: cuid,
+    caseNumber: z.string().trim().min(1, "Case number is required.").max(50, "Case number is too long."),
+    court: z.string().trim().min(1, "Court is required.").max(200, "Court is too long."),
+    charges: z.string().trim().min(1, "Charges are required.").max(500, "Charges description is too long."),
+    status: z.enum(MATTER_STATUS_VALUES),
+    openedDate: z.string().refine((v) => !Number.isNaN(Date.parse(v)), "Invalid opened date."),
+    closedDate: z
+      .string()
+      .optional()
+      .transform((v) => (v ? v : undefined))
+      .refine((v) => !v || !Number.isNaN(Date.parse(v)), "Invalid closed date."),
+  })
+  .refine((data) => !data.closedDate || new Date(data.closedDate) >= new Date(data.openedDate), {
+    message: "Closed date can't be before the opened date.",
+    path: ["closedDate"],
+  });
 
 export async function updateMatter(
   _prevState: FormActionState,
@@ -1088,6 +1137,18 @@ export async function removeMatterAssignment(input: {
     return NOT_FOUND;
   }
 
+  // Mirrors createMatterSchema's "at least one staff assignment is
+  // required" (see above) on the removal side — the edit page's UI
+  // already disables "Remove" on the last row, but a Server Action is
+  // directly invokable, and removing the only assignment would make the
+  // matter permanently inaccessible to every non-admin, including whoever
+  // just removed it, with no admin-assisted way back in short of another
+  // admin re-adding it.
+  const assignmentCount = await prisma.matterAssignment.count({ where: { matterId } });
+  if (assignmentCount <= 1) {
+    return { ok: false, error: "A matter must always have at least one staff assignment." };
+  }
+
   // Scoped by matterId, exactly like updateTaskStatus/attachCallToMatter
   // above: an assignment id from a different matter can never be deleted
   // via this matter's edit page, even by a caller who can edit *some*
@@ -1163,9 +1224,17 @@ export async function createDeadline(
     return { error: NOT_FOUND.error };
   }
 
-  const deadline = await prisma.deadline.create({
-    data: { matterId, type, date: new Date(date), description, reminderDaysBefore },
-  });
+  let deadline;
+  try {
+    deadline = await prisma.deadline.create({
+      data: { matterId, type, date: new Date(date), description, reminderDaysBefore },
+    });
+  } catch (error) {
+    if (isForeignKeyConstraintError(error)) {
+      return { error: NOT_FOUND.error };
+    }
+    throw error;
+  }
 
   await prisma.auditEvent.create({
     data: {
@@ -1358,17 +1427,25 @@ export async function createCalendarEvent(
     return { error: NOT_FOUND.error };
   }
 
-  const event = await prisma.calendarEvent.create({
-    data: {
-      matterId,
-      title,
-      type,
-      startTime: new Date(startTime),
-      endTime: endTime ? new Date(endTime) : undefined,
-      location,
-      notes,
-    },
-  });
+  let event;
+  try {
+    event = await prisma.calendarEvent.create({
+      data: {
+        matterId,
+        title,
+        type,
+        startTime: new Date(startTime),
+        endTime: endTime ? new Date(endTime) : undefined,
+        location,
+        notes,
+      },
+    });
+  } catch (error) {
+    if (isForeignKeyConstraintError(error)) {
+      return { error: NOT_FOUND.error };
+    }
+    throw error;
+  }
 
   await prisma.auditEvent.create({
     data: {

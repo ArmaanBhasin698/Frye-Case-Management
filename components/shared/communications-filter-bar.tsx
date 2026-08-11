@@ -45,7 +45,10 @@ export function CommunicationsFilterBar({
     router.push(query ? `${basePath}?${query}` : basePath);
   }
 
-  const hasFilters = Object.values(current).some(Boolean);
+  // `sort` always has a default value (see app/(dashboard)/communications/page.tsx)
+  // even with no real filter applied, so it's excluded here — otherwise
+  // "Clear filters" would render enabled on every load, filtered or not.
+  const hasFilters = Object.entries(current).some(([key, value]) => key !== "sort" && Boolean(value));
 
   return (
     <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-muted/30 p-3">
