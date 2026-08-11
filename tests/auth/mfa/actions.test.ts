@@ -100,6 +100,7 @@ vi.mock("@/lib/auth/mfa/lockout", () => ({
 }));
 
 const {
+  adminResetMfa,
   confirmForcedEnrollment,
   confirmSelfEnrollment,
   disableMfa,
@@ -345,5 +346,186 @@ describe("signIn failures surface as a generic message, never an internal error"
 
     const result = await verifyMfaChallenge(undefined, formData({ code: "123456" }));
     expect(result).toMatch(/went wrong/i);
+  });
+});
+
+describe("adminResetMfa (ADMIN-only, admin re-auth required)", () => {
+  const admin = { id: "admin-1", role: "ADMIN" as const };
+  const staff = { id: "staff-1", role: "STAFF" as const };
+  const adminRecordNoMfa = {
+    id: "admin-1",
+    email: "admin@fryelawgroup.example",
+    active: true,
+    mfaEnabled: false,
+    totpSecretEncrypted: null,
+    totpLastUsedStep: null,
+  };
+  const adminRecordWithMfa = {
+    ...adminRecordNoMfa,
+    mfaEnabled: true,
+    totpSecretEncrypted: "enc(ADMINSECRET)",
+  };
+  const targetUser = { id: "target-1", email: "target@fryelawgroup.example" };
+
+  it("rejects a non-ADMIN caller outright, before touching any credentials", async () => {
+    requireCurrentUserMock.mockResolvedValueOnce(staff);
+
+    const result = await adminResetMfa(undefined, formData({ userId: "target-1", adminPassword: "whatever" }));
+
+    expect(result).toMatch(/not found or access denied/i);
+    expect(verifyPasswordMock).not.toHaveBeenCalled();
+    expect(prismaMock.user.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects when the admin's own password is missing — an open session alone is not enough", async () => {
+    requireCurrentUserMock.mockResolvedValueOnce(admin);
+
+    const result = await adminResetMfa(undefined, formData({ userId: "target-1" }));
+
+    expect(result).toBeTruthy();
+    expect(prismaMock.user.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects an incorrect admin password", async () => {
+    requireCurrentUserMock.mockResolvedValueOnce(admin);
+    prismaMock.user.findUnique.mockResolvedValueOnce(adminRecordNoMfa);
+    verifyPasswordMock.mockResolvedValueOnce(null);
+
+    const result = await adminResetMfa(
+      undefined,
+      formData({ userId: "target-1", adminPassword: "wrong" }),
+    );
+
+    expect(result).toMatch(/incorrect password/i);
+    expect(prismaMock.user.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses to let an admin reset their own MFA through this path", async () => {
+    requireCurrentUserMock.mockResolvedValueOnce(admin);
+
+    const result = await adminResetMfa(undefined, formData({ userId: "admin-1", adminPassword: "correct" }));
+
+    expect(result).toMatch(/account security/i);
+    expect(verifyPasswordMock).not.toHaveBeenCalled();
+    expect(prismaMock.user.update).not.toHaveBeenCalled();
+  });
+
+  it("requires the admin's own current code when the admin has MFA enabled", async () => {
+    requireCurrentUserMock.mockResolvedValueOnce(admin);
+    prismaMock.user.findUnique.mockResolvedValueOnce(adminRecordWithMfa);
+    verifyPasswordMock.mockResolvedValueOnce({ id: admin.id });
+
+    const result = await adminResetMfa(
+      undefined,
+      formData({ userId: "target-1", adminPassword: "correct" }),
+    );
+
+    expect(result).toMatch(/current authenticator or recovery code/i);
+    expect(prismaMock.user.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid admin MFA code and never touches the target account", async () => {
+    requireCurrentUserMock.mockResolvedValueOnce(admin);
+    prismaMock.user.findUnique.mockResolvedValueOnce(adminRecordWithMfa);
+    verifyPasswordMock.mockResolvedValueOnce({ id: admin.id });
+    verifyAndConsumeTotpMock.mockResolvedValueOnce(false);
+
+    const result = await adminResetMfa(
+      undefined,
+      formData({ userId: "target-1", adminPassword: "correct", adminCode: "000000" }),
+    );
+
+    expect(result).toMatch(/invalid or already-used code/i);
+    expect(recordFailedMfaAttemptMock).toHaveBeenCalledWith(admin.id);
+    expect(prismaMock.user.update).not.toHaveBeenCalled();
+  });
+
+  it("succeeds when the admin has no MFA of their own, clearing the target's MFA and forcing re-enrollment", async () => {
+    requireCurrentUserMock.mockResolvedValueOnce(admin);
+    prismaMock.user.findUnique.mockResolvedValueOnce(adminRecordNoMfa);
+    verifyPasswordMock.mockResolvedValueOnce({ id: admin.id });
+    prismaMock.user.findUnique.mockResolvedValueOnce(targetUser);
+
+    const result = await adminResetMfa(
+      undefined,
+      formData({ userId: "target-1", adminPassword: "correct" }),
+    );
+
+    expect(result).toBeUndefined();
+    expect(prismaMock.user.update).toHaveBeenCalledWith({
+      where: { id: "target-1" },
+      data: {
+        mfaEnabled: false,
+        mfaRequired: true,
+        totpSecretEncrypted: null,
+        totpLastUsedStep: null,
+        mfaFailedAttempts: 0,
+        mfaLockedUntil: null,
+      },
+    });
+    expect(prismaMock.mfaRecoveryCode.deleteMany).toHaveBeenCalledWith({ where: { userId: "target-1" } });
+  });
+
+  it("succeeds when the admin has MFA enabled and supplies a valid code", async () => {
+    requireCurrentUserMock.mockResolvedValueOnce(admin);
+    prismaMock.user.findUnique.mockResolvedValueOnce(adminRecordWithMfa);
+    verifyPasswordMock.mockResolvedValueOnce({ id: admin.id });
+    verifyAndConsumeTotpMock.mockResolvedValueOnce(true);
+    prismaMock.user.findUnique.mockResolvedValueOnce(targetUser);
+
+    const result = await adminResetMfa(
+      undefined,
+      formData({ userId: "target-1", adminPassword: "correct", adminCode: "123456" }),
+    );
+
+    expect(result).toBeUndefined();
+    expect(resetMfaAttemptsMock).toHaveBeenCalledWith(admin.id);
+    expect(prismaMock.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ mfaEnabled: false, mfaRequired: true }) }),
+    );
+  });
+
+  it("never returns the target's previous secret or recovery codes in the response", async () => {
+    requireCurrentUserMock.mockResolvedValueOnce(admin);
+    prismaMock.user.findUnique.mockResolvedValueOnce(adminRecordNoMfa);
+    verifyPasswordMock.mockResolvedValueOnce({ id: admin.id });
+    prismaMock.user.findUnique.mockResolvedValueOnce(targetUser);
+
+    const result = await adminResetMfa(undefined, formData({ userId: "target-1", adminPassword: "correct" }));
+
+    // Success returns undefined (no message at all) — there is no code
+    // path by which this action can hand back TOTP/recovery-code material.
+    expect(result).toBeUndefined();
+  });
+
+  it("audits the reset with the admin as actor and the target as entity, no secrets in metadata", async () => {
+    requireCurrentUserMock.mockResolvedValueOnce(admin);
+    prismaMock.user.findUnique.mockResolvedValueOnce(adminRecordNoMfa);
+    verifyPasswordMock.mockResolvedValueOnce({ id: admin.id });
+    prismaMock.user.findUnique.mockResolvedValueOnce(targetUser);
+
+    await adminResetMfa(undefined, formData({ userId: "target-1", adminPassword: "correct" }));
+
+    expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
+      data: {
+        actorId: "admin-1",
+        action: "UPDATE",
+        entityType: "User",
+        entityId: "target-1",
+        metadata: { event: "admin_mfa_reset" },
+      },
+    });
+  });
+
+  it("rejects a target that doesn't exist, same generic message as unauthorized", async () => {
+    requireCurrentUserMock.mockResolvedValueOnce(admin);
+    prismaMock.user.findUnique.mockResolvedValueOnce(adminRecordNoMfa);
+    verifyPasswordMock.mockResolvedValueOnce({ id: admin.id });
+    prismaMock.user.findUnique.mockResolvedValueOnce(null);
+
+    const result = await adminResetMfa(undefined, formData({ userId: "does-not-exist", adminPassword: "correct" }));
+
+    expect(result).toMatch(/not found or access denied/i);
+    expect(prismaMock.user.update).not.toHaveBeenCalled();
   });
 });

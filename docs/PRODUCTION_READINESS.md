@@ -10,6 +10,15 @@ and real case data?**
 Nothing in this document changes application behavior — it's a checklist,
 not code. Items are grouped by who has to act on them.
 
+**This checklist is a snapshot, updated most recently by the pre-meeting
+production-hardening pass** (MFA/2FA, admin-assisted reset, minimal user
+management, forced first-login password change, the seed/reset production
+guard, the health endpoint, and Node version pinning — see
+`docs/SECURITY.md` for the full design of each). A dedicated, final
+security review is still expected **after** the firm demo and its
+feedback, before any real staff account or real case data is allowed —
+this document does not substitute for that review.
+
 ## Smoke-test result (most recent pass)
 
 - Full Vitest suite, `npm run lint`, `npm run typecheck`, and
@@ -60,24 +69,37 @@ not code. Items are grouped by who has to act on them.
 
 ## Staff / credential dependencies (blockers — need firm involvement)
 
-- [ ] **MFA/2FA.** Not implemented (`docs/SECURITY.md`, "MFA/2FA status").
-      Needs a TOTP second factor added to the Credentials sign-in flow and
-      a decided account-recovery path *before* any real staff account is
-      created — this is the single largest gap between "demo" and
-      "production" for a privileged-communications system.
+- [x] **MFA/2FA — implemented, fictional accounts only.** TOTP second
+      factor, admin-assisted reset (re-auth-gated, forces re-enrollment,
+      never reveals the previous secret/codes), and forced first-login
+      password change for admin-created accounts are all built and tested
+      (pre-meeting production-hardening pass; `docs/SECURITY.md`'s "MFA/2FA
+      status"). **Still a blocker:** no real Frye staff account has ever
+      used this — that's the actual gap between "demo" and "production,"
+      not the missing feature itself. Also still open: no admin-assisted
+      *password* reset for an existing account (only new accounts get a
+      temporary password today), and required-MFA rollout still needs an
+      admin to explicitly set it per account (no bulk tooling).
 - [ ] **Production Auth.js secret.** `AUTH_SECRET` must be a freshly
       generated, unique-to-production value, stored only in the hosting
       provider's secret manager — never reused from any `.env` used in
-      development.
+      development. `MFA_ENCRYPTION_KEY` needs the same treatment, plus a
+      documented rotation procedure (see `docs/SECURITY.md`'s "Secrets &
+      configuration") since rotating it without one would lock out every
+      enrolled account's TOTP.
 - [ ] **Real Dropbox authorization.** The `DropboxDocumentStore` interface
       already exists and is exercised in development/test
       (`STORAGE_PROVIDER=dropbox`), but production needs the firm's real
       Dropbox account, a firm-owned (not personal-dev) Dropbox app,
       encrypted-at-rest token storage, and a real per-matter folder
       structure decision. Deliberately deferred per `CLAUDE.md`.
-- [ ] **Production user/account provisioning.** Decide who creates the
-      first real staff accounts and with what initial role/assignment —
-      there is no self-service signup by design.
+- [x] **Production user/account provisioning — mechanism implemented,
+      decision still pending.** ADMIN-only user management
+      (`/admin/users`: create, role, activate/deactivate, `mfaRequired`,
+      MFA status) now exists, so creating a real account no longer needs
+      direct database access. **Still a firm decision, not a code gap:**
+      who the first 1–2 real ADMINs are, and the rollout order for
+      everyone else.
 
 ## Infrastructure (blockers)
 
@@ -111,6 +133,26 @@ not code. Items are grouped by who has to act on them.
       Not a hard launch blocker on its own (baseline headers are already
       in place), but should be scheduled as near-term follow-up once
       real traffic exists.
+- [x] **Health/readiness endpoint — implemented.** `GET /api/health`
+      checks real DB reachability, returns only `{status, db}` (no
+      versions, counts, or internal config), and is excluded from the auth
+      gate so a host's uptime probe doesn't need a session.
+- [x] **Node version pinning — implemented.** `package.json#engines` and
+      `.nvmrc` both pin the documented `>=20.9.0` baseline, so a host can't
+      silently pick a different Node major version.
+- [x] **Seed/reset production guard — implemented.** `db:seed`/`db:reset`
+      now refuse to run unless `NODE_ENV` is `development` or `test`
+      (`lib/db/seed-guard.ts`), closing a real gap where either could have
+      wiped a live database with zero confirmation. **Known residual
+      limitation:** the guard covers the `npm run` scripts and
+      `prisma/seed.ts` itself; it can't intercept the Prisma CLI invoked
+      directly (e.g. `npx prisma migrate reset`), bypassing `package.json`
+      entirely — the production host should simply not have these scripts
+      or an interactive `prisma` CLI reachable at all, as defense in depth.
+- [ ] **`trustHost` validation.** `lib/auth/config.ts`'s `AuthConfig.trustHost:
+      true` has not been validated against any real host, because none has
+      been chosen — see `docs/SECURITY.md`'s "Authentication" section for
+      the exact checklist to run through once one is.
 
 ## Data migration (blockers before any real import)
 

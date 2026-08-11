@@ -13,12 +13,15 @@ import { auth } from "@/lib/auth/config";
 export default auth((req) => {
   const isLoggedIn = Boolean(req.auth);
   // /login/mfa and /login/mfa/setup are reached with a signed pending-
-  // challenge cookie, not a session (see lib/auth/mfa/tickets.ts) — they
-  // belong in the same pre-session bucket as /login itself.
+  // challenge cookie, not a session (see lib/auth/mfa/tickets.ts) —
+  // /login/change-password is reached the same pre-session way, just
+  // without a ticket (see lib/auth/login-flow.ts) — all three belong in
+  // the same pre-session bucket as /login itself.
   const isLoginPage =
     req.nextUrl.pathname === "/login" ||
     req.nextUrl.pathname === "/login/mfa" ||
-    req.nextUrl.pathname.startsWith("/login/mfa/");
+    req.nextUrl.pathname.startsWith("/login/mfa/") ||
+    req.nextUrl.pathname === "/login/change-password";
 
   if (!isLoggedIn && !isLoginPage) {
     const loginUrl = new URL("/login", req.nextUrl.origin);
@@ -37,6 +40,8 @@ export const config = {
   // `brand` is excluded alongside the existing framework/static exclusions
   // because it's a public asset folder (public/brand) — the login page
   // itself renders before a session exists, so its logo <img> must be
-  // fetchable without auth. No application route is affected.
-  matcher: ["/((?!api/auth|_next/static|_next/image|favicon.ico|brand).*)"],
+  // fetchable without auth. No application route is affected. `api/health`
+  // is excluded because a host's uptime probe has no session cookie to
+  // send — the route itself returns no sensitive data (see its handler).
+  matcher: ["/((?!api/auth|api/health|_next/static|_next/image|favicon.ico|brand).*)"],
 };

@@ -46,6 +46,28 @@ describe("proxy route gate — no direct-URL bypass of authentication", () => {
     expect((response as InstanceType<typeof NextResponse>).headers.get("location")).toBeNull();
   });
 
+  it("lets an unauthenticated request through to /login/change-password — reached pre-session, no ticket needed", () => {
+    const response = middleware(makeReq("/login/change-password", null));
+    expect((response as InstanceType<typeof NextResponse>).headers.get("location")).toBeNull();
+  });
+
+  it("still requires a real session for a route that only starts with /login/change-password as a string", () => {
+    const response = middleware(makeReq("/login/change-password-not-real", null)) as InstanceType<
+      typeof NextResponse
+    >;
+    expect(response.headers.get("location")).toContain("/login");
+  });
+
+  it("lists api/health in the matcher's exclusion pattern, so this middleware never runs on it at all", () => {
+    // The middleware body itself has no notion of "which paths it runs
+    // on" — that's decided entirely by this exported matcher before Next
+    // ever invokes the handler above (Next.js's own routing applies it).
+    // A health probe has no session cookie to send, so it must never
+    // reach the isLoggedIn/isLoginPage logic in the first place.
+    const [pattern] = proxyModule.config.matcher;
+    expect(pattern).toContain("api/health");
+  });
+
   it("still requires a real session for every other route — /login/mfa is not a wildcard bypass", () => {
     const response = middleware(makeReq("/login/mfax-not-a-real-mfa-route", null)) as InstanceType<
       typeof NextResponse

@@ -12,6 +12,7 @@ import {
   LayoutDashboard,
   Menu,
   Phone,
+  ShieldCheck,
   Users,
 } from "lucide-react";
 
@@ -52,7 +53,7 @@ type NavItem = {
  */
 function navItemsFor(role: string): NavItem[] {
   const canManageClients = role === "ADMIN" || role === "ATTORNEY";
-  return [
+  const items: NavItem[] = [
     { href: "/", label: "Dashboard", icon: LayoutDashboard },
     { href: "/matters", label: "Matters", icon: FolderKanban },
     {
@@ -69,6 +70,14 @@ function navItemsFor(role: string): NavItem[] {
     { href: "/communications", label: "Communications", icon: Phone },
     { href: "/reports", label: "Reports", icon: BarChart3 },
   ];
+  // Fully hidden (not just disabled) for non-admins — unlike Clients above,
+  // there's no reason to advertise an admin-only page's existence to roles
+  // that can never use it. /admin/users independently re-checks ADMIN via
+  // assertIsAdmin regardless of what this sidebar shows.
+  if (role === "ADMIN") {
+    items.push({ href: "/admin/users", label: "Users", icon: ShieldCheck });
+  }
+  return items;
 }
 
 function SidebarContent({ role, onNavigate }: { role: string; onNavigate?: () => void }) {
