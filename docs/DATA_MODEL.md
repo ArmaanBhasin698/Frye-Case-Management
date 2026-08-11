@@ -83,8 +83,15 @@ Firm staff account.
 - `passwordHash` is a real bcrypt hash as of the fourth session — Auth.js
   (`lib/auth/config.ts`) verifies it against the Credentials provider's
   `authorize()` callback. `active: false` blocks login even with a correct
-  password (no UI to toggle it yet; set directly via `prisma studio` or a
-  migration if needed).
+  password — toggleable via `/admin/users` (`lib/admin/users/actions.ts`,
+  pre-meeting production-hardening pass; ADMIN only, with a last-active-admin
+  safety check).
+- `mustChangePassword` — set true for accounts created via `/admin/users`
+  with a server-generated temporary password (never chosen by the admin,
+  shown to them exactly once). Blocks reaching the app until cleared by a
+  successful password change on `/login/change-password`, enforced the
+  same way MFA is — `authorize()` itself refuses to complete sign-in while
+  this is true. See `docs/SECURITY.md`'s "MFA/2FA status".
 - `mfaEnabled`, `mfaRequired`, `totpSecretEncrypted`, `totpLastUsedStep`,
   `mfaFailedAttempts`, `mfaLockedUntil` back TOTP-based MFA (fictional
   accounts only — see `docs/SECURITY.md`'s "MFA/2FA status"). `mfaEnabled`

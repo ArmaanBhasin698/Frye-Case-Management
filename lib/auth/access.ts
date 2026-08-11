@@ -71,6 +71,17 @@ export function assertCanManageClientsAndMatters(user: AuthorizableUser): void {
 }
 
 /**
+ * Enforces ADMIN-only access for a page render (user management, MFA
+ * reset) — stricter than `assertCanManageClientsAndMatters`, which also
+ * allows ATTORNEY. Same not-found-not-forbidden pattern as above.
+ */
+export function assertIsAdmin(user: AuthorizableUser): void {
+  if (!isAdmin(user)) {
+    notFound();
+  }
+}
+
+/**
  * Can `user` edit an *existing* Matter's own fields (not its sub-resources)
  * or its MatterAssignment roster? Admins always can. An ATTORNEY may, but
  * only for a matter they're actually assigned to — editing a matter they

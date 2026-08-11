@@ -20,6 +20,10 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
+import { assertSeedAllowed } from "../lib/db/seed-guard";
+
+assertSeedAllowed();
+
 const prisma = new PrismaClient();
 
 /** Fictional dev-only password shared by every seeded user. See README for the login table. */

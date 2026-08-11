@@ -7,6 +7,7 @@ import { AuthError } from "next-auth";
 import { prisma } from "@/lib/db";
 import { signIn } from "@/lib/auth/config";
 import { requireCurrentUser } from "@/lib/auth/session";
+import { isAdmin } from "@/lib/auth/authorization";
 import { verifyPassword } from "@/lib/auth/credentials";
 import {
   clearEnrollmentTicket,
@@ -366,4 +367,109 @@ export async function regenerateRecoveryCodes(
   revalidatePath("/account/security");
 
   return { status: "success", recoveryCodes };
+}
+
+// --- Admin-assisted reset (ADMIN only, re-auth required) -------------------
+
+/**
+ * Recovers an account that has lost both its authenticator and every
+ * recovery code. Deliberately distinct from disableMfa/regenerateRecoveryCodes
+ * above: those are self-service (a user proving they still hold their own
+ * second factor); this is the path for when that's no longer possible, so
+ * it substitutes a different party's authority (an ADMIN) instead — never
+ * a bare authenticated session. The admin must re-prove their own identity
+ * with their password, and their own current MFA code/recovery code if
+ * they have MFA enabled, exactly as strictly as a self-service reset would
+ * require of the account holder themselves. The target's previous TOTP
+ * secret and recovery codes are never read back or exposed — they're wiped
+ * and the account is forced into fresh enrollment (mfaRequired: true) on
+ * its next login, never left in a "no MFA at all" state.
+ */
+export async function adminResetMfa(_prevState: string | undefined, formData: FormData): Promise<string | undefined> {
+  const admin = await requireCurrentUser();
+  if (!isAdmin(admin)) {
+    return "Not found or access denied.";
+  }
+
+  const targetUserId = formData.get("userId");
+  const adminPassword = formData.get("adminPassword");
+  const adminCode = formData.get("adminCode");
+  if (typeof targetUserId !== "string" || !targetUserId || typeof adminPassword !== "string" || !adminPassword) {
+    return "Enter your password to confirm this reset.";
+  }
+
+  // Deliberately excluded: letting an admin use this path on their own
+  // account would turn off MFA unilaterally with no second party involved,
+  // defeating the point of gating this behind a *different* admin's
+  // authority. Self-service reset (disableMfa, above) already covers a
+  // voluntary reset of one's own MFA.
+  if (targetUserId === admin.id) {
+    return "Use Account Security to reset your own MFA.";
+  }
+
+  const adminRecord = await prisma.user.findUnique({ where: { id: admin.id } });
+  if (!adminRecord || !adminRecord.active) {
+    redirect("/login");
+  }
+
+  const verifiedPassword = await verifyPassword(adminRecord.email, adminPassword);
+  if (!verifiedPassword) {
+    return "Incorrect password.";
+  }
+
+  // An open authenticated session alone is not sufficient — if the admin
+  // has MFA enabled, they must prove they still hold it right now, exactly
+  // as strictly as disableMfa/regenerateRecoveryCodes require of any user
+  // resetting their own MFA.
+  if (adminRecord.mfaEnabled) {
+    if (!adminRecord.totpSecretEncrypted) {
+      return "Something is wrong with your own MFA setup. Please try again later.";
+    }
+    if (typeof adminCode !== "string" || !adminCode.trim()) {
+      return "Enter your current authenticator or recovery code to confirm this reset.";
+    }
+    if (await isLockedOut(admin.id)) {
+      return "Too many failed attempts on your own account. Try again in a few minutes.";
+    }
+    const verified = await verifySecondFactor(
+      admin.id,
+      adminRecord.totpSecretEncrypted,
+      adminRecord.totpLastUsedStep,
+      adminCode,
+    );
+    if (!verified) {
+      await recordFailedMfaAttempt(admin.id);
+      return "Invalid or already-used code.";
+    }
+    await resetMfaAttempts(admin.id);
+  }
+
+  const target = await prisma.user.findUnique({ where: { id: targetUserId } });
+  if (!target) {
+    return "Not found or access denied.";
+  }
+
+  await prisma.user.update({
+    where: { id: target.id },
+    data: {
+      mfaEnabled: false,
+      mfaRequired: true,
+      totpSecretEncrypted: null,
+      totpLastUsedStep: null,
+      mfaFailedAttempts: 0,
+      mfaLockedUntil: null,
+    },
+  });
+  await prisma.mfaRecoveryCode.deleteMany({ where: { userId: target.id } });
+
+  await prisma.auditEvent.create({
+    data: {
+      actorId: admin.id,
+      action: "UPDATE",
+      entityType: "User",
+      entityId: target.id,
+      metadata: { event: "admin_mfa_reset" },
+    },
+  });
+  revalidatePath("/admin/users");
 }

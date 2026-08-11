@@ -2,7 +2,7 @@ import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 
 import { prisma } from "@/lib/db";
-import { verifyPassword } from "@/lib/auth/credentials";
+import { canCompleteCredentialsSignIn, verifyPassword } from "@/lib/auth/credentials";
 import { consumeVerifiedTicket } from "@/lib/auth/mfa/tickets";
 
 /**
@@ -12,9 +12,17 @@ import { consumeVerifiedTicket } from "@/lib/auth/mfa/tickets";
  * configured; adding one later is additive here, not a rewrite.
  */
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  // Dev-only: lets Auth.js infer its own URL behind this environment's
-  // proxy instead of requiring an exact AUTH_URL match. Revisit before any
-  // real deployment (see docs/SECURITY.md).
+  // Dev-only: lets Auth.js infer its own URL from the incoming request's
+  // Host header instead of requiring an exact AUTH_URL match — convenient
+  // locally, but only safe in production if every request genuinely
+  // reaches this process through a reverse proxy/host that itself
+  // controls the Host header rather than passing through whatever a
+  // client sent. Whether that's true depends entirely on the eventual
+  // hosting platform, which hasn't been chosen — do not flip this or add
+  // platform-specific logic here without first re-validating the exact
+  // checklist in docs/SECURITY.md's "Authentication" section (trustHost
+  // vs. an explicit AUTH_URL, and whether X-Forwarded-Host/Proto can be
+  // trusted from that specific platform's edge).
   trustHost: true,
   // A privileged-case-data session shouldn't stay valid for next-auth's
   // 30-day JWT default. Shorter-lived sessions bound how long a stolen
@@ -27,13 +35,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   pages: { signIn: "/login" },
   providers: [
     Credentials({
-      // Completes sign-in directly only for accounts with no MFA in play.
-      // An account with mfaEnabled or mfaRequired set can NEVER complete
-      // sign-in through this provider, no matter how the request was made
-      // (the login form, a direct POST to the callback route, or anything
+      // Completes sign-in directly only for accounts with no MFA and no
+      // pending password change in play. An account with mfaEnabled,
+      // mfaRequired, or mustChangePassword set can NEVER complete sign-in
+      // through this provider, no matter how the request was made (the
+      // login form, a direct POST to the callback route, or anything
       // else) — that refusal, not any UI redirect, is what actually
       // prevents a password-only session for those accounts. See
-      // lib/auth/mfa/ and the "mfa-complete" provider below.
+      // lib/auth/mfa/, lib/auth/login-flow.ts, and the "mfa-complete"
+      // provider below.
       id: "credentials",
       credentials: {
         email: { label: "Email", type: "email" },
@@ -47,7 +57,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         }
 
         const user = await verifyPassword(email, password);
-        if (!user || user.mfaEnabled || user.mfaRequired) {
+        if (!user || !canCompleteCredentialsSignIn(user)) {
           return null;
         }
 

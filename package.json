@@ -2,6 +2,9 @@
   "name": "frye-case-management",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
   },
@@ -16,7 +19,7 @@
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",
     "db:seed": "prisma db seed",
-    "db:reset": "prisma migrate reset",
+    "db:reset": "node -e \"if(!['development','test'].includes(process.env.NODE_ENV)){console.error('Refusing db:reset: NODE_ENV is '+(process.env.NODE_ENV||'unset')+', not development/test. This drops and recreates the database.');process.exit(1)}\" && prisma migrate reset",
     "db:studio": "prisma studio"
   },
   "dependencies": {

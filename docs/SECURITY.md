@@ -14,18 +14,25 @@ following pieces of it are **actually implemented**, not just planned:
 - **Authentication** via Auth.js (NextAuth v5), credentials provider,
   session-based (JWT) — see "Authentication" below for what's real vs.
   still open (rate limiting on the password step, HTTPS).
-- **TOTP-based MFA/2FA**, for fictional development accounts only (no real
-  staff account exists yet) — see "MFA/2FA status" below for the full
-  design, what's enforced server-side, and what's still deferred
-  (admin-assisted reset, org-wide required-MFA rollout).
+- **TOTP-based MFA/2FA**, including admin-assisted reset and forced
+  first-login password change, for fictional development accounts only
+  (no real staff account exists yet) — see "MFA/2FA status" below for the
+  full design, what's enforced server-side, and what's still deferred (the
+  admin-reset identity-verification process, bulk required-MFA rollout).
+- **Minimal ADMIN-only user management** (`/admin/users`) — create, role
+  change, activate/deactivate, `mfaRequired` toggle — see "Authorization"
+  below.
 - **Matter-level authorization**, enforced server-side in
   `app/(dashboard)/matters/[matterId]/layout.tsx` and in every cross-matter
   query in `lib/dashboard/queries.ts` / `lib/matters/queries.ts` — see
   "Authorization" below.
 - **Route-level login gating** via `proxy.ts` for every page except
-  `/login`.
+  `/login`, `/login/mfa*`, `/login/change-password`, and `/api/health`.
 - **Baseline security response headers** (`next.config.mjs`) — see
   "Security headers" below.
+- **Production-safety guard on `db:seed`/`db:reset`** and a
+  **health/readiness endpoint** (`/api/health`) — see
+  `docs/PRODUCTION_READINESS.md`.
 
 Also now real:
 
@@ -144,20 +151,47 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
   Auth.js's 30-day default, bounding how long a stolen session cookie stays
   useful. **Still not implemented**: there is no way to force a sign-out on
   role/assignment change or account deactivation before that expiry — a JWT
-  session isn't revocable server-side once issued. There's also no UI yet
-  to deactivate a user or change their role after creation (see Phase 2,
-  `docs/ROADMAP.md`), so this is currently a latent gap, not one reachable
-  through the app itself. Closing it fully needs one of: (a) a DB check
-  added to the `jwt` callback on every request (works today, but adds a
-  query to every session check — a deliberate latency/DB-load trade-off to
-  make once user deactivation actually ships), or (b) switching to the
-  database session strategy (a session row per login, revocable by
-  deleting it) — a larger, deliberate architecture change, not something to
-  do incidentally alongside an unrelated feature.
+  session isn't revocable server-side once issued. `/admin/users` now makes
+  deactivation and role changes reachable through the app itself
+  (`lib/admin/users/actions.ts`, pre-meeting production-hardening pass) —
+  which means this is now a **live** gap, not the latent one it used to be
+  when no in-app path to deactivate/role-change existed at all: an admin
+  deactivating a user through the UI does not immediately end that user's
+  existing session, which can remain valid for up to 12 hours. Closing it
+  fully needs one of: (a) a DB check added to the `jwt` callback on every
+  request (works today, but adds a query to every session check — a
+  deliberate latency/DB-load trade-off), or (b) switching to the database
+  session strategy (a session row per login, revocable by deleting it) — a
+  larger, deliberate architecture change, not something to do incidentally
+  alongside an unrelated feature. **Explicit decision needed from the firm
+  before real accounts rely on deactivation** (see "Open items for later
+  phases" below) on whether this residual window is acceptable.
 - TOTP-based MFA, additive to the existing Credentials-provider flow.
   **Implemented, for fictional development accounts only** — see "MFA/2FA
   status" below for the full design and what's still deferred before any
   real staff account can use it.
+- `AuthConfig.trustHost` (`lib/auth/config.ts`) is `true` — fine for local
+  development, where Auth.js just needs to infer its own URL from
+  whatever `Host` header the dev server sees. **This has not been
+  validated against any real production host, because none has been
+  chosen yet** — deliberately not "fixed" preemptively, since the correct
+  answer depends on that choice, not on this codebase. Before real
+  deployment, whoever picks the host must confirm:
+  - Does every request that reaches this Node process pass through a
+    reverse proxy / platform edge that *sets* the `Host` (and
+    `X-Forwarded-Host`/`X-Forwarded-Proto`) headers itself, rather than
+    forwarding a client-supplied one unchanged? If yes, `trustHost: true`
+    plus a real `https://` `AUTH_URL` is fine. If the app could ever be
+    reached directly (bypassing that proxy) or the proxy blindly forwards
+    client headers, `trustHost` should be set to `false` and `AUTH_URL`
+    relied on exclusively instead.
+  - Is `AUTH_URL` (and `APP_URL`) set to the real `https://` domain, not
+    the `http://localhost:3000` value in `.env.example`?
+  - Does the platform terminate TLS itself, or does this app need to
+    handle that (it doesn't today — no HTTPS enforcement exists in code;
+    see "Data in transit / at rest" below)?
+  This is a deployment-time validation item, not a code change to make
+  now against an unknown target.
 - Failed login attempts are logged and rate-limited to slow credential
   stuffing/brute force. **Not implemented.** Failed `authorize()` calls
   currently just return `null` (Auth.js shows a generic error) with no
@@ -228,26 +262,60 @@ limiting status" below for why that distinction matters). This covers only
 the code-entry step; the password step's rate-limiting gap is unchanged
 and unrelated (still open, see below).
 
-**Deferred — required before any real staff account uses this:**
+**Admin-assisted reset — implemented (`lib/auth/mfa/actions.ts#adminResetMfa`).**
+Recovers an account that has lost both its authenticator and every recovery
+code. ADMIN-only, and an open authenticated admin session is deliberately
+*not* sufficient: the admin must re-verify their own password, plus their
+own current TOTP/recovery code if they have MFA enabled — exactly as
+strictly as a self-service reset requires of the account holder. An admin
+cannot use this path on their own account (self-service reset covers
+that; allowing self-reset here would let MFA be turned off unilaterally
+with no second party involved). The target's previous TOTP secret and
+recovery codes are never read back or exposed — the action wipes them and
+sets `mfaRequired: true`, forcing fresh enrollment on the target's next
+login rather than leaving the account with no second factor at all. Every
+reset is audited (`entityType: "User"`, actor = the admin, entity = the
+target, no secret material in metadata).
 
-- **Admin-assisted reset.** There is currently no way to recover an account
-  that has lost both its authenticator and every recovery code, other than
-  a developer manually clearing its MFA columns. Building an in-app
-  admin-reset action is explicitly *not* attempted here: it is, by
-  construction, a designed bypass of the entire second factor, and its
-  actual safety would depend entirely on off-platform identity
-  verification (a firm policy/process decision) that no amount of code can
-  enforce. This needs a firm decision on that process before it's built,
-  not just an engineering task.
-- **Required-MFA rollout mechanism.** `mfaRequired` exists in the schema
-  and the login-routing logic honors it, but there is no admin UI yet to
-  set it on a real account. Before real staff enrollment, decide whether
-  MFA is mandatory firm-wide (set `mfaRequired` on every real account
-  before it's used) or opt-in, and build whatever minimal tooling that
-  decision needs.
-- **`MFA_ENCRYPTION_KEY` secret handling.** Currently a `.env` value like
-  every other secret in this phase (see "Secrets & configuration" above);
-  revisit alongside every other secret before real deployment.
+**What this does *not* solve:** the identity-verification gap. Code can
+prove "an authenticated, re-verified admin performed this reset," but it
+cannot prove "the person who asked for the reset really is the locked-out
+staff member and not an impersonator." That requires an off-platform
+verification step (a known callback number, in-person confirmation, a
+pre-agreed question) that is a firm policy decision, not something this
+codebase can enforce — **still open, and required before any real account
+relies on this path.**
+
+**Required-MFA rollout — implemented.** `mfaRequired` exists in the schema
+and the login-routing logic honors it; ADMIN can now set it per account
+via `/admin/users` (`lib/admin/users/actions.ts#setUserMfaRequired`), and
+every newly admin-created account gets `mfaRequired: true` by default.
+**Still open:** no bulk/firm-wide toggle — enabling it for many existing
+real accounts at once would need setting it one at a time, or a small
+follow-up action if that's the firm's preferred rollout shape.
+
+**Forced first-login password change — implemented
+(`lib/auth/login-flow.ts`, `app/(auth)/login/change-password/`).** An
+account created via `/admin/users` gets a server-generated temporary
+password (shown to the admin exactly once, never logged) and
+`mustChangePassword: true`. The password-change gate is checked *before*
+the MFA gate — a temporary password is more likely to have passed through
+an out-of-band/admin channel, so minimizing how long it stays the active
+credential takes priority; ordering is otherwise safe either way since no
+session is created until every gate passes. `authorize()` refuses to
+complete sign-in for any account with `mustChangePassword` set, exactly
+mirroring the MFA refusal — a direct request with the correct temporary
+password still can't establish a session. The user re-enters their current
+(temporary) password on the change-password page itself, re-verified
+server-side, rather than any ticket/cookie carrying the plaintext password
+across the redirect.
+
+**`MFA_ENCRYPTION_KEY` secret handling.** Still a `.env` value like every
+other secret in this phase (see "Secrets & configuration" above); revisit
+alongside every other secret before real deployment. Rotating this key
+needs a decrypt-with-old/re-encrypt-with-new migration procedure, planned
+*before* rotation is ever needed — rotating it blind would lock out every
+enrolled account's TOTP.
 
 ### Rate limiting status
 
@@ -292,6 +360,19 @@ this pass.
 
 - Role-based: `ADMIN`, `ATTORNEY`, `PARALEGAL`, `STAFF`
   (`prisma/schema.prisma`'s `UserRole` enum). **Implemented.**
+- **User management (added the pre-meeting production-hardening pass):**
+  creating a user, changing a role, activating/deactivating, and toggling
+  `mfaRequired` (`/admin/users`, `lib/admin/users/actions.ts`) are `ADMIN`
+  only — stricter than `canManageClientsAndMatters` below, which also
+  allows `ATTORNEY`. Every action independently re-checks `isAdmin()`
+  server-side (never trusts the page already did), blocks an admin from
+  changing their own role/activation through this path (self-lockout
+  guard), and blocks demoting or deactivating the last active `ADMIN` —
+  the firm should never end up with zero admins and no one left to run an
+  admin-assisted recovery. Admin-created accounts get a server-generated
+  temporary password (shown once, never logged) and
+  `mustChangePassword: true`; no admin ever chooses or sees a new
+  account's password.
 - **Client/Matter management role rule (added the ninth session):** neither
   this document nor `docs/DATA_MODEL.md` previously said who may originate
   a brand-new Client or Matter — every other write path checks an
@@ -781,5 +862,14 @@ Even at small scale, once real data is in the system:
 - Whether encryption-at-rest at the application layer (beyond disk/DB-level
   encryption) is needed for particularly sensitive fields.
 - MFA rollout plan for all real staff accounts, including the
-  admin-assisted-reset and required-MFA-rollout decisions tracked under
-  "MFA/2FA status" above.
+  admin-assisted-reset identity-verification process (a firm policy
+  decision code cannot make — see "MFA/2FA status" above) and the
+  required-MFA rollout order.
+- Whether the JWT-revocability gap on deactivation (up to a 12-hour window
+  — see "Authentication" above) is acceptable to launch with, or must be
+  closed first.
+- A final, dedicated security review after the firm demo and its
+  feedback, before any real account or real case data is allowed — the
+  pre-meeting hardening pass (this document's MFA/2FA, admin-reset, user
+  management, and password-change updates) is not a substitute for that
+  review.

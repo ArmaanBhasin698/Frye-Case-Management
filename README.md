@@ -348,8 +348,8 @@ this password anywhere real** — see `docs/SECURITY.md`.
 | `npm run test` | Run unit tests once (Vitest). |
 | `npm run test:watch` | Run unit tests in watch mode. |
 | `npm run db:migrate` | Create/apply a Prisma migration (`prisma migrate dev`). |
-| `npm run db:seed` | Reset and reload fake sample data + login users (`prisma/seed.ts`). |
-| `npm run db:reset` | Drop, recreate, migrate, and reseed the database. |
+| `npm run db:seed` | Reset and reload fake sample data + login users (`prisma/seed.ts`). Refuses to run unless `NODE_ENV` is `development` or `test`. |
+| `npm run db:reset` | Drop, recreate, migrate, and reseed the database. Refuses to run unless `NODE_ENV` is `development` or `test` — see `lib/db/seed-guard.ts`. |
 | `npm run db:studio` | Open Prisma Studio to browse the database. |
 
 ## What's mocked / not implemented yet
@@ -389,12 +389,20 @@ this password anywhere real** — see `docs/SECURITY.md`.
   Client or Matter" above). Reports does not report financial, billing,
   settlement, win-rate, case-outcome, or time-entry metrics — that data
   doesn't exist in the schema yet (see `docs/DATA_MODEL.md`).
-- **Authentication is real, but incomplete for production use:** no MFA,
-  no rate-limiting/lockout on failed logins, no forced sign-out when a
-  user's role or assignments change mid-session, no HTTPS enforcement, and
-  every seeded account shares one password. None of this is acceptable
-  once real staff accounts or real case data are involved — see
-  `docs/SECURITY.md`'s "Implementation status" section for the full list.
+- **Authentication is real, but incomplete for production use:**
+  TOTP-based MFA, admin-assisted MFA reset, minimal ADMIN-only user
+  management (create/role/activate/deactivate/mfaRequired), and forced
+  first-login password change are all implemented and tested — **but only
+  ever exercised with fictional development accounts.** No real staff
+  account exists. Still open: no rate-limiting/lockout on failed
+  *password* attempts (the MFA step has its own), no forced sign-out when
+  a user's role/assignments/activation changes mid-session (a JWT session
+  isn't revocable before its 12-hour expiry), no HTTPS enforcement, and
+  every seeded demo account still shares one password (`FryeDemo!2026`) —
+  real accounts created via the admin panel each get a unique, one-time
+  temporary password instead. None of this is acceptable once real staff
+  accounts or real case data are involved — see `docs/SECURITY.md`'s
+  "Implementation status" section for the full list.
 - **Audit logging covers every write listed in "Current status" above**
   (Client/Matter create/update, MatterAssignment add/remove, Deadline
   create/update/status-change, CalendarEvent create/update, Document

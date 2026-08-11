@@ -97,6 +97,24 @@ describe("authenticate — password step routing", () => {
     expect(signInMock).not.toHaveBeenCalled();
   });
 
+  it("routes to change-password before any MFA/session logic when mustChangePassword is set", async () => {
+    verifyPasswordMock.mockResolvedValueOnce({
+      id: "user-3",
+      email: "new.hire@fryelawgroup.example",
+      role: "STAFF",
+      mfaEnabled: false,
+      mfaRequired: true,
+      mustChangePassword: true,
+    });
+
+    await expect(
+      authenticate(undefined, formData({ email: "new.hire@fryelawgroup.example", password: "temp-password" })),
+    ).rejects.toThrow("NEXT_REDIRECT:/login/change-password?email=new.hire%40fryelawgroup.example&callbackUrl=%2F");
+
+    expect(createPendingTicketMock).not.toHaveBeenCalled();
+    expect(signInMock).not.toHaveBeenCalled();
+  });
+
   it("surfaces a CredentialsSignin AuthError as the same generic message", async () => {
     verifyPasswordMock.mockResolvedValueOnce({
       id: "user-1",

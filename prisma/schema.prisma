@@ -161,6 +161,12 @@ model User {
   /// Set once mfaFailedAttempts crosses the lockout threshold; further
   /// second-factor attempts are refused until this time passes.
   mfaLockedUntil DateTime?
+  /// Set true for accounts created with a temporary initial password
+  /// (lib/admin/users/actions.ts#createUser). Blocks reaching the app
+  /// until cleared by a successful password change — enforced the same
+  /// way MFA is: authorize() itself refuses to complete sign-in while
+  /// this is true, not just a UI redirect (see lib/auth/login-flow.ts).
+  mustChangePassword Boolean @default(false)
 
   assignments              MatterAssignment[]
   assignedTasks            Task[]                @relation("TaskAssignee")

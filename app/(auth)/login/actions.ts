@@ -1,23 +1,21 @@
 "use server";
 
-import { redirect } from "next/navigation";
 import { AuthError } from "next-auth";
 
-import { signIn } from "@/lib/auth/config";
 import { verifyPassword } from "@/lib/auth/credentials";
-import { createPendingTicket } from "@/lib/auth/mfa/tickets";
+import { routeAfterPasswordVerified } from "@/lib/auth/login-flow";
 
 /**
  * Server Action backing the login form (see app/login/login-form.tsx).
- * Password verification happens here, not inside `signIn`, so an
- * MFA-enabled or MFA-required account can be routed into a second-factor
- * or forced-enrollment flow WITHOUT ever calling `signIn` — no NextAuth
- * session is created until that flow succeeds (see
- * lib/auth/config.ts's `authorize()`, which independently refuses to
- * complete sign-in for such an account regardless of how it's called).
- * `signIn` still redirects on success by throwing internally — that throw
- * is not an AuthError, so it passes through the catch below and Next.js
- * handles the navigation.
+ * Password verification happens here, not inside `signIn`, so an account
+ * requiring a password change or MFA can be routed into the right
+ * pre-session flow WITHOUT ever calling `signIn` — no NextAuth session is
+ * created until that flow succeeds (see lib/auth/config.ts's
+ * `authorize()`, which independently refuses to complete sign-in for such
+ * an account regardless of how it's called, and lib/auth/login-flow.ts
+ * for the shared gate ordering). `signIn`/`redirect` both redirect on
+ * success by throwing internally — that throw is not an AuthError, so it
+ * passes through the catch below and Next.js handles the navigation.
  */
 export async function authenticate(
   _prevState: string | undefined,
@@ -36,14 +34,8 @@ export async function authenticate(
     return "Invalid email or password.";
   }
 
-  if (user.mfaEnabled || user.mfaRequired) {
-    await createPendingTicket(user.id);
-    const destination = user.mfaEnabled ? "/login/mfa" : "/login/mfa/setup";
-    redirect(`${destination}?callbackUrl=${encodeURIComponent(callbackUrl)}`);
-  }
-
   try {
-    await signIn("credentials", { email, password, redirectTo: callbackUrl });
+    await routeAfterPasswordVerified(user, password, callbackUrl);
   } catch (error) {
     if (error instanceof AuthError) {
       switch (error.type) {
