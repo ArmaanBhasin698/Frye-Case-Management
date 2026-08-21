@@ -9,19 +9,22 @@ class FakeAuthError extends Error {
 }
 vi.mock("next-auth", () => ({ AuthError: FakeAuthError }));
 
-const { verifyPasswordMock, signInMock, createPendingTicketMock, redirectMock } = vi.hoisted(() => ({
-  verifyPasswordMock: vi.fn(),
-  signInMock: vi.fn(),
-  createPendingTicketMock: vi.fn(),
-  redirectMock: vi.fn((url: string) => {
-    throw new Error(`NEXT_REDIRECT:${url}`);
-  }),
-}));
+const { verifyPasswordMock, signInMock, createPendingTicketMock, redirectMock, recordFailedLoginAttemptMock } =
+  vi.hoisted(() => ({
+    verifyPasswordMock: vi.fn(),
+    signInMock: vi.fn(),
+    createPendingTicketMock: vi.fn(),
+    redirectMock: vi.fn((url: string) => {
+      throw new Error(`NEXT_REDIRECT:${url}`);
+    }),
+    recordFailedLoginAttemptMock: vi.fn(),
+  }));
 
 vi.mock("next/navigation", () => ({ redirect: redirectMock }));
 vi.mock("@/lib/auth/config", () => ({ signIn: signInMock }));
 vi.mock("@/lib/auth/credentials", () => ({ verifyPassword: verifyPasswordMock }));
 vi.mock("@/lib/auth/mfa/tickets", () => ({ createPendingTicket: createPendingTicketMock }));
+vi.mock("@/lib/security/detection", () => ({ recordFailedLoginAttempt: recordFailedLoginAttemptMock }));
 
 const { authenticate } = await import("@/app/(auth)/login/actions");
 
@@ -42,6 +45,25 @@ describe("authenticate — password step routing", () => {
     expect(result).toMatch(/invalid email or password/i);
     expect(createPendingTicketMock).not.toHaveBeenCalled();
     expect(signInMock).not.toHaveBeenCalled();
+  });
+
+  it("records a failed-login attempt for suspicious-login detection, never the password itself", async () => {
+    verifyPasswordMock.mockResolvedValueOnce(null);
+    await authenticate(undefined, formData({ email: "x@example.com", password: "wrong" }));
+    expect(recordFailedLoginAttemptMock).toHaveBeenCalledWith("x@example.com");
+    expect(recordFailedLoginAttemptMock).not.toHaveBeenCalledWith(expect.stringContaining("wrong"));
+  });
+
+  it("does not record a failed-login attempt on a successful password verification", async () => {
+    verifyPasswordMock.mockResolvedValueOnce({
+      id: "user-1",
+      email: "x@example.com",
+      role: "STAFF",
+      mfaEnabled: false,
+      mfaRequired: false,
+    });
+    await authenticate(undefined, formData({ email: "x@example.com", password: "correct" }));
+    expect(recordFailedLoginAttemptMock).not.toHaveBeenCalled();
   });
 
   it("signs in directly for a correct password with no MFA in play — unchanged for non-MFA users", async () => {

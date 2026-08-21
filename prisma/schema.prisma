@@ -122,6 +122,23 @@ enum MfaTicketPurpose {
   MFA_ENROLLMENT
 }
 
+enum SecurityIncidentCategory {
+  SUSPICIOUS_LOGIN
+}
+
+enum SecurityIncidentSeverity {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum SecurityIncidentStatus {
+  OPEN
+  INVESTIGATING
+  RESOLVED
+  FALSE_POSITIVE
+}
+
 // --- Core entities ---------------------------------------------------------
 
 /// Firm staff account. `passwordHash` is the first authentication factor;
@@ -180,6 +197,8 @@ model User {
   archivedMatters          Matter[]              @relation("MatterArchivedBy")
   mfaRecoveryCodes         MfaRecoveryCode[]
   mfaChallengeTickets      MfaChallengeTicket[]
+  failedLoginAttempts      FailedLoginAttempt[]
+  securityIncidents        SecurityIncident[]
 }
 
 /// One-time-use recovery code for bypassing a lost TOTP device. Codes are
@@ -535,4 +554,48 @@ model AuditEvent {
   metadata   Json?
   occurredAt DateTime    @default(now())
   ipAddress  String?
+}
+
+/// A single failed password-verification attempt, recorded purely for
+/// suspicious-login detection (lib/security/detection.ts) — never stores
+/// the attempted password or any other credential material. `accountId` is
+/// set only when the attempted email matched an existing User row, so the
+/// windowed per-account count used for detection is keyed to a real
+/// account; attempts against an unrecognized email are still recorded
+/// (`accountId` null) but never count toward that threshold and never
+/// create a User row.
+model FailedLoginAttempt {
+  id             String   @id @default(cuid())
+  accountId      String?
+  account        User?    @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  emailAttempted String
+  occurredAt     DateTime @default(now())
+  ipAddress      String?
+
+  @@index([accountId, occurredAt])
+}
+
+/// A detected suspicious-authentication event and its admin triage
+/// lifecycle (see docs/SECURITY.md). Created automatically once
+/// `lib/security/detection.ts` sees `failedAttemptCount` FailedLoginAttempt
+/// rows for the same account inside one detection window; `status`
+/// thereafter only ever changes through an ADMIN-only Server Action
+/// (lib/security/actions.ts), forward-only: OPEN -> INVESTIGATING ->
+/// RESOLVED|FALSE_POSITIVE. `notes` is admin-entered triage commentary —
+/// never populated with client, discovery, or communication content.
+model SecurityIncident {
+  id                 String                   @id @default(cuid())
+  category           SecurityIncidentCategory
+  severity           SecurityIncidentSeverity
+  status             SecurityIncidentStatus   @default(OPEN)
+  accountId          String?
+  account            User?                    @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  failedAttemptCount Int
+  windowStart        DateTime
+  windowEnd          DateTime
+  detectedAt         DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
+  notes              String?
+
+  @@index([status])
 }
