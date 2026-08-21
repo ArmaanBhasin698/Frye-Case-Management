@@ -4,6 +4,7 @@ import { AuthError } from "next-auth";
 
 import { verifyPassword } from "@/lib/auth/credentials";
 import { routeAfterPasswordVerified } from "@/lib/auth/login-flow";
+import { recordFailedLoginAttempt } from "@/lib/security/detection";
 
 /**
  * Server Action backing the login form (see app/login/login-form.tsx).
@@ -31,6 +32,7 @@ export async function authenticate(
 
   const user = await verifyPassword(email, password);
   if (!user) {
+    await recordFailedLoginAttempt(email);
     return "Invalid email or password.";
   }
 

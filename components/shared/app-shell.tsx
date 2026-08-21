@@ -12,6 +12,7 @@ import {
   LayoutDashboard,
   Menu,
   Phone,
+  ShieldAlert,
   ShieldCheck,
   Users,
 } from "lucide-react";
@@ -76,6 +77,7 @@ function navItemsFor(role: string): NavItem[] {
   // assertIsAdmin regardless of what this sidebar shows.
   if (role === "ADMIN") {
     items.push({ href: "/admin/users", label: "Users", icon: ShieldCheck });
+    items.push({ href: "/admin/security", label: "Security", icon: ShieldAlert });
   }
   return items;
 }

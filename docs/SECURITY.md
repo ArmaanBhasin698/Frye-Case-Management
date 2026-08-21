@@ -193,12 +193,16 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
   This is a deployment-time validation item, not a code change to make
   now against an unknown target.
 - Failed login attempts are logged and rate-limited to slow credential
-  stuffing/brute force. **Not implemented.** Failed `authorize()` calls
-  currently just return `null` (Auth.js shows a generic error) with no
-  logging or throttling — acceptable for five fictional dev accounts
-  behind a private environment, not for a real deployment. See "Rate
-  limiting status" below for what a real fix requires and why it wasn't
-  built as part of this pass.
+  stuffing/brute force. **Partially implemented.** Every failed password
+  attempt is now recorded (`lib/security/detection.ts`), and 5 failures for
+  the same account within 10 minutes opens a `SecurityIncident` an ADMIN
+  can triage at `/admin/security` (Open → Investigating → Resolved/False
+  Positive) — see `docs/SECURITY_MONITORING_ASSESSMENT.md` for the full
+  design and a local IR-lifecycle walkthrough. This is detection and
+  alerting only, still **not rate limiting**: a failed attempt is never
+  slowed or blocked, only recorded and (past the threshold) flagged for a
+  human to act on. See "Rate limiting status" below for what a real
+  blocking fix requires and why it wasn't built as part of this pass.
 - Every seeded account uses one shared password
   (`FryeDemo!2026` — see README's demo credentials table) purely so a demo
   doesn't require memorizing five passwords. This must never happen with
