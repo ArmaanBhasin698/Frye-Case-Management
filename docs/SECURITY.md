@@ -12,8 +12,9 @@ This document describes the target design. As of this session, the
 following pieces of it are **actually implemented**, not just planned:
 
 - **Authentication** via Auth.js (NextAuth v5), credentials provider,
-  session-based (JWT) — see "Authentication" below for what's real vs.
-  still open (rate limiting on the password step, HTTPS).
+  session-based (JWT), with an account-level password-attempt cooldown
+  (`lib/security/password-cooldown.ts`) — see "Authentication" below for
+  what's real vs. still open (IP/global-level rate limiting, HTTPS).
 - **TOTP-based MFA/2FA**, including admin-assisted reset and forced
   first-login password change, for fictional development accounts only
   (no real staff account exists yet) — see "MFA/2FA status" below for the
@@ -78,12 +79,13 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
   folder convention, encrypted-at-rest token storage, monitoring) — see
   "Third-party integrations" below. What exists now is a development/test
   integration behind the same interface, not that.
-- No rate limiting on failed *password* attempts (the MFA code-entry step
-  now has its own DB-backed lockout — see "MFA/2FA status" and "Rate
-  limiting status" below), no forced sign-out on role/assignment change
-  (see "Authentication" and "Security hardening pass (eighteenth session)"
-  below for exactly what's required to close each of these before real
-  staff accounts go live).
+- No IP-based or global rate limiting on failed *password* attempts — only
+  an account-level cooldown exists (`lib/security/password-cooldown.ts`;
+  the MFA code-entry step has its own, separate DB-backed lockout — see
+  "MFA/2FA status" and "Rate limiting status" below); no forced sign-out on
+  role/assignment change (see "Authentication" and "Security hardening pass
+  (eighteenth session)" below for exactly what's required to close each of
+  these before real staff accounts go live).
 - No admin-assisted MFA reset for a user who has lost both their
   authenticator and every recovery code — deliberately deferred (see "MFA/
   2FA status" below for why).
@@ -193,16 +195,29 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
   This is a deployment-time validation item, not a code change to make
   now against an unknown target.
 - Failed login attempts are logged and rate-limited to slow credential
-  stuffing/brute force. **Partially implemented.** Every failed password
-  attempt is now recorded (`lib/security/detection.ts`), and 5 failures for
-  the same account within 10 minutes opens a `SecurityIncident` an ADMIN
-  can triage at `/admin/security` (Open → Investigating → Resolved/False
-  Positive) — see `docs/SECURITY_MONITORING_ASSESSMENT.md` for the full
-  design and a local IR-lifecycle walkthrough. This is detection and
-  alerting only, still **not rate limiting**: a failed attempt is never
-  slowed or blocked, only recorded and (past the threshold) flagged for a
-  human to act on. See "Rate limiting status" below for what a real
-  blocking fix requires and why it wasn't built as part of this pass.
+  stuffing/brute force. **Implemented, at the account level.** Every failed
+  password attempt is recorded (`lib/security/detection.ts`), and 5
+  failures for the same account within 10 minutes opens a
+  `SecurityIncident` an ADMIN can triage at `/admin/security` (Open →
+  Investigating → Resolved/False Positive) — see
+  `docs/SECURITY_MONITORING_ASSESSMENT.md` for the full design and a local
+  IR-lifecycle walkthrough. Separately, `lib/security/password-cooldown.ts`
+  now actually blocks further password attempts once one account crosses
+  its own threshold (5 failures inside a 5-minute window trigger a 60
+  second cooldown, extended by any further attempt made while cooling
+  down) — read from the same `FailedLoginAttempt` rows, DB-backed rather
+  than an in-memory counter, so it stays correct across restarts and
+  multiple app instances. It is checked inside `verifyPassword`
+  (`lib/auth/credentials.ts`), the single function every password-checking
+  path shares (the login form, the NextAuth `authorize()` callback, the
+  forced password-change flow, and MFA self-service/admin-reset password
+  re-verification), so there is no entry point that bypasses it. A
+  cooling-down account gets the exact same generic "Invalid email or
+  password" response as a wrong password — the cooldown can never be used
+  to distinguish "this account exists and is rate-limited" from "wrong
+  password" from the outside. See "Rate limiting status" below for what
+  this does and does not cover, and why the thresholds are local/demo
+  values, not a production-approved configuration.
 - Every seeded account uses one shared password
   (`FryeDemo!2026` — see README's demo credentials table) purely so a demo
   doesn't require memorizing five passwords. This must never happen with
@@ -323,25 +338,48 @@ enrolled account's TOTP.
 
 ### Rate limiting status
 
-Not implemented **for the password step**. (The MFA code-entry step now has
-its own DB-backed lockout — `User.mfaFailedAttempts`/`mfaLockedUntil`, 5
-attempts / 15 minutes — see "MFA/2FA status" above. That was built
-DB-backed specifically because of the in-memory-counter problem described
-below; it does not extend to `/login`'s password field.) No in-memory/fake
-limiter was built as a placeholder for the password step — a
-per-process in-memory counter would silently stop working the moment the
-app runs behind more than one instance or restarts (a redeploy would reset
-every counter to zero), which is worse than no limiter at all if anyone
-starts relying on it. A real fix needs one of:
+**Password step — implemented at the account level, as of the final
+internal-hardening pass.** `lib/security/password-cooldown.ts` computes a
+temporary cooldown directly from existing `FailedLoginAttempt` rows (no new
+schema, no in-memory counter): once an account has
+`PASSWORD_COOLDOWN_ATTEMPT_THRESHOLD` (5) failures inside
+`PASSWORD_COOLDOWN_WINDOW_MS` (5 minutes), further password checks for that
+account are refused for `PASSWORD_COOLDOWN_DURATION_MS` (60 seconds) after
+the most recent failure — and an attempt made while cooling down itself
+counts as another failure, extending the cooldown for as long as the
+hammering continues. Because it reads Postgres rather than per-process
+memory, this is correct across restarts and multiple app instances, unlike
+the in-memory counter this document previously (correctly) rejected as
+unsafe. It is enforced inside `verifyPassword`, so every caller gets it —
+there is no way to reach `authorize()`, the login Server Action, the
+password-change flow, or an MFA action's password re-verification and skip
+the check.
 
-- A rate-limiting/WAF layer in front of the app (e.g., the hosting
-  provider's platform-level protection, or a reverse proxy/CDN rule)
-  covering `/login` and the Auth.js credentials callback route at minimum.
-- An external shared store (Redis or equivalent) backing a proper limiter
-  library, so limits are enforced consistently across every instance.
+**What this does not cover, and why it's still not a substitute for
+platform-level protection:**
 
-Either requires infrastructure decisions beyond this codebase — tracked
-here as a hard requirement before real deployment, not a "nice to have."
+- It is scoped **per account** (via `FailedLoginAttempt.accountId`), not
+  per IP or globally. It does nothing to slow an attacker spraying one
+  guessed password across many different accounts, or to protect the
+  `/login` endpoint itself from being flooded with requests against unknown
+  emails (each such request is cheap — one indexed lookup, no bcrypt — but
+  there's still no cap on request volume at the network layer).
+- The thresholds above are **local/demo values**, chosen to be easy to
+  exercise in tests and a local walkthrough — they are not derived from any
+  industry-standard guidance and must be re-evaluated (almost certainly
+  loosened for the window/threshold, and reconsidered for the duration)
+  before any real account relies on them.
+- It does not replace a WAF/reverse-proxy layer or an external shared store
+  (Redis or equivalent) backing a dedicated limiter library — either of
+  which remains the right way to add IP-based/global protection in front of
+  `/login` and the Auth.js credentials callback route. That's still an
+  infrastructure decision outside this codebase, and still a hard
+  requirement before real deployment, not a "nice to have."
+
+**MFA code-entry step — implemented**, unchanged by this pass:
+`User.mfaFailedAttempts`/`mfaLockedUntil`, 5 attempts / 15 minutes,
+DB-backed for the same restart/multi-instance-correctness reason — see
+"MFA/2FA status" above.
 
 ### Security headers
 
@@ -860,6 +898,21 @@ Even at small scale, once real data is in the system:
 
 ## Open items for later phases
 
+- **Retention for `FailedLoginAttempt` and `SecurityIncident` rows —
+  recommendation only, not implemented.** Neither table has a cleanup
+  mechanism today; both accumulate indefinitely, including
+  `emailAttempted` values from unmatched/mistyped/probing login attempts
+  and incidents already `RESOLVED`/`FALSE_POSITIVE`. Recommended once a
+  real deployment exists: periodically delete `FailedLoginAttempt` rows
+  older than roughly 90 days, and `SecurityIncident` rows in a terminal
+  status (`RESOLVED`/`FALSE_POSITIVE`) older than roughly 180 days (long
+  enough to support a look-back investigation, short enough to bound how
+  long stale login-attempt data and closed incident metadata sit around).
+  Not built in this pass because a real implementation needs either a
+  scheduled job/cron (infrastructure choice, not yet made) or a bulk
+  admin-triggered delete (a new privileged action, deliberately not added
+  speculatively) — both are deliberate follow-up decisions, not something
+  to improvise alongside this pass's other changes.
 - Formal data retention/deletion policy (how long to keep closed-matter
   data, and secure deletion procedures).
 - Backup and disaster-recovery plan with tested restores.

@@ -295,3 +295,18 @@ full Open → Investigating → Resolved → (new detection) cycle.
   `docs/SECURITY.md`'s existing "Rate limiting status" section.
 - Severity on detected incidents is a static `MEDIUM` for the one
   configured rule — no severity-scoring logic exists yet.
+
+## Update (final internal-hardening pass)
+
+The "What this is not" section above and the "Limitations"/"Findings"
+callouts describing password-step rate limiting as unimplemented were
+accurate when this document was written, but are now superseded: a later
+session (the final internal-hardening pass, `security/final-internal-
+hardening` branch) added an account-level cooldown
+(`lib/security/password-cooldown.ts`) that actually blocks further
+password attempts once one account crosses its own threshold — see
+`docs/SECURITY.md`'s "Rate limiting status" section for the current,
+accurate description, including what it does and does not cover. This
+document's own detection/alerting mechanism (`SecurityIncident`,
+`/admin/security`) is unchanged and independent of that cooldown; the two
+are described together in `docs/SECURITY.md`.

@@ -4,7 +4,8 @@ import { useActionState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { updateSecurityIncidentStatus } from "@/lib/security/actions";
+import { Textarea } from "@/components/ui/textarea";
+import { updateSecurityIncidentNotes, updateSecurityIncidentStatus } from "@/lib/security/actions";
 import type { AdminSecurityIncidentSummary } from "@/lib/security/queries";
 
 const STATUS_VARIANT: Record<AdminSecurityIncidentSummary["status"], "warning" | "secondary" | "success" | "outline"> = {
@@ -30,6 +31,7 @@ function statusLabel(status: string) {
 
 export function IncidentRow({ incident }: { incident: AdminSecurityIncidentSummary }) {
   const [error, action, pending] = useActionState(updateSecurityIncidentStatus, undefined);
+  const [notesError, notesAction, notesPending] = useActionState(updateSecurityIncidentNotes, undefined);
   const nextOptions = NEXT_STATUS_OPTIONS[incident.status];
 
   return (
@@ -65,6 +67,28 @@ export function IncidentRow({ incident }: { incident: AdminSecurityIncidentSumma
           {error}
         </p>
       )}
+
+      <form action={notesAction} className="space-y-2">
+        <input type="hidden" name="incidentId" value={incident.id} />
+        <label htmlFor={`notes-${incident.id}`} className="text-xs font-medium text-muted-foreground">
+          Triage notes
+        </label>
+        <Textarea
+          id={`notes-${incident.id}`}
+          name="notes"
+          defaultValue={incident.notes ?? ""}
+          placeholder="Internal triage commentary (never client/case content)."
+          className="min-h-[60px] text-sm"
+        />
+        <Button type="submit" size="sm" variant="outline" disabled={notesPending}>
+          Save notes
+        </Button>
+        {notesError && (
+          <p className="text-xs font-medium text-destructive" role="alert">
+            {notesError}
+          </p>
+        )}
+      </form>
     </div>
   );
 }

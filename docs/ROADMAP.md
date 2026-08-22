@@ -1432,10 +1432,13 @@ save recording" workflow described in the project goals works end-to-end.
       are all implemented and tested (pre-meeting production-hardening
       pass; see `docs/SECURITY.md`'s "MFA/2FA status"). **Still open**:
       real staff enrollment hasn't happened — fictional development
-      accounts only, no real Frye staff account exists yet. Password-step
-      rate limiting, forced sign-out on deactivation, and a dedicated
-      security review after demo feedback all remain outstanding before
-      any real account uses this.
+      accounts only, no real Frye staff account exists yet. An
+      account-level password-attempt cooldown now exists (final
+      internal-hardening pass; see `docs/SECURITY.md`'s "Rate limiting
+      status"), but IP/global-level rate limiting (a WAF or Redis-backed
+      limiter), forced sign-out on deactivation, and a dedicated security
+      review after demo feedback all remain outstanding before any real
+      account uses this.
 - [ ] Formal backup/disaster-recovery testing.
 
 ## Explicitly deferred (do not build until asked)

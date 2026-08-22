@@ -6,9 +6,14 @@ import { prisma } from "@/lib/db";
  * only place this is invoked from) and opens a SecurityIncident once the
  * same account accumulates SUSPICIOUS_LOGIN_THRESHOLD failures inside
  * SUSPICIOUS_LOGIN_WINDOW_MS. This is a configurable demonstration rule,
- * not an industry-standard threshold (see docs/SECURITY.md) — never a
- * substitute for real rate limiting on the password step, which remains a
- * documented, separate gap.
+ * not an industry-standard threshold (see docs/SECURITY.md) — this is
+ * detection/alerting for a human to triage, not the thing that actually
+ * blocks a password attempt. The rows this writes are also read by
+ * lib/security/password-cooldown.ts, which is what actually blocks
+ * further password attempts once an account crosses its own threshold;
+ * the two are independent (different thresholds, different purposes) but
+ * share the same underlying FailedLoginAttempt data rather than tracking
+ * failures twice.
  *
  * Deliberately never records or derives anything from the attempted
  * password itself.
