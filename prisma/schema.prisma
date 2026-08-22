@@ -139,6 +139,14 @@ enum SecurityIncidentStatus {
   FALSE_POSITIVE
 }
 
+/// Intake providers an `ExternalLeadLink` can come from. One value today;
+/// adding a second provider is additive (a new value here plus new
+/// `ExternalLeadLink` rows), never a change to `Client` or this enum's
+/// existing values.
+enum ExternalLeadProvider {
+  LOOP_HIGHLEVEL
+}
+
 // --- Core entities ---------------------------------------------------------
 
 /// Firm staff account. `passwordHash` is the first authentication factor;
@@ -266,7 +274,30 @@ model Client {
   archivedById String?
   archivedBy   User?     @relation("ClientArchivedBy", fields: [archivedById], references: [id], onDelete: SetNull)
 
-  matters Matter[]
+  matters           Matter[]
+  externalLeadLinks ExternalLeadLink[]
+}
+
+/// Durable mapping from one external intake provider's contact/lead id to
+/// the Frye `Client` it has been linked to — see lib/intake/linking.ts.
+/// Exists specifically so a repeated/retried intake delivery for the same
+/// external contact can be recognized before creating a second Client:
+/// `@@unique([provider, externalId])` makes that a database-level
+/// guarantee, not just an application-level check-then-act. Deliberately a
+/// separate model rather than a column on `Client` (e.g.
+/// `externalIntakeId`) so a second intake provider can be added later with
+/// zero change to `Client` — just a new `ExternalLeadProvider` value and
+/// new rows.
+model ExternalLeadLink {
+  id         String               @id @default(cuid())
+  provider   ExternalLeadProvider
+  externalId String
+  clientId   String
+  client     Client               @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  linkedAt   DateTime             @default(now())
+
+  @@unique([provider, externalId])
+  @@index([clientId])
 }
 
 /// A single criminal matter/case for a Client. This is the hub every other
@@ -515,13 +546,18 @@ model Document {
 /// A phone call. `matterId` is nullable to represent the "unfiled call"
 /// state (received, not yet attached to a matter) from the planned Vonage
 /// workflow — no telephony integration exists yet; rows here are manually
-/// logged or seeded.
+/// logged or seeded. `vonageCallId` is `@unique` (Postgres treats every
+/// `NULL` as distinct, so every manually-logged call — which never sets
+/// it — is unaffected) so a duplicate/retried Vonage webhook delivery for
+/// the same external call can never create two rows: the second insert
+/// fails the constraint instead of racing a check-then-act read (see
+/// lib/telephony/ingest.ts).
 model Call {
   id                   String        @id @default(cuid())
   matterId             String?
   matter               Matter?       @relation(fields: [matterId], references: [id], onDelete: SetNull)
   contactName          String?
-  vonageCallId         String?
+  vonageCallId         String?       @unique
   direction            CallDirection
   fromNumber           String
   toNumber             String

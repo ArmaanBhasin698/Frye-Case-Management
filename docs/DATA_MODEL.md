@@ -129,6 +129,23 @@ Person or entity the firm represents.
   roster (real as of the seventeenth session, see `docs/ROADMAP.md`).
   Archiving a Client is blocked while it has any `OPEN`/`PENDING` Matter.
 - One Client can have multiple Matters over time (repeat client).
+- Zero or more `ExternalLeadLink` rows (see below) — added during the
+  pre-integration hardening pass so a Loop/HighLevel contact can be
+  durably, idempotently mapped to this Client.
+
+### ExternalLeadLink
+Durable mapping from one external intake provider's contact/lead id to
+the `Client` it's been linked to (`lib/intake/linking.ts`). Added during
+the pre-integration hardening pass specifically so a repeated/retried
+intake webhook delivery can't create a duplicate `Client`.
+- `id`, `provider` (`ExternalLeadProvider` enum — `LOOP_HIGHLEVEL` today),
+  `externalId` (the provider's own contact/lead id), `clientId` (FK →
+  Client, `onDelete: Cascade`), `linkedAt`.
+- `@@unique([provider, externalId])` — the actual, database-level
+  guarantee that one external contact never maps to two different
+  Clients; a second intake provider is additive (a new enum value, new
+  rows), never a `Client` schema change. No write path automatically
+  creates a `Client` from this yet — see `lib/intake/README.md`.
 
 ### Contact
 Anyone relevant to a case who is not the client.
@@ -200,8 +217,13 @@ the dedicated Call record).
 Phone call — designed around future Vonage sync.
 - `id`, `matterId` (FK, nullable until filed), `contactName` (free text,
   nullable — no `Contact` entity exists yet, see "Notes on design
-  choices" below), `vonageCallId` (nullable until integration exists),
-  `direction`, `fromNumber`, `toNumber`, `occurredAt`, `durationSeconds`,
+  choices" below), `vonageCallId` (nullable until integration exists,
+  `@unique` as of the pre-integration hardening pass — Postgres treats
+  every `NULL` as distinct, so every manually-logged call is unaffected;
+  the constraint only matters once a real external call id is present,
+  and makes `lib/telephony/ingest.ts`'s idempotent-by-`vonageCallId`
+  ingestion atomic rather than a check-then-act race), `direction`,
+  `fromNumber`, `toNumber`, `occurredAt`, `durationSeconds`,
   `recordingDropboxPath` (nullable), `flagged` (boolean), `notes`,
   `filedBy` (FK → User, nullable), `filedAt` (nullable), `createdAt`.
 - Unfiled calls (no `matterId`) represent the "search/flag/attach to a

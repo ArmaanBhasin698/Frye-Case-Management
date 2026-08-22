@@ -10,7 +10,9 @@ vi.mock("@/lib/storage/DropboxDocumentStore", () => ({
   DropboxDocumentStore: dropboxStoreCtor,
 }));
 
-const { createDocumentStore, LocalDocumentStore } = await import("@/lib/storage/DocumentStore");
+const { createDocumentStore, LocalDocumentStore, DocumentNotFoundError, DocumentAlreadyExistsError } = await import(
+  "@/lib/storage/DocumentStore"
+);
 
 const ENV_KEYS = ["STORAGE_PROVIDER", "DROPBOX_APP_KEY", "DROPBOX_APP_SECRET", "DROPBOX_REFRESH_TOKEN"] as const;
 let savedEnv: Record<string, string | undefined>;
@@ -98,5 +100,23 @@ describe("LocalDocumentStore (regression check)", () => {
   it("still refuses to resolve a key that escapes the store root", async () => {
     const store = new LocalDocumentStore(tempDir);
     await expect(store.read("../../etc/passwd")).rejects.toThrow();
+  });
+
+  it("throws DocumentNotFoundError for a key that was never saved", async () => {
+    const store = new LocalDocumentStore(tempDir);
+    await expect(store.read("never/saved")).rejects.toBeInstanceOf(DocumentNotFoundError);
+  });
+
+  it("throws DocumentAlreadyExistsError on a second save to the same key, without touching the original bytes", async () => {
+    const store = new LocalDocumentStore(tempDir);
+    const original = Buffer.from("original fictional bytes");
+
+    await store.save("matters/m1/documents/d1/original", original);
+    await expect(store.save("matters/m1/documents/d1/original", Buffer.from("retry replay bytes"))).rejects.toBeInstanceOf(
+      DocumentAlreadyExistsError,
+    );
+
+    const stillOriginal = await store.read("matters/m1/documents/d1/original");
+    expect(Buffer.compare(stillOriginal, original)).toBe(0);
   });
 });

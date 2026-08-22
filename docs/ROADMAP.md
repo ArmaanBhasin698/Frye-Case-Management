@@ -1420,8 +1420,17 @@ save recording" workflow described in the project goals works end-to-end.
 
 ## Later / not yet scheduled
 
+- [x] **Pre-integration scaffolding pass** (`integration/prep-scaffolding`
+      branch) — normalization/idempotency/authorization-boundary
+      groundwork for Dropbox, Vonage, and Loop/HighLevel, using only
+      fictional fixtures and local/mock code; no external service was
+      connected. See `docs/INTEGRATION_ARCHITECTURE.md` for the full
+      write-up, including the schema decision still needed before
+      automatic Loop/HighLevel intake can be idempotent.
 - [ ] Loop/HighLevel intake handoff (bring a new client from lead → Matter
-      automatically or semi-automatically).
+      automatically or semi-automatically). Normalization/mapping
+      scaffolding exists (`lib/intake/`); the actual webhook, real API
+      calls, and the schema decision for idempotent dedup are still open.
 - [ ] monday.com replacement for tasks/workflows firm-wide (if still
       desired once native Tasks are in daily use).
 - [ ] QuickBooks Online integration for billing/accounting.
