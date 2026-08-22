@@ -1,4 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma } from "@prisma/client";
+
+/** A real PrismaClientKnownRequestError instance, for exercising the isForeignKeyConstraintError catch path. */
+function fakePrismaError(code: string): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError(`Simulated ${code}`, { code, clientVersion: "test" });
+}
 
 const {
   requireCurrentUserMock,
@@ -124,6 +130,15 @@ describe("createDiscoveryProduction", () => {
         metadata: { label: "Initial Production", batesPrefix: "ELLIS" },
       },
     });
+  });
+
+  it("returns a generic not-found instead of throwing when matterId is a forged/nonexistent id (e.g. an ADMIN whose hasMatterAccess bypasses the assignment check)", async () => {
+    prismaMock.discoveryProduction.create.mockRejectedValue(fakePrismaError("P2003"));
+    const result = await createDiscoveryProduction(
+      { error: null },
+      formData({ matterId, label: "Initial Production", receivedDate: "2026-01-01" }),
+    );
+    expect(result.error).toBe("Not found or access denied.");
   });
 });
 

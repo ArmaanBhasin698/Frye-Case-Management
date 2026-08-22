@@ -4,8 +4,9 @@ import { prisma } from "@/lib/db";
  * DB-backed (not in-memory) lockout for the MFA second-factor step only —
  * durable across restarts/instances, unlike a per-process counter (see
  * docs/SECURITY.md's rate-limiting section, which rejects in-memory
- * counters for that reason). This does not cover the password step, which
- * remains a separately tracked, pre-existing gap.
+ * counters for that reason). This does not cover the password step; that
+ * one has its own, separately configured DB-backed cooldown — see
+ * lib/security/password-cooldown.ts.
  */
 
 const MAX_ATTEMPTS = 5;

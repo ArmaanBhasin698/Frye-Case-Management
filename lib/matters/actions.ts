@@ -119,9 +119,17 @@ export async function createNote(
     return { error: NOT_FOUND.error };
   }
 
-  const note = await prisma.note.create({
-    data: { matterId, authorId: user.id, body },
-  });
+  let note;
+  try {
+    note = await prisma.note.create({
+      data: { matterId, authorId: user.id, body },
+    });
+  } catch (error) {
+    if (isForeignKeyConstraintError(error)) {
+      return { error: NOT_FOUND.error };
+    }
+    throw error;
+  }
 
   await prisma.auditEvent.create({
     data: {

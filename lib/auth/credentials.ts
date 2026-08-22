@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import type { UserRole } from "@prisma/client";
 
 import { prisma } from "@/lib/db";
+import { isPasswordCooldownActive } from "@/lib/security/password-cooldown";
 
 export type VerifiedCredentialsUser = {
   id: string;
@@ -15,13 +16,23 @@ export type VerifiedCredentialsUser = {
 
 /**
  * First-factor (password) check, shared by the Credentials provider's
- * `authorize()` (lib/auth/config.ts) and the login Server Action
- * (app/(auth)/login/actions.ts) — one place decides "is this password
- * right for this active account," so the two callers can't drift.
+ * `authorize()` (lib/auth/config.ts), the login Server Action
+ * (app/(auth)/login/actions.ts), the forced password-change flow, and the
+ * MFA self-service/admin-reset password re-verification steps — one place
+ * decides "is this password right for this active account," so callers
+ * can't drift, and one place enforces the password-step cooldown below so
+ * every caller gets it for free.
+ *
+ * Returns `null` for a cooling-down account exactly as it does for a
+ * wrong password (see lib/security/password-cooldown.ts) — callers must
+ * never distinguish the two in the response they show a user, or the
+ * generic "invalid email or password" message stops being generic.
  */
 export async function verifyPassword(email: string, password: string): Promise<VerifiedCredentialsUser | null> {
   const user = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
   if (!user || !user.active) return null;
+
+  if (await isPasswordCooldownActive(user.id)) return null;
 
   const matches = await bcrypt.compare(password, user.passwordHash);
   if (!matches) return null;

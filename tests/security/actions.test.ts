@@ -13,7 +13,7 @@ vi.mock("next/cache", () => ({ revalidatePath: revalidatePathMock }));
 vi.mock("@/lib/db", () => ({ prisma: prismaMock }));
 vi.mock("@/lib/auth/session", () => ({ requireCurrentUser: requireCurrentUserMock }));
 
-const { updateSecurityIncidentStatus } = await import("@/lib/security/actions");
+const { updateSecurityIncidentStatus, updateSecurityIncidentNotes } = await import("@/lib/security/actions");
 
 const admin = { id: "admin-1", role: "ADMIN" as const };
 const staff = { id: "staff-1", role: "STAFF" as const };
@@ -131,6 +131,95 @@ describe("updateSecurityIncidentStatus — lifecycle transitions", () => {
     );
 
     expect(result).toMatch(/invalid request/i);
+    expect(prismaMock.securityIncident.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe("updateSecurityIncidentNotes", () => {
+  it("rejects a non-ADMIN (STAFF) caller without touching the database", async () => {
+    requireCurrentUserMock.mockResolvedValueOnce(staff);
+
+    const result = await updateSecurityIncidentNotes(undefined, formData({ incidentId: "incident-1", notes: "hi" }));
+
+    expect(result).toMatch(/not found or access denied/i);
+    expect(prismaMock.securityIncident.findUnique).not.toHaveBeenCalled();
+    expect(prismaMock.securityIncident.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a forged/nonexistent incident id for an admin", async () => {
+    requireCurrentUserMock.mockResolvedValueOnce(admin);
+    prismaMock.securityIncident.findUnique.mockResolvedValueOnce(null);
+
+    const result = await updateSecurityIncidentNotes(
+      undefined,
+      formData({ incidentId: "does-not-exist", notes: "hi" }),
+    );
+
+    expect(result).toMatch(/not found or access denied/i);
+    expect(prismaMock.securityIncident.update).not.toHaveBeenCalled();
+  });
+
+  it("saves new triage notes and audits only that notes changed, never the text itself", async () => {
+    requireCurrentUserMock.mockResolvedValueOnce(admin);
+    prismaMock.securityIncident.findUnique.mockResolvedValueOnce({ notes: null });
+
+    const result = await updateSecurityIncidentNotes(
+      undefined,
+      formData({ incidentId: "incident-1", notes: "Confirmed with the account holder, false alarm." }),
+    );
+
+    expect(result).toBeUndefined();
+    expect(prismaMock.securityIncident.update).toHaveBeenCalledWith({
+      where: { id: "incident-1" },
+      data: { notes: "Confirmed with the account holder, false alarm." },
+    });
+    expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
+      data: {
+        actorId: "admin-1",
+        action: "UPDATE",
+        entityType: "SecurityIncident",
+        entityId: "incident-1",
+        metadata: { field: "notes", notesChanged: true },
+      },
+    });
+  });
+
+  it("clears notes when submitted empty", async () => {
+    requireCurrentUserMock.mockResolvedValueOnce(admin);
+    prismaMock.securityIncident.findUnique.mockResolvedValueOnce({ notes: "old note" });
+
+    const result = await updateSecurityIncidentNotes(undefined, formData({ incidentId: "incident-1", notes: "" }));
+
+    expect(result).toBeUndefined();
+    expect(prismaMock.securityIncident.update).toHaveBeenCalledWith({
+      where: { id: "incident-1" },
+      data: { notes: null },
+    });
+  });
+
+  it("is a no-op (no write, no audit event) when the submitted notes match the existing value", async () => {
+    requireCurrentUserMock.mockResolvedValueOnce(admin);
+    prismaMock.securityIncident.findUnique.mockResolvedValueOnce({ notes: "same note" });
+
+    const result = await updateSecurityIncidentNotes(
+      undefined,
+      formData({ incidentId: "incident-1", notes: "same note" }),
+    );
+
+    expect(result).toBeUndefined();
+    expect(prismaMock.securityIncident.update).not.toHaveBeenCalled();
+    expect(prismaMock.auditEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects notes that exceed the length limit", async () => {
+    requireCurrentUserMock.mockResolvedValueOnce(admin);
+
+    const result = await updateSecurityIncidentNotes(
+      undefined,
+      formData({ incidentId: "incident-1", notes: "x".repeat(2_001) }),
+    );
+
+    expect(result).toMatch(/too long/i);
     expect(prismaMock.securityIncident.findUnique).not.toHaveBeenCalled();
   });
 });

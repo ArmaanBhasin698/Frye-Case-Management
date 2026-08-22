@@ -106,6 +106,12 @@ describe("createNote", () => {
       data: { actorId: user.id, action: "CREATE", entityType: "Note", entityId: "note-1", matterId },
     });
   });
+
+  it("returns a generic not-found instead of throwing when matterId is a forged/nonexistent id (e.g. an ADMIN whose hasMatterAccess bypasses the assignment check)", async () => {
+    prismaMock.note.create.mockRejectedValue(fakePrismaError("P2003"));
+    const result = await createNote({ error: null }, formData({ matterId, body: "Client called." }));
+    expect(result?.error).toBe("Not found or access denied.");
+  });
 });
 
 describe("updateNote", () => {

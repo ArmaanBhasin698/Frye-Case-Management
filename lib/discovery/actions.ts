@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import type { DiscoveryFileType } from "@prisma/client";
 
 import { prisma } from "@/lib/db";
@@ -47,6 +48,18 @@ const DISCOVERY_FILE_TYPES = [
 
 /** Generous for fictional/test files; this is a demo pipeline, not a real evidence-ingest system yet. */
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
+
+/**
+ * `hasMatterAccess` returns `true` for ADMIN unconditionally, without
+ * checking the matter actually exists (see lib/matters/actions.ts's
+ * identical helper/comment). A forged/nonexistent `matterId` from an ADMIN
+ * session reaches Postgres on `createDiscoveryProduction`'s insert and
+ * fails the FK constraint — caught here so that surfaces as the same
+ * generic "not found" every other denial gives, not an unhandled DB error.
+ */
+function isForeignKeyConstraintError(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2003";
+}
 
 // --- Productions -----------------------------------------------------------
 
@@ -95,9 +108,17 @@ export async function createDiscoveryProduction(
     return { error: NOT_FOUND.error };
   }
 
-  const production = await prisma.discoveryProduction.create({
-    data: { matterId, label, source, receivedDate: new Date(receivedDate), batesPrefix },
-  });
+  let production;
+  try {
+    production = await prisma.discoveryProduction.create({
+      data: { matterId, label, source, receivedDate: new Date(receivedDate), batesPrefix },
+    });
+  } catch (error) {
+    if (isForeignKeyConstraintError(error)) {
+      return { error: NOT_FOUND.error };
+    }
+    throw error;
+  }
 
   await prisma.auditEvent.create({
     data: {
