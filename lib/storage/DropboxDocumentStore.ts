@@ -38,6 +38,24 @@ function describeDropboxError(error: unknown): string {
  * touches the rest of a Dropbox account even when the connected app has
  * full-Dropbox access rather than the narrower "App folder" access type —
  * see docs/SECURITY.md.
+ *
+ * `save` already uses `mode: { ".tag": "add" }`, which the real Dropbox
+ * API refuses if the path already exists — matching the write-once
+ * contract in DocumentStore.ts, without needing any code change here.
+ *
+ * NOT YET DONE (needs a live/sandbox call to verify before relying on
+ * it): mapping Dropbox's specific error tags onto `DocumentNotFoundError`/
+ * `DocumentAlreadyExistsError` (see DocumentStore.ts). Today both `save`
+ * and `read` wrap every failure into one generic Error, deliberately
+ * unchanged by this pass — the documented Dropbox v2 API error shape for
+ * "not found" (`error.error['.tag'] === 'path'`,
+ * `error.error.path['.tag'] === 'not_found'` on download) and "conflict"
+ * (`error.error.reason['.tag'] === 'conflict'` on a non-overwriting
+ * upload) look stable, but this codebase has never made a real call
+ * against them, so hardcoding that tag-matching now would be guessing at
+ * an unverified contract. Verify against a live/sandbox call first, then
+ * narrow these two catch blocks to throw the typed errors for those
+ * specific tags and keep the generic wrap for everything else.
  */
 export class DropboxDocumentStore implements DocumentStore {
   private readonly client: Dropbox;

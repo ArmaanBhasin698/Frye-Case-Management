@@ -135,6 +135,10 @@ contract, so:
   the same authenticated-Route-Handler pattern Discovery's download route
   already established (see docs/SECURITY.md).
 
+See `docs/INTEGRATION_ARCHITECTURE.md` for the pre-integration scaffolding
+pass on top of this (the `DocumentNotFoundError`/`DocumentAlreadyExistsError`
+contract, and exactly what's left to wire up for real Dropbox behavior).
+
 **What's still required before Dropbox is safe for production use** (not
 done in this pass — see docs/SECURITY.md): a production Dropbox app (not
 a personal dev app), a real per-matter/per-firm folder convention instead
@@ -163,9 +167,12 @@ needs to call `prisma.call.create` (or an equivalent insert) the same way
 Communications) reads live from Postgres, so none of it needs to change
 shape when that integration lands.
 
-Still planned for behind an interface (e.g. `lib/telephony/CallProvider`,
-`lib/telephony/` currently only scaffolding) so that, when built, staff
-can:
+`lib/telephony/` now has real normalization/ingestion scaffolding
+(`normalizeVonageCallEvent`, `ingestVonageCallEvent`, `storeCallRecording`
+— see `docs/INTEGRATION_ARCHITECTURE.md`), exercised only against
+fictional fixtures; still no real Vonage adapter, webhook route, or
+recording fetch. Still planned for behind an interface so that, when
+built, staff can:
 
 - View/search call and SMS activity pulled automatically from Vonage,
   rather than typed in by hand.
@@ -229,7 +236,8 @@ fully unit tested and independent of the UI:
 │   ├── discovery/              # Bates numbering, identifiers, comparison logic
 │   ├── documents/               # General (non-discovery) matter document upload/edit
 │   ├── storage/                # DocumentStore interface (local disk + Dropbox implementations)
-│   ├── telephony/              # Vonage interface (future)
+│   ├── telephony/              # Vonage normalize/ingest/recording scaffolding (no real Vonage code yet)
+│   ├── intake/                 # Loop/HighLevel normalize/map scaffolding (no write path yet)
 │   ├── validation/             # Zod schemas
 │   └── utils/
 ├── prisma/

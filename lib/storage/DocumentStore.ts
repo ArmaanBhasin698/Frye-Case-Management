@@ -5,10 +5,45 @@
  * section. `LocalDocumentStore` below is a local-disk stand-in; swapping in
  * a Dropbox-backed implementation later means writing one class here, not
  * touching lib/discovery/ or any Server Action that calls `documentStore`.
+ *
+ * Contract every implementation must honor, so callers (and future
+ * provider adapters) get identical behavior regardless of backend:
+ * - `save` is write-once. Every key this app generates is a fresh id (see
+ *   lib/discovery/actions.ts, lib/documents/actions.ts) — a caller
+ *   `save`-ing to a key that already exists means something is wrong
+ *   (a retried request replaying an already-successful write, a key
+ *   collision), not an intentional overwrite. Implementations throw
+ *   `DocumentAlreadyExistsError` in that case rather than silently
+ *   overwriting. `DropboxDocumentStore` already does this (`mode: "add"`);
+ *   `LocalDocumentStore` matches it below.
+ * - `read` of a key that was never saved (or no longer exists) throws
+ *   `DocumentNotFoundError`, distinct from any other read failure, so a
+ *   caller that cares can tell "definitely missing" from "provider had a
+ *   problem" without parsing a message string. Existing callers (the
+ *   Document/Discovery download routes) don't need that distinction today
+ *   — they already catch any `read` failure and return the same generic
+ *   404 — but new code (e.g. the telephony recording-retrieval flow) can
+ *   rely on it directly instead of string-matching.
  */
 export interface DocumentStore {
   save(key: string, data: Buffer): Promise<void>;
   read(key: string): Promise<Buffer>;
+}
+
+/** Thrown by `read` when no data has ever been (or is no longer) stored at `key`. */
+export class DocumentNotFoundError extends Error {
+  constructor(key: string) {
+    super(`No document exists at key "${key}".`);
+    this.name = "DocumentNotFoundError";
+  }
+}
+
+/** Thrown by `save` when `key` already has data — every key this app generates should be fresh; a collision means retry/reuse, not an intentional overwrite. */
+export class DocumentAlreadyExistsError extends Error {
+  constructor(key: string) {
+    super(`A document already exists at key "${key}".`);
+    this.name = "DocumentAlreadyExistsError";
+  }
 }
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -36,11 +71,28 @@ export class LocalDocumentStore implements DocumentStore {
   async save(key: string, data: Buffer): Promise<void> {
     const filePath = this.resolve(key);
     await mkdir(path.dirname(filePath), { recursive: true });
-    await writeFile(filePath, data);
+    try {
+      // "wx": create-exclusive, same fail-if-exists semantics as
+      // DropboxDocumentStore's `mode: { ".tag": "add" }` — see the
+      // DocumentStore contract above.
+      await writeFile(filePath, data, { flag: "wx" });
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "EEXIST") {
+        throw new DocumentAlreadyExistsError(key);
+      }
+      throw error;
+    }
   }
 
   async read(key: string): Promise<Buffer> {
-    return readFile(this.resolve(key));
+    try {
+      return await readFile(this.resolve(key));
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        throw new DocumentNotFoundError(key);
+      }
+      throw error;
+    }
   }
 }
 
