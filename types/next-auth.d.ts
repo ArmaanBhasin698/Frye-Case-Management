@@ -13,12 +13,15 @@ declare module "@auth/core/types" {
   interface User {
     id: string;
     role: UserRole;
+    /** Epoch ms of User.sessionInvalidatedAt at sign-in time — see lib/auth/session.ts#getCurrentUser. */
+    sessionStamp: number;
   }
 
   interface Session {
     user: {
       id: string;
       role: UserRole;
+      sessionStamp: number;
     } & DefaultSession["user"];
   }
 }
@@ -27,5 +30,6 @@ declare module "@auth/core/jwt" {
   interface JWT {
     id: string;
     role: UserRole;
+    sessionStamp: number;
   }
 }

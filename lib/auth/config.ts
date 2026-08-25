@@ -61,7 +61,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           return null;
         }
 
-        return { id: user.id, name: user.name, email: user.email, role: user.role };
+        return { id: user.id, name: user.name, email: user.email, role: user.role, sessionStamp: user.sessionStamp };
       },
     }),
     Credentials({
@@ -88,11 +88,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         }
 
         const user = await prisma.user.findUnique({ where: { id: consumed.userId } });
-        if (!user || !user.active) {
+        if (!user || user.status !== "ACTIVE") {
           return null;
         }
 
-        return { id: user.id, name: user.name, email: user.email, role: user.role };
+        return {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          sessionStamp: user.sessionInvalidatedAt?.getTime() ?? 0,
+        };
       },
     }),
   ],
@@ -101,12 +107,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (user) {
         token.id = user.id;
         token.role = user.role;
+        token.sessionStamp = user.sessionStamp;
       }
       return token;
     },
     async session({ session, token }) {
       session.user.id = token.id;
       session.user.role = token.role;
+      session.user.sessionStamp = token.sessionStamp;
       return session;
     },
   },

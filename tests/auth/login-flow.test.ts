@@ -24,6 +24,7 @@ function user(overrides: Partial<VerifiedCredentialsUser> = {}): VerifiedCredent
     mfaEnabled: false,
     mfaRequired: false,
     mustChangePassword: false,
+    sessionStamp: 0,
     ...overrides,
   };
 }

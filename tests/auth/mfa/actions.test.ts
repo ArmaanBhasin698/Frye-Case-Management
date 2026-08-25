@@ -112,7 +112,7 @@ const {
 const mfaUser = {
   id: "user-1",
   email: "demo.user@fryelawgroup.example",
-  active: true,
+  status: "ACTIVE",
   mfaEnabled: true,
   totpSecretEncrypted: "enc(FAKESECRET)",
   totpLastUsedStep: null,
@@ -237,7 +237,7 @@ describe("confirmSelfEnrollment (self-service, already authenticated)", () => {
 describe("confirmForcedEnrollment / finishForcedEnrollment (pre-session, mfaRequired)", () => {
   it("enables MFA on valid confirmation but does not by itself complete sign-in", async () => {
     readPendingTicketMock.mockResolvedValueOnce({ id: "pending-1", userId: "user-1" });
-    prismaMock.user.findUnique.mockResolvedValueOnce({ id: "user-1", active: true, mfaEnabled: false });
+    prismaMock.user.findUnique.mockResolvedValueOnce({ id: "user-1", status: "ACTIVE", mfaEnabled: false });
     readEnrollmentTicketMock.mockResolvedValueOnce({ id: "enroll-1", encryptedSecret: "enc(FAKESECRET)" });
     verifyEnrollmentCodeMock.mockResolvedValueOnce(7);
     consumeEnrollmentTicketMock.mockResolvedValueOnce(true);
@@ -270,7 +270,7 @@ describe("disableMfa / regenerateRecoveryCodes (re-auth required)", () => {
   const enabledUser = {
     id: "user-1",
     email: "demo.user@fryelawgroup.example",
-    active: true,
+    status: "ACTIVE",
     mfaEnabled: true,
     totpSecretEncrypted: "enc(FAKESECRET)",
     totpLastUsedStep: null,
@@ -355,7 +355,7 @@ describe("adminResetMfa (ADMIN-only, admin re-auth required)", () => {
   const adminRecordNoMfa = {
     id: "admin-1",
     email: "admin@fryelawgroup.example",
-    active: true,
+    status: "ACTIVE",
     mfaEnabled: false,
     totpSecretEncrypted: null,
     totpLastUsedStep: null,
@@ -461,9 +461,22 @@ describe("adminResetMfa (ADMIN-only, admin re-auth required)", () => {
         totpLastUsedStep: null,
         mfaFailedAttempts: 0,
         mfaLockedUntil: null,
+        sessionInvalidatedAt: expect.any(Date),
       },
     });
     expect(prismaMock.mfaRecoveryCode.deleteMany).toHaveBeenCalledWith({ where: { userId: "target-1" } });
+  });
+
+  it("ends the target's current session — clearing MFA is credential-equivalent to a password reset", async () => {
+    requireCurrentUserMock.mockResolvedValueOnce(admin);
+    prismaMock.user.findUnique.mockResolvedValueOnce(adminRecordNoMfa);
+    verifyPasswordMock.mockResolvedValueOnce({ id: admin.id });
+    prismaMock.user.findUnique.mockResolvedValueOnce(targetUser);
+
+    await adminResetMfa(undefined, formData({ userId: "target-1", adminPassword: "correct" }));
+
+    const updateCall = prismaMock.user.update.mock.calls[0]![0];
+    expect(updateCall.data.sessionInvalidatedAt).toBeInstanceOf(Date);
   });
 
   it("succeeds when the admin has MFA enabled and supplies a valid code", async () => {

@@ -82,12 +82,16 @@ export function assertIsAdmin(user: AuthorizableUser): void {
 }
 
 /**
- * Can `user` edit an *existing* Matter's own fields (not its sub-resources)
- * or its MatterAssignment roster? Admins always can. An ATTORNEY may, but
- * only for a matter they're actually assigned to — editing a matter they
- * have no other access to would bypass matter-level authorization entirely.
- * PARALEGAL/STAFF never can, regardless of assignment (see
+ * Can `user` edit an *existing* Matter's own case-detail fields (court,
+ * charges, case number, status, ...)? Admins always can. An ATTORNEY may,
+ * but only for a matter they're actually assigned to (in any capacity,
+ * LEAD or ASSOCIATE) — editing a matter they have no other access to
+ * would bypass matter-level authorization entirely. PARALEGAL/STAFF never
+ * can, regardless of assignment (see
  * lib/auth/authorization.ts#canManageClientsAndMatters).
+ *
+ * Deliberately does **not** cover the MatterAssignment roster itself —
+ * see `canManageMatterTeam` below for that narrower rule.
  */
 export async function canEditMatter(user: AuthorizableUser, matterId: string): Promise<boolean> {
   if (isAdmin(user)) return true;
@@ -100,4 +104,30 @@ export async function assertCanEditMatter(user: AuthorizableUser, matterId: stri
   if (!(await canEditMatter(user, matterId))) {
     notFound();
   }
+}
+
+/** Whether `user` is assigned to `matterId` specifically as `LEAD_ATTORNEY` (not merely ASSOCIATE_ATTORNEY, PARALEGAL, or STAFF). */
+export async function isLeadAttorneyOfMatter(user: AuthorizableUser, matterId: string): Promise<boolean> {
+  const assignment = await prisma.matterAssignment.findUnique({
+    where: { matterId_userId: { matterId, userId: user.id } },
+    select: { role: true },
+  });
+  return assignment?.role === "LEAD_ATTORNEY";
+}
+
+/**
+ * Can `user` add/remove who's on a Matter's team, or change who its lead
+ * attorney is? Deliberately narrower than `canEditMatter`: an
+ * ASSOCIATE_ATTORNEY can edit case-detail fields (per `canEditMatter`
+ * above) but must NOT be able to reshape the team — only the matter's own
+ * LEAD_ATTORNEY, or an ADMIN, may. This is what actually enforces "the
+ * lead attorney manages who's on their matter" (see
+ * lib/matters/actions.ts#addMatterAssignment/removeMatterAssignment) —
+ * never a company-wide role change, which stays exclusively under
+ * lib/admin/users/actions.ts's ADMIN-only gate.
+ */
+export async function canManageMatterTeam(user: AuthorizableUser, matterId: string): Promise<boolean> {
+  if (isAdmin(user)) return true;
+  if (user.role !== "ATTORNEY") return false;
+  return isLeadAttorneyOfMatter(user, matterId);
 }

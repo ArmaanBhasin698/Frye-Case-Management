@@ -15,7 +15,7 @@ import type {
 } from "@prisma/client";
 
 import { prisma } from "@/lib/db";
-import { canEditMatter, hasMatterAccess } from "@/lib/auth/access";
+import { canEditMatter, canManageMatterTeam, hasMatterAccess } from "@/lib/auth/access";
 import { requireCurrentUser } from "@/lib/auth/session";
 import { canManageClientsAndMatters } from "@/lib/auth/authorization";
 import { diffFields } from "@/lib/utils";
@@ -380,9 +380,9 @@ export async function updateTask(
   if (assignedToId) {
     const candidate = await prisma.user.findUnique({
       where: { id: assignedToId },
-      select: { id: true, role: true, active: true },
+      select: { id: true, role: true, status: true },
     });
-    if (!candidate || !candidate.active) {
+    if (!candidate || candidate.status !== "ACTIVE") {
       return { error: "Selected assignee is invalid." };
     }
     if (!(await hasMatterAccess(candidate, matterId))) {
@@ -786,7 +786,7 @@ export async function createMatter(
 
   const assignedUserIds = [...new Set(assignments.map((a) => a.userId))];
   const validUsers = await prisma.user.findMany({
-    where: { id: { in: assignedUserIds }, active: true },
+    where: { id: { in: assignedUserIds }, status: "ACTIVE" },
     select: { id: true },
   });
   if (validUsers.length !== assignedUserIds.length) {
@@ -1072,7 +1072,19 @@ const addAssignmentSchema = z.object({
   role: z.enum(ASSIGNMENT_ROLE_VALUES),
 });
 
-/** Called directly from the Edit Matter page's "Add assignment" control, not a <form>. */
+/**
+ * Called directly from the Edit Matter page's "Add assignment" control,
+ * not a <form>. Gated by `canManageMatterTeam` — the matter's own
+ * LEAD_ATTORNEY, or an ADMIN — deliberately narrower than `canEditMatter`
+ * (which also allows an ASSOCIATE_ATTORNEY to edit case-detail fields but
+ * must not be able to reshape who's on the team).
+ *
+ * Adding a second `LEAD_ATTORNEY` doesn't create two leads: the matter's
+ * existing lead assignment (if any) is atomically demoted to
+ * `ASSOCIATE_ATTORNEY` in the same transaction — this is how "change the
+ * lead attorney" works, through the same Add control, without inventing a
+ * separate UI just to swap that one role.
+ */
 export async function addMatterAssignment(input: {
   matterId: string;
   userId: string;
@@ -1086,18 +1098,35 @@ export async function addMatterAssignment(input: {
   }
   const { matterId, userId, role } = parsed.data;
 
-  if (!(await canEditMatter(user, matterId))) {
+  if (!(await canManageMatterTeam(user, matterId))) {
     return NOT_FOUND;
   }
 
-  const targetUser = await prisma.user.findUnique({ where: { id: userId }, select: { active: true } });
-  if (!targetUser || !targetUser.active) {
+  const targetUser = await prisma.user.findUnique({ where: { id: userId }, select: { status: true } });
+  if (!targetUser || targetUser.status !== "ACTIVE") {
     return { ok: false, error: "Selected staff member is invalid." };
   }
 
   let assignment;
+  let previousLeadUserId: string | null = null;
   try {
-    assignment = await prisma.matterAssignment.create({ data: { matterId, userId, role } });
+    if (role === "LEAD_ATTORNEY") {
+      const existingLead = await prisma.matterAssignment.findFirst({
+        where: { matterId, role: "LEAD_ATTORNEY" },
+      });
+      if (existingLead) {
+        const [, created] = await prisma.$transaction([
+          prisma.matterAssignment.update({ where: { id: existingLead.id }, data: { role: "ASSOCIATE_ATTORNEY" } }),
+          prisma.matterAssignment.create({ data: { matterId, userId, role } }),
+        ]);
+        assignment = created;
+        previousLeadUserId = existingLead.userId;
+      } else {
+        assignment = await prisma.matterAssignment.create({ data: { matterId, userId, role } });
+      }
+    } else {
+      assignment = await prisma.matterAssignment.create({ data: { matterId, userId, role } });
+    }
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       return { ok: false, error: "That staff member is already assigned to this matter." };
@@ -1113,9 +1142,21 @@ export async function addMatterAssignment(input: {
       entityType: "MatterAssignment",
       entityId: assignment.id,
       matterId,
-      metadata: { userId, role },
+      metadata: { userId, role, ...(previousLeadUserId ? { leadAttorneyChanged: true, previousLeadUserId } : {}) },
     },
   });
+  if (previousLeadUserId) {
+    await prisma.auditEvent.create({
+      data: {
+        actorId: user.id,
+        action: "UPDATE",
+        entityType: "MatterAssignment",
+        entityId: previousLeadUserId,
+        matterId,
+        metadata: { field: "role", from: "LEAD_ATTORNEY", to: "ASSOCIATE_ATTORNEY", userId: previousLeadUserId },
+      },
+    });
+  }
 
   revalidatePath(`/matters/${matterId}`);
   revalidatePath(`/matters/${matterId}/edit`);
@@ -1128,7 +1169,7 @@ const removeAssignmentSchema = z.object({
   assignmentId: cuid,
 });
 
-/** Called directly from the Edit Matter page's "Remove" control, not a <form>. */
+/** Called directly from the Edit Matter page's "Remove" control, not a <form>. Gated by `canManageMatterTeam` — see `addMatterAssignment` above. */
 export async function removeMatterAssignment(input: {
   matterId: string;
   assignmentId: string;
@@ -1141,7 +1182,7 @@ export async function removeMatterAssignment(input: {
   }
   const { matterId, assignmentId } = parsed.data;
 
-  if (!(await canEditMatter(user, matterId))) {
+  if (!(await canManageMatterTeam(user, matterId))) {
     return NOT_FOUND;
   }
 

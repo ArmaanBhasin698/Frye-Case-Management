@@ -147,27 +147,28 @@ Still **not implemented** (tracked in `docs/ROADMAP.md`):
   (`lib/auth/config.ts`); no OAuth/SSO provider is configured.
 - Passwords hashed with bcrypt (`bcryptjs`, 10 rounds), never stored or
   logged in plaintext. **Implemented.**
-- Session-based auth via Auth.js, JWT strategy. **Partially implemented** —
-  as of the eighteenth session's hardening pass, the session now expires
-  after 12 hours (`session.maxAge`, `lib/auth/config.ts`) instead of
-  Auth.js's 30-day default, bounding how long a stolen session cookie stays
-  useful. **Still not implemented**: there is no way to force a sign-out on
-  role/assignment change or account deactivation before that expiry — a JWT
-  session isn't revocable server-side once issued. `/admin/users` now makes
-  deactivation and role changes reachable through the app itself
-  (`lib/admin/users/actions.ts`, pre-meeting production-hardening pass) —
-  which means this is now a **live** gap, not the latent one it used to be
-  when no in-app path to deactivate/role-change existed at all: an admin
-  deactivating a user through the UI does not immediately end that user's
-  existing session, which can remain valid for up to 12 hours. Closing it
-  fully needs one of: (a) a DB check added to the `jwt` callback on every
-  request (works today, but adds a query to every session check — a
-  deliberate latency/DB-load trade-off), or (b) switching to the database
-  session strategy (a session row per login, revocable by deleting it) — a
-  larger, deliberate architecture change, not something to do incidentally
-  alongside an unrelated feature. **Explicit decision needed from the firm
-  before real accounts rely on deactivation** (see "Open items for later
-  phases" below) on whether this residual window is acceptable.
+- Session-based auth via Auth.js, JWT strategy. Session expires after 12
+  hours (`session.maxAge`, `lib/auth/config.ts`) instead of Auth.js's
+  30-day default, bounding how long a stolen session cookie stays useful.
+  **Session revocation on sensitive change: implemented**, as of the
+  employee-signup/user-management pass — the gap previously documented
+  here (an admin deactivating a user not ending their existing session for
+  up to 12 hours) is closed via option (a) below, applied at the layer
+  this app already funnels every protected request through rather than
+  inside Auth.js's own callbacks: `lib/auth/session.ts#getCurrentUser`
+  re-fetches `status`/`role` from the database on every call, and a new
+  `User.sessionInvalidatedAt` column (bumped on deactivation and on an
+  admin-initiated password/MFA reset) is compared against a `sessionStamp`
+  the JWT has carried since sign-in (see `types/next-auth.d.ts`) — a
+  session issued before the most recent bump is treated as signed out on
+  its very next request. Role changes don't need this: `role` is always
+  read fresh from the database in the same call, so a promotion/demotion
+  already takes effect on the next request without forcing a disruptive
+  full sign-out. The accepted trade-off is one extra DB read per
+  authenticated request — consistent with per-request reads this app
+  already does elsewhere (e.g. `lib/auth/access.ts#getAssignedMatterIds`).
+  Option (b) from the original note (switching to the database session
+  strategy entirely) remains a larger, not-yet-needed architecture change.
 - TOTP-based MFA, additive to the existing Credentials-provider flow.
   **Implemented, for fictional development accounts only** — see "MFA/2FA
   status" below for the full design and what's still deferred before any
@@ -402,19 +403,27 @@ this pass.
 
 - Role-based: `ADMIN`, `ATTORNEY`, `PARALEGAL`, `STAFF`
   (`prisma/schema.prisma`'s `UserRole` enum). **Implemented.**
-- **User management (added the pre-meeting production-hardening pass):**
-  creating a user, changing a role, activating/deactivating, and toggling
-  `mfaRequired` (`/admin/users`, `lib/admin/users/actions.ts`) are `ADMIN`
-  only — stricter than `canManageClientsAndMatters` below, which also
-  allows `ATTORNEY`. Every action independently re-checks `isAdmin()`
+- **User management (extended in the employee-signup/user-management
+  pass):** creating a user, approving a self-registered (`PENDING`)
+  account, changing a role, activating/deactivating, resetting a
+  password, toggling `mfaRequired`, and removing an account
+  (`/admin/users`, `lib/admin/users/actions.ts`) are `ADMIN` only —
+  stricter than `canManageClientsAndMatters` below, which also allows
+  `ATTORNEY`. Every action independently re-checks `isAdmin()`
   server-side (never trusts the page already did), blocks an admin from
-  changing their own role/activation through this path (self-lockout
-  guard), and blocks demoting or deactivating the last active `ADMIN` —
-  the firm should never end up with zero admins and no one left to run an
-  admin-assisted recovery. Admin-created accounts get a server-generated
-  temporary password (shown once, never logged) and
-  `mustChangePassword: true`; no admin ever chooses or sees a new
-  account's password.
+  changing their own role/status/MFA-requirement through this path
+  (self-lockout guard), and blocks demoting, deactivating, or removing the
+  last active `ADMIN` — the firm should never end up with zero admins and
+  no one left to run an admin-assisted recovery. Admin-created accounts
+  (and password resets on existing ones) get a server-generated temporary
+  password (shown once, never logged) and `mustChangePassword: true`; no
+  admin ever chooses or sees an account's real password. Public
+  self-registration (`/signup`, `lib/auth/signup.ts`) creates a `PENDING`
+  account with `role: STAFF` — the registrant never chooses a role, and
+  `PENDING` is denied login identically to a deactivated account until an
+  admin approves it (assigning the real role at that time). Account
+  removal is never a blind hard delete — see `docs/DATA_MODEL.md`'s
+  `User` entry for the archive-vs-delete boundary.
 - **Client/Matter management role rule (added the ninth session):** neither
   this document nor `docs/DATA_MODEL.md` previously said who may originate
   a brand-new Client or Matter — every other write path checks an
@@ -428,13 +437,23 @@ this pass.
     aren't matter-scoped in the data model (one client can span several
     matters with different staff), so this is a plain role gate, not a
     per-client assignment check.
-  - Editing an *existing* Matter's own fields (or its `MatterAssignment`
-    roster) additionally requires the existing matter-level check: an
-    `ADMIN` always can; an `ATTORNEY` must actually be assigned to that
-    matter, not just hold the role
-    (`lib/auth/access.ts#canEditMatter`/`assertCanEditMatter`, tested in
-    `tests/auth/access.test.ts`). A submitted `matterId` the caller isn't
-    assigned to is denied exactly like a nonexistent one.
+  - Editing an *existing* Matter's own case-detail fields additionally
+    requires the existing matter-level check: an `ADMIN` always can; an
+    `ATTORNEY` must actually be assigned to that matter, not just hold the
+    role (`lib/auth/access.ts#canEditMatter`/`assertCanEditMatter`, tested
+    in `tests/auth/access.test.ts`). A submitted `matterId` the caller
+    isn't assigned to is denied exactly like a nonexistent one.
+  - **Matter-team management is narrower still (added the employee-signup/
+    user-management pass):** adding/removing who's on a Matter's
+    `MatterAssignment` roster requires
+    `lib/auth/access.ts#canManageMatterTeam` — an `ADMIN`, or specifically
+    the matter's own `LEAD_ATTORNEY` assignment, never merely any assigned
+    `ATTORNEY`. An `ASSOCIATE_ATTORNEY` can edit case-detail fields per
+    the bullet above but cannot reshape the team. Assigning a second
+    `LEAD_ATTORNEY` doesn't create two leads — the previous one is
+    atomically demoted to `ASSOCIATE_ATTORNEY` in the same transaction
+    (`lib/matters/actions.ts#addMatterAssignment`), which is also how
+    "change the lead attorney" works, through the same control.
   - `PARALEGAL`/`STAFF` are unaffected everywhere else: full read/write
     access to Notes, Tasks, Calls, and Discovery on matters they're
     assigned to, unchanged. This rule only gates the Client/Matter records
@@ -922,9 +941,10 @@ Even at small scale, once real data is in the system:
   admin-assisted-reset identity-verification process (a firm policy
   decision code cannot make — see "MFA/2FA status" above) and the
   required-MFA rollout order.
-- Whether the JWT-revocability gap on deactivation (up to a 12-hour window
-  — see "Authentication" above) is acceptable to launch with, or must be
-  closed first.
+- ~~Whether the JWT-revocability gap on deactivation (up to a 12-hour
+  window) is acceptable to launch with, or must be closed first~~ —
+  **closed** in the employee-signup/user-management pass, see
+  "Authentication" above.
 - A final, dedicated security review after the firm demo and its
   feedback, before any real account or real case data is allowed — the
   pre-meeting hardening pass (this document's MFA/2FA, admin-reset, user

@@ -22,7 +22,8 @@ function dbUser(overrides: Partial<Record<string, unknown>> = {}) {
     name: "Demo User",
     email: "demo.user@fryelawgroup.example",
     role: "STAFF",
-    active: true,
+    status: "ACTIVE",
+    sessionInvalidatedAt: null,
     passwordHash: "",
     mfaEnabled: false,
     mfaRequired: false,
@@ -40,6 +41,7 @@ function user(overrides: Partial<VerifiedCredentialsUser> = {}): VerifiedCredent
     mfaEnabled: false,
     mfaRequired: false,
     mustChangePassword: false,
+    sessionStamp: 0,
     ...overrides,
   };
 }
@@ -64,6 +66,7 @@ describe("verifyPassword", () => {
       mfaEnabled: false,
       mfaRequired: false,
       mustChangePassword: false,
+      sessionStamp: 0,
     });
     expect(findUniqueUserMock).toHaveBeenCalledWith({ where: { email: "demo.user@fryelawgroup.example" } });
   });
@@ -84,7 +87,14 @@ describe("verifyPassword", () => {
   });
 
   it("returns null for a deactivated account without checking the cooldown", async () => {
-    findUniqueUserMock.mockResolvedValueOnce(dbUser({ active: false }));
+    findUniqueUserMock.mockResolvedValueOnce(dbUser({ status: "INACTIVE" }));
+
+    expect(await verifyPassword("demo.user@fryelawgroup.example", "anything")).toBeNull();
+    expect(isPasswordCooldownActiveMock).not.toHaveBeenCalled();
+  });
+
+  it("returns null for a PENDING (awaiting-approval) account, identically to a deactivated one", async () => {
+    findUniqueUserMock.mockResolvedValueOnce(dbUser({ status: "PENDING" }));
 
     expect(await verifyPassword("demo.user@fryelawgroup.example", "anything")).toBeNull();
     expect(isPasswordCooldownActiveMock).not.toHaveBeenCalled();

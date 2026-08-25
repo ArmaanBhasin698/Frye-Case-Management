@@ -2,15 +2,9 @@ import Link from "next/link";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Logo } from "@/components/shared/logo";
-import { LoginForm } from "./login-form";
+import { SignUpForm } from "./signup-form";
 
-export default async function LoginPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ callbackUrl?: string }>;
-}) {
-  const { callbackUrl } = await searchParams;
-
+export default function SignUpPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted/30 p-4">
       <div className="w-full max-w-sm space-y-6">
@@ -24,23 +18,22 @@ export default async function LoginPage({
 
         <Card>
           <CardHeader>
-            <CardTitle>Sign in</CardTitle>
-            <CardDescription>Internal staff access only.</CardDescription>
+            <CardTitle>Create your account</CardTitle>
+            <CardDescription>
+              For firm employees only. An administrator must approve your account before you can sign in — this does
+              not grant access to any case data by itself.
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            <LoginForm callbackUrl={callbackUrl ?? "/"} />
+            <SignUpForm />
           </CardContent>
         </Card>
 
-        <p className="text-center text-sm text-muted-foreground">
-          New employee?{" "}
-          <Link href="/signup" className="font-medium text-foreground hover:underline">
-            Create an account
-          </Link>
-        </p>
-
         <p className="text-center text-xs text-muted-foreground">
-          Development preview &mdash; fictional accounts only. See README for demo credentials.
+          Already have an account?{" "}
+          <Link href="/login" className="font-medium text-foreground hover:underline">
+            Sign in
+          </Link>
         </p>
       </div>
     </div>

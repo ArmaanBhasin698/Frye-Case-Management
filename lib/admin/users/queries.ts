@@ -18,7 +18,7 @@ export type AdminUserSummary = {
   email: string;
   name: string;
   role: "ADMIN" | "ATTORNEY" | "PARALEGAL" | "STAFF";
-  active: boolean;
+  status: "PENDING" | "ACTIVE" | "INACTIVE";
   mfaEnabled: boolean;
   mfaRequired: boolean;
   createdAt: Date;
@@ -31,11 +31,29 @@ export async function listUsersForAdmin(): Promise<AdminUserSummary[]> {
       email: true,
       name: true,
       role: true,
-      active: true,
+      status: true,
       mfaEnabled: true,
       mfaRequired: true,
       createdAt: true,
     },
     orderBy: { name: "asc" },
+  });
+}
+
+/** Self-registered accounts awaiting admin approval — the "Pending approvals" section of /admin/users. */
+export async function listPendingUsersForAdmin(): Promise<AdminUserSummary[]> {
+  return prisma.user.findMany({
+    where: { status: "PENDING" },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      role: true,
+      status: true,
+      mfaEnabled: true,
+      mfaRequired: true,
+      createdAt: true,
+    },
+    orderBy: { createdAt: "asc" },
   });
 }

@@ -78,20 +78,54 @@ erDiagram
 ### User
 Firm staff account.
 - `id`, `email` (unique), `name`, `passwordHash`, `role`
-  (`admin` | `attorney` | `paralegal` | `staff`), `active`, `createdAt`,
+  (`admin` | `attorney` | `paralegal` | `staff`), `status`, `createdAt`,
   `updatedAt`.
 - `passwordHash` is a real bcrypt hash as of the fourth session — Auth.js
   (`lib/auth/config.ts`) verifies it against the Credentials provider's
-  `authorize()` callback. `active: false` blocks login even with a correct
-  password — toggleable via `/admin/users` (`lib/admin/users/actions.ts`,
-  pre-meeting production-hardening pass; ADMIN only, with a last-active-admin
-  safety check).
+  `authorize()` callback.
+- `status` (`UserStatus`: `PENDING` | `ACTIVE` | `INACTIVE`) replaced the
+  old `active` boolean in the employee-signup/user-management pass — the
+  self-registration flow (`lib/auth/signup.ts`, public `/signup` page)
+  needed a distinct "awaiting admin approval" state that a plain boolean
+  couldn't represent alongside ordinary deactivation. `verifyPassword`
+  (`lib/auth/credentials.ts`) denies login for anything other than
+  `ACTIVE`, identically for `PENDING` and `INACTIVE` — the login path
+  never reveals which. Self-registered accounts always start `PENDING`
+  with `role: STAFF` (never chosen by the registrant); an ADMIN approval
+  (`lib/admin/users/actions.ts#approveUser`) is the only path to `ACTIVE`
+  for those, and is the point where the admin assigns the real role.
+  Admin-created accounts (`createUser`) start `ACTIVE` directly. Toggling
+  active/inactive, approving, changing role, resetting a password, and
+  archiving/deleting an account are all ADMIN-only
+  (`/admin/users`, `lib/admin/users/actions.ts`), each independently
+  re-checking `isAdmin()` and a last-active-admin safety check where
+  relevant (role change, deactivation, removal).
+- `sessionInvalidatedAt` — bumped on deactivation and on an admin-initiated
+  password/MFA reset. `lib/auth/session.ts#getCurrentUser` compares this
+  against a `sessionStamp` carried in the JWT since sign-in (see
+  `types/next-auth.d.ts`), re-verifying `status`/`role` against the
+  database on every request rather than trusting the JWT's claims for its
+  whole lifetime — this is what actually closes the session-revocation gap
+  previously documented below under "Authentication": an admin
+  deactivating/demoting a user, or resetting their password, now ends that
+  user's current session on their very next request instead of leaving it
+  valid for up to 12 hours. Ordinary role changes don't bump this — they
+  already take effect on the next request purely because `role` is always
+  read fresh from the database, without needing to force a full sign-out.
+- Account removal (`lib/admin/users/actions.ts#removeUser`) is never a
+  blind hard delete: an account with any historical relation (Matter
+  assignment, authored Note/Document/Call, AuditEvent, MFA record, etc.)
+  is archived instead — `status -> INACTIVE`, its MatterAssignment rows
+  removed, everything it authored/audited left untouched. Only a
+  genuinely never-used account (zero rows across every one of those
+  relations) is actually deleted.
 - `mustChangePassword` — set true for accounts created via `/admin/users`
   with a server-generated temporary password (never chosen by the admin,
-  shown to them exactly once). Blocks reaching the app until cleared by a
-  successful password change on `/login/change-password`, enforced the
-  same way MFA is — `authorize()` itself refuses to complete sign-in while
-  this is true. See `docs/SECURITY.md`'s "MFA/2FA status".
+  shown to them exactly once), and after an admin-initiated password
+  reset. Blocks reaching the app until cleared by a successful password
+  change on `/login/change-password`, enforced the same way MFA is —
+  `authorize()` itself refuses to complete sign-in while this is true. See
+  `docs/SECURITY.md`'s "MFA/2FA status".
 - `mfaEnabled`, `mfaRequired`, `totpSecretEncrypted`, `totpLastUsedStep`,
   `mfaFailedAttempts`, `mfaLockedUntil` back TOTP-based MFA (fictional
   accounts only — see `docs/SECURITY.md`'s "MFA/2FA status"). `mfaEnabled`
@@ -172,6 +206,16 @@ Join table: staff assigned to a matter.
   `assignedAt`.
 - Enforces who is authorized to view/act on a matter (see
   `docs/SECURITY.md`).
+- The `LEAD_ATTORNEY` role is also the basis for a narrower rule: only a
+  matter's own `LEAD_ATTORNEY` assignment, or an ADMIN, may add/remove who
+  is on that matter's team (`lib/auth/access.ts#canManageMatterTeam`) —
+  deliberately stricter than `canEditMatter`, which any assigned ATTORNEY
+  passes for editing case-detail fields. There is no database constraint
+  limiting a matter to one `LEAD_ATTORNEY`; it's an application-level
+  invariant instead — assigning a second `LEAD_ATTORNEY`
+  (`lib/matters/actions.ts#addMatterAssignment`) atomically demotes the
+  previous one to `ASSOCIATE_ATTORNEY` in the same transaction, which is
+  also how "change the lead attorney" works, through the same control.
 
 ### MatterContact
 Join table: contacts relevant to a matter.

@@ -59,7 +59,7 @@ export function getMatterForEdit(matterId: string) {
 /** Active staff, for the assignment picker on New/Edit Matter. */
 export function listAssignableUsers() {
   return prisma.user.findMany({
-    where: { active: true },
+    where: { status: "ACTIVE" },
     select: { id: true, name: true, role: true },
     orderBy: { name: "asc" },
   });
@@ -76,11 +76,11 @@ export function listAssignableUsers() {
 export async function getMatterAssignableUsers(matterId: string) {
   const [assignments, admins] = await Promise.all([
     prisma.matterAssignment.findMany({
-      where: { matterId, user: { active: true } },
+      where: { matterId, user: { status: "ACTIVE" } },
       select: { user: { select: { id: true, name: true } } },
     }),
     prisma.user.findMany({
-      where: { role: "ADMIN", active: true },
+      where: { role: "ADMIN", status: "ACTIVE" },
       select: { id: true, name: true },
     }),
   ]);

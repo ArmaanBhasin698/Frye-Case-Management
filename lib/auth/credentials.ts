@@ -12,6 +12,8 @@ export type VerifiedCredentialsUser = {
   mfaEnabled: boolean;
   mfaRequired: boolean;
   mustChangePassword: boolean;
+  /** Epoch ms of User.sessionInvalidatedAt, or 0 if never set — carried into the JWT so lib/auth/session.ts#getCurrentUser can detect a since-invalidated session. */
+  sessionStamp: number;
 };
 
 /**
@@ -30,7 +32,11 @@ export type VerifiedCredentialsUser = {
  */
 export async function verifyPassword(email: string, password: string): Promise<VerifiedCredentialsUser | null> {
   const user = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
-  if (!user || !user.active) return null;
+  // PENDING (awaiting admin approval) and INACTIVE (deactivated) are both
+  // denied here, identically to a wrong password — the login path never
+  // needs, or reveals, which of the three is true (see UserStatus in
+  // prisma/schema.prisma and docs/SECURITY.md's enumeration-safety notes).
+  if (!user || user.status !== "ACTIVE") return null;
 
   if (await isPasswordCooldownActive(user.id)) return null;
 
@@ -45,6 +51,7 @@ export async function verifyPassword(email: string, password: string): Promise<V
     mfaEnabled: user.mfaEnabled,
     mfaRequired: user.mfaRequired,
     mustChangePassword: user.mustChangePassword,
+    sessionStamp: user.sessionInvalidatedAt?.getTime() ?? 0,
   };
 }
 
