@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
-const { findManyMock } = vi.hoisted(() => ({ findManyMock: vi.fn() }));
+const { findManyMock, findUniqueMock } = vi.hoisted(() => ({ findManyMock: vi.fn(), findUniqueMock: vi.fn() }));
 
 vi.mock("@/lib/db", () => ({
   prisma: {
     matterAssignment: {
       findMany: findManyMock,
+      findUnique: findUniqueMock,
     },
   },
 }));
@@ -19,8 +20,15 @@ vi.mock("next/navigation", () => ({
   },
 }));
 
-const { assertCanEditMatter, assertCanManageClientsAndMatters, assertMatterAccess, canEditMatter, hasMatterAccess } =
-  await import("@/lib/auth/access");
+const {
+  assertCanEditMatter,
+  assertCanManageClientsAndMatters,
+  assertMatterAccess,
+  canEditMatter,
+  canManageMatterTeam,
+  hasMatterAccess,
+  isLeadAttorneyOfMatter,
+} = await import("@/lib/auth/access");
 
 const admin = { id: "user-admin", role: "ADMIN" as const };
 const attorney = { id: "user-attorney", role: "ATTORNEY" as const };
@@ -121,5 +129,56 @@ describe("assertCanEditMatter", () => {
   it("throws NEXT_NOT_FOUND for STAFF even when assigned", async () => {
     findManyMock.mockResolvedValueOnce([{ matterId: "matter-1" }]);
     await expect(assertCanEditMatter(staff, "matter-1")).rejects.toThrow("NEXT_NOT_FOUND");
+  });
+});
+
+describe("isLeadAttorneyOfMatter", () => {
+  it("returns true only when the assignment role is exactly LEAD_ATTORNEY", async () => {
+    findUniqueMock.mockResolvedValueOnce({ role: "LEAD_ATTORNEY" });
+    expect(await isLeadAttorneyOfMatter(attorney, "matter-1")).toBe(true);
+    expect(findUniqueMock).toHaveBeenCalledWith({
+      where: { matterId_userId: { matterId: "matter-1", userId: "user-attorney" } },
+      select: { role: true },
+    });
+  });
+
+  it("returns false for an ASSOCIATE_ATTORNEY assignment", async () => {
+    findUniqueMock.mockResolvedValueOnce({ role: "ASSOCIATE_ATTORNEY" });
+    expect(await isLeadAttorneyOfMatter(attorney, "matter-1")).toBe(false);
+  });
+
+  it("returns false when there is no assignment at all", async () => {
+    findUniqueMock.mockResolvedValueOnce(null);
+    expect(await isLeadAttorneyOfMatter(attorney, "matter-1")).toBe(false);
+  });
+});
+
+describe("canManageMatterTeam", () => {
+  it("returns true for an admin without querying the assignment", async () => {
+    findUniqueMock.mockClear();
+    expect(await canManageMatterTeam(admin, "matter-1")).toBe(true);
+    expect(findUniqueMock).not.toHaveBeenCalled();
+  });
+
+  it("returns false for PARALEGAL/STAFF regardless of assignment, without even querying it", async () => {
+    findUniqueMock.mockClear();
+    expect(await canManageMatterTeam(paralegal, "matter-1")).toBe(false);
+    expect(await canManageMatterTeam(staff, "matter-1")).toBe(false);
+    expect(findUniqueMock).not.toHaveBeenCalled();
+  });
+
+  it("returns true for the matter's own LEAD_ATTORNEY", async () => {
+    findUniqueMock.mockResolvedValueOnce({ role: "LEAD_ATTORNEY" });
+    expect(await canManageMatterTeam(attorney, "matter-1")).toBe(true);
+  });
+
+  it("returns false for an ATTORNEY assigned only as ASSOCIATE_ATTORNEY on this matter — broader canEditMatter access does not imply team-management access", async () => {
+    findUniqueMock.mockResolvedValueOnce({ role: "ASSOCIATE_ATTORNEY" });
+    expect(await canManageMatterTeam(attorney, "matter-1")).toBe(false);
+  });
+
+  it("returns false for an ATTORNEY who is LEAD_ATTORNEY on a different matter", async () => {
+    findUniqueMock.mockResolvedValueOnce(null);
+    expect(await canManageMatterTeam(attorney, "matter-2")).toBe(false);
   });
 });

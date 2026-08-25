@@ -6,28 +6,37 @@ function fakePrismaError(code: string): Prisma.PrismaClientKnownRequestError {
   return new Prisma.PrismaClientKnownRequestError(`Simulated ${code}`, { code, clientVersion: "test" });
 }
 
-const { requireCurrentUserMock, hasMatterAccessMock, canEditMatterMock, prismaMock, revalidatePathMock, redirectMock } =
-  vi.hoisted(() => ({
-    requireCurrentUserMock: vi.fn(),
-    hasMatterAccessMock: vi.fn(),
-    canEditMatterMock: vi.fn(),
-    revalidatePathMock: vi.fn(),
-    redirectMock: vi.fn(() => {
-      throw new Error("NEXT_REDIRECT");
-    }),
-    prismaMock: {
-      note: { create: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
-      task: { create: vi.fn(), updateMany: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
-      call: { updateMany: vi.fn(), create: vi.fn() },
-      client: { findUnique: vi.fn() },
-      user: { findMany: vi.fn(), findUnique: vi.fn() },
-      matter: { create: vi.fn(), update: vi.fn(), findUnique: vi.fn() },
-      matterAssignment: { create: vi.fn(), deleteMany: vi.fn(), count: vi.fn() },
-      deadline: { create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), findFirst: vi.fn() },
-      calendarEvent: { create: vi.fn(), update: vi.fn(), findFirst: vi.fn() },
-      auditEvent: { create: vi.fn() },
-    },
-  }));
+const {
+  requireCurrentUserMock,
+  hasMatterAccessMock,
+  canEditMatterMock,
+  canManageMatterTeamMock,
+  prismaMock,
+  revalidatePathMock,
+  redirectMock,
+} = vi.hoisted(() => ({
+  requireCurrentUserMock: vi.fn(),
+  hasMatterAccessMock: vi.fn(),
+  canEditMatterMock: vi.fn(),
+  canManageMatterTeamMock: vi.fn(),
+  revalidatePathMock: vi.fn(),
+  redirectMock: vi.fn(() => {
+    throw new Error("NEXT_REDIRECT");
+  }),
+  prismaMock: {
+    note: { create: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
+    task: { create: vi.fn(), updateMany: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
+    call: { updateMany: vi.fn(), create: vi.fn() },
+    client: { findUnique: vi.fn() },
+    user: { findMany: vi.fn(), findUnique: vi.fn() },
+    matter: { create: vi.fn(), update: vi.fn(), findUnique: vi.fn() },
+    matterAssignment: { create: vi.fn(), deleteMany: vi.fn(), count: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
+    deadline: { create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), findFirst: vi.fn() },
+    calendarEvent: { create: vi.fn(), update: vi.fn(), findFirst: vi.fn() },
+    auditEvent: { create: vi.fn() },
+    $transaction: vi.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
+  },
+}));
 
 vi.mock("next/cache", () => ({ revalidatePath: revalidatePathMock }));
 vi.mock("next/navigation", () => ({ redirect: redirectMock }));
@@ -35,6 +44,7 @@ vi.mock("@/lib/auth/session", () => ({ requireCurrentUser: requireCurrentUserMoc
 vi.mock("@/lib/auth/access", () => ({
   hasMatterAccess: hasMatterAccessMock,
   canEditMatter: canEditMatterMock,
+  canManageMatterTeam: canManageMatterTeamMock,
 }));
 vi.mock("@/lib/db", () => ({ prisma: prismaMock }));
 
@@ -75,6 +85,8 @@ beforeEach(() => {
   requireCurrentUserMock.mockResolvedValue(user);
   hasMatterAccessMock.mockResolvedValue(true);
   canEditMatterMock.mockResolvedValue(true);
+  canManageMatterTeamMock.mockResolvedValue(true);
+  prismaMock.$transaction.mockImplementation((ops: Promise<unknown>[]) => Promise.all(ops));
   redirectMock.mockImplementation(() => {
     throw new Error("NEXT_REDIRECT");
   });
@@ -380,7 +392,7 @@ describe("updateTask", () => {
     });
 
     it("rejects an inactive assignee even if the id is otherwise valid", async () => {
-      prismaMock.user.findUnique.mockResolvedValue({ id: assigneeId, role: "STAFF", active: false });
+      prismaMock.user.findUnique.mockResolvedValue({ id: assigneeId, role: "STAFF", status: "INACTIVE" });
       const result = await updateTask(
         { error: null },
         formData({ ...validFields, assignedToId: assigneeId }),
@@ -390,7 +402,7 @@ describe("updateTask", () => {
     });
 
     it("rejects an active user who has no access to this matter (not assigned, not admin) — a forged assignedToId can't assign an outsider", async () => {
-      prismaMock.user.findUnique.mockResolvedValue({ id: assigneeId, role: "STAFF", active: true });
+      prismaMock.user.findUnique.mockResolvedValue({ id: assigneeId, role: "STAFF", status: "ACTIVE" });
       // The caller's own matter access (checked first) succeeds; the
       // candidate assignee's matter access (checked second, against the
       // *candidate's* id/role) fails — hasMatterAccess is called with two
@@ -407,7 +419,7 @@ describe("updateTask", () => {
     });
 
     it("allows an active user who is genuinely assigned to the matter", async () => {
-      prismaMock.user.findUnique.mockResolvedValue({ id: assigneeId, role: "STAFF", active: true });
+      prismaMock.user.findUnique.mockResolvedValue({ id: assigneeId, role: "STAFF", status: "ACTIVE" });
       hasMatterAccessMock.mockResolvedValue(true);
       prismaMock.task.update.mockResolvedValue({});
       const result = await updateTask(
@@ -421,7 +433,7 @@ describe("updateTask", () => {
     });
 
     it("allows an ADMIN assignee regardless of matter assignment", async () => {
-      prismaMock.user.findUnique.mockResolvedValue({ id: assigneeId, role: "ADMIN", active: true });
+      prismaMock.user.findUnique.mockResolvedValue({ id: assigneeId, role: "ADMIN", status: "ACTIVE" });
       hasMatterAccessMock.mockImplementation(async (candidate: { id: string; role: string }) =>
         candidate.id === user.id || candidate.role === "ADMIN",
       );
@@ -998,11 +1010,23 @@ describe("reactivateMatter", () => {
 });
 
 describe("addMatterAssignment", () => {
-  it("denies adding an assignment when the caller can't edit this matter", async () => {
-    canEditMatterMock.mockResolvedValue(false);
+  it("denies adding an assignment when the caller can't manage this matter's team (not its lead attorney, not admin)", async () => {
+    canManageMatterTeamMock.mockResolvedValue(false);
     const result = await addMatterAssignment({ matterId, userId: "staff-2", role: "PARALEGAL" });
     expect(result).toEqual({ ok: false, error: "Not found or access denied." });
     expect(prismaMock.matterAssignment.create).not.toHaveBeenCalled();
+  });
+
+  it("uses canManageMatterTeam, not the broader canEditMatter, to authorize this action", async () => {
+    canManageMatterTeamMock.mockResolvedValue(true);
+    canEditMatterMock.mockResolvedValue(false); // deliberately different, to prove the right check is used
+    prismaMock.user.findUnique.mockResolvedValue({ status: "ACTIVE" });
+    prismaMock.matterAssignment.create.mockResolvedValue({ id: "assignment-2" });
+
+    const result = await addMatterAssignment({ matterId, userId: "staff-2", role: "PARALEGAL" });
+
+    expect(result.ok).toBe(true);
+    expect(canManageMatterTeamMock).toHaveBeenCalledWith(user, matterId);
   });
 
   it("rejects an inactive or nonexistent user", async () => {
@@ -1013,7 +1037,7 @@ describe("addMatterAssignment", () => {
   });
 
   it("adds the assignment and writes an audit event on success", async () => {
-    prismaMock.user.findUnique.mockResolvedValue({ active: true });
+    prismaMock.user.findUnique.mockResolvedValue({ status: "ACTIVE" });
     prismaMock.matterAssignment.create.mockResolvedValue({ id: "assignment-2" });
     const result = await addMatterAssignment({ matterId, userId: "staff-2", role: "PARALEGAL" });
     expect(result).toEqual({ ok: true, data: undefined });
@@ -1027,11 +1051,84 @@ describe("addMatterAssignment", () => {
       }),
     });
   });
+
+  it("adding a new LEAD_ATTORNEY with none existing yet just creates it, no demotion", async () => {
+    prismaMock.user.findUnique.mockResolvedValue({ status: "ACTIVE" });
+    prismaMock.matterAssignment.findFirst.mockResolvedValue(null);
+    prismaMock.matterAssignment.create.mockResolvedValue({ id: "assignment-lead" });
+
+    const result = await addMatterAssignment({ matterId, userId: "attorney-2", role: "LEAD_ATTORNEY" });
+
+    expect(result.ok).toBe(true);
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
+    expect(prismaMock.matterAssignment.create).toHaveBeenCalledWith({
+      data: { matterId, userId: "attorney-2", role: "LEAD_ATTORNEY" },
+    });
+    expect(prismaMock.auditEvent.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("changing the lead attorney atomically demotes the previous one to ASSOCIATE_ATTORNEY and audits both", async () => {
+    prismaMock.user.findUnique.mockResolvedValue({ status: "ACTIVE" });
+    prismaMock.matterAssignment.findFirst.mockResolvedValue({ id: "old-lead-assignment", userId: "attorney-old" });
+    prismaMock.matterAssignment.update.mockResolvedValue({ id: "old-lead-assignment", role: "ASSOCIATE_ATTORNEY" });
+    prismaMock.matterAssignment.create.mockResolvedValue({ id: "new-lead-assignment" });
+
+    const result = await addMatterAssignment({ matterId, userId: "attorney-new", role: "LEAD_ATTORNEY" });
+
+    expect(result.ok).toBe(true);
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
+    expect(prismaMock.$transaction.mock.calls[0]![0]).toHaveLength(2);
+    expect(prismaMock.matterAssignment.update).toHaveBeenCalledWith({
+      where: { id: "old-lead-assignment" },
+      data: { role: "ASSOCIATE_ATTORNEY" },
+    });
+    expect(prismaMock.matterAssignment.create).toHaveBeenCalledWith({
+      data: { matterId, userId: "attorney-new", role: "LEAD_ATTORNEY" },
+    });
+    // One CREATE for the new lead assignment, one UPDATE recording the demotion.
+    expect(prismaMock.auditEvent.create).toHaveBeenCalledTimes(2);
+    expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "CREATE",
+        entityType: "MatterAssignment",
+        entityId: "new-lead-assignment",
+        metadata: { userId: "attorney-new", role: "LEAD_ATTORNEY", leadAttorneyChanged: true, previousLeadUserId: "attorney-old" },
+      }),
+    });
+    expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "UPDATE",
+        entityType: "MatterAssignment",
+        entityId: "attorney-old",
+        metadata: { field: "role", from: "LEAD_ATTORNEY", to: "ASSOCIATE_ATTORNEY", userId: "attorney-old" },
+      }),
+    });
+  });
+
+  it("adding a non-LEAD_ATTORNEY role never checks for or demotes an existing lead", async () => {
+    prismaMock.user.findUnique.mockResolvedValue({ status: "ACTIVE" });
+    prismaMock.matterAssignment.create.mockResolvedValue({ id: "assignment-2" });
+
+    await addMatterAssignment({ matterId, userId: "staff-2", role: "STAFF" });
+
+    expect(prismaMock.matterAssignment.findFirst).not.toHaveBeenCalled();
+    expect(prismaMock.matterAssignment.update).not.toHaveBeenCalled();
+  });
+
+  it("resolves a concurrent double-add race with a clean message, not a raw DB error (same user assigned twice at once)", async () => {
+    prismaMock.user.findUnique.mockResolvedValue({ status: "ACTIVE" });
+    prismaMock.matterAssignment.create.mockRejectedValue(fakePrismaError("P2002"));
+
+    const result = await addMatterAssignment({ matterId, userId: "staff-2", role: "PARALEGAL" });
+
+    expect(result).toEqual({ ok: false, error: "That staff member is already assigned to this matter." });
+    expect(prismaMock.auditEvent.create).not.toHaveBeenCalled();
+  });
 });
 
 describe("removeMatterAssignment", () => {
-  it("denies removal when the caller can't edit this matter", async () => {
-    canEditMatterMock.mockResolvedValue(false);
+  it("denies removal when the caller can't manage this matter's team (not its lead attorney, not admin)", async () => {
+    canManageMatterTeamMock.mockResolvedValue(false);
     const result = await removeMatterAssignment({ matterId, assignmentId: "assignment-1" });
     expect(result).toEqual({ ok: false, error: "Not found or access denied." });
     expect(prismaMock.matterAssignment.deleteMany).not.toHaveBeenCalled();

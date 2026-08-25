@@ -1444,10 +1444,28 @@ save recording" workflow described in the project goals works end-to-end.
       accounts only, no real Frye staff account exists yet. An
       account-level password-attempt cooldown now exists (final
       internal-hardening pass; see `docs/SECURITY.md`'s "Rate limiting
-      status"), but IP/global-level rate limiting (a WAF or Redis-backed
-      limiter), forced sign-out on deactivation, and a dedicated security
-      review after demo feedback all remain outstanding before any real
-      account uses this.
+      status"). IP/global-level rate limiting (a WAF or Redis-backed
+      limiter) and a dedicated security review after demo feedback remain
+      outstanding before any real account uses this; forced sign-out on
+      deactivation is now implemented (see below).
+- [x] **Employee signup, admin user management, and Matter-team
+      permissions pass.** Public self-registration (`/signup`,
+      `lib/auth/signup.ts`) creating `PENDING` accounts; `User.status`
+      (`PENDING`/`ACTIVE`/`INACTIVE`) replaces the old `active` boolean;
+      `/admin/users` extended with approve/reset-password/archive-or-delete
+      alongside the existing create/role/activate/MFA-required actions;
+      session revocation on deactivation/password-reset now implemented
+      (`User.sessionInvalidatedAt` + a `sessionStamp` in the JWT, checked
+      in `lib/auth/session.ts#getCurrentUser` every request — closes the
+      gap noted just above and previously in `docs/SECURITY.md`);
+      Matter-team management (`addMatterAssignment`/`removeMatterAssignment`)
+      narrowed to a matter's own `LEAD_ATTORNEY` + `ADMIN`
+      (`lib/auth/access.ts#canManageMatterTeam`), with adding a new
+      `LEAD_ATTORNEY` atomically demoting the previous one. See
+      `docs/SECURITY.md`'s "Authentication"/"Authorization" sections and
+      `docs/DATA_MODEL.md`'s `User`/`MatterAssignment` entries for the
+      full write-up. **Still open**: real employee enrollment hasn't
+      happened — fictional development accounts only.
 - [ ] Formal backup/disaster-recovery testing.
 
 ## Explicitly deferred (do not build until asked)

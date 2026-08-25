@@ -16,12 +16,16 @@ export default auth((req) => {
   // challenge cookie, not a session (see lib/auth/mfa/tickets.ts) —
   // /login/change-password is reached the same pre-session way, just
   // without a ticket (see lib/auth/login-flow.ts) — all three belong in
-  // the same pre-session bucket as /login itself.
+  // the same pre-session bucket as /login itself. /signup is genuinely
+  // public — self-registration (lib/auth/signup.ts) has no session at
+  // all, and the resulting account starts PENDING regardless, so there's
+  // nothing gated here to protect.
   const isLoginPage =
     req.nextUrl.pathname === "/login" ||
     req.nextUrl.pathname === "/login/mfa" ||
     req.nextUrl.pathname.startsWith("/login/mfa/") ||
-    req.nextUrl.pathname === "/login/change-password";
+    req.nextUrl.pathname === "/login/change-password" ||
+    req.nextUrl.pathname === "/signup";
 
   if (!isLoggedIn && !isLoginPage) {
     const loginUrl = new URL("/login", req.nextUrl.origin);

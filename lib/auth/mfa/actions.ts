@@ -91,7 +91,7 @@ export async function verifyMfaChallenge(
   }
 
   const user = await prisma.user.findUnique({ where: { id: pending.userId } });
-  if (!user || !user.active || !user.mfaEnabled || !user.totpSecretEncrypted) {
+  if (!user || user.status !== "ACTIVE" || !user.mfaEnabled || !user.totpSecretEncrypted) {
     await clearPendingTicket();
     redirect("/login");
   }
@@ -125,7 +125,7 @@ export async function getForcedEnrollmentSetup(): Promise<{ otpauthUri: string; 
   if (!pending) return null;
 
   const user = await prisma.user.findUnique({ where: { id: pending.userId } });
-  if (!user || !user.active || user.mfaEnabled) return null;
+  if (!user || user.status !== "ACTIVE" || user.mfaEnabled) return null;
 
   const existing = await readEnrollmentTicket(user.id);
   if (existing) {
@@ -153,7 +153,7 @@ export async function confirmForcedEnrollment(
   }
 
   const user = await prisma.user.findUnique({ where: { id: pending.userId } });
-  if (!user || !user.active) {
+  if (!user || user.status !== "ACTIVE") {
     await clearPendingTicket();
     redirect("/login");
   }
@@ -296,7 +296,7 @@ export async function disableMfa(_prevState: string | undefined, formData: FormD
   }
 
   const dbUser = await prisma.user.findUnique({ where: { id: user.id } });
-  if (!dbUser || !dbUser.active) {
+  if (!dbUser || dbUser.status !== "ACTIVE") {
     redirect("/login");
   }
   if (!dbUser.mfaEnabled || !dbUser.totpSecretEncrypted) {
@@ -339,7 +339,7 @@ export async function regenerateRecoveryCodes(
   }
 
   const dbUser = await prisma.user.findUnique({ where: { id: user.id } });
-  if (!dbUser || !dbUser.active) {
+  if (!dbUser || dbUser.status !== "ACTIVE") {
     redirect("/login");
   }
   if (!dbUser.mfaEnabled || !dbUser.totpSecretEncrypted) {
@@ -408,7 +408,7 @@ export async function adminResetMfa(_prevState: string | undefined, formData: Fo
   }
 
   const adminRecord = await prisma.user.findUnique({ where: { id: admin.id } });
-  if (!adminRecord || !adminRecord.active) {
+  if (!adminRecord || adminRecord.status !== "ACTIVE") {
     redirect("/login");
   }
 
@@ -458,6 +458,14 @@ export async function adminResetMfa(_prevState: string | undefined, formData: Fo
       totpLastUsedStep: null,
       mfaFailedAttempts: 0,
       mfaLockedUntil: null,
+      // Same reasoning as lib/admin/users/actions.ts#resetUserPassword:
+      // wiping a credential (MFA enrollment is second-factor credential
+      // material, same as a password) is exactly the kind of change that
+      // shouldn't leave an already-issued session valid — e.g. an admin
+      // responding to a suspected-compromise incident by clearing MFA
+      // must actually end whatever session an attacker already holds,
+      // not just the account's future logins.
+      sessionInvalidatedAt: new Date(),
     },
   });
   await prisma.mfaRecoveryCode.deleteMany({ where: { userId: target.id } });
