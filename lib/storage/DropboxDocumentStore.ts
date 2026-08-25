@@ -1,5 +1,9 @@
 import { Dropbox } from "dropbox";
-import type { DocumentStore } from "@/lib/storage/DocumentStore";
+import {
+  DocumentAlreadyExistsError,
+  DocumentNotFoundError,
+  type DocumentStore,
+} from "@/lib/storage/DocumentStore";
 import type { DropboxStorageConfig } from "@/lib/storage/config";
 
 /**
@@ -30,6 +34,37 @@ function describeDropboxError(error: unknown): string {
   return error instanceof Error ? error.message : "unknown error";
 }
 
+type DropboxTagged = { ".tag": unknown };
+
+function hasTag(value: unknown, tag: string): value is DropboxTagged {
+  return typeof value === "object" && value !== null && (value as DropboxTagged)[".tag"] === tag;
+}
+
+/**
+ * Real, verified shape (live Dropbox API call, see docs/INTEGRATION_ARCHITECTURE.md)
+ * for a `filesDownload` on a path that doesn't exist: status 409,
+ * `error.error.error` === `{".tag":"path","path":{".tag":"not_found"}}`.
+ */
+function isDropboxNotFoundError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const status = (error as { status?: unknown }).status;
+  const inner = (error as { error?: { error?: unknown } }).error?.error;
+  return status === 409 && hasTag(inner, "path") && hasTag((inner as { path?: unknown }).path, "not_found");
+}
+
+/**
+ * Real, verified shape (live Dropbox API call, see docs/INTEGRATION_ARCHITECTURE.md)
+ * for a `filesUpload` with `mode: { ".tag": "add" }` onto an existing path:
+ * status 409, `error.error.error` ===
+ * `{".tag":"path","reason":{".tag":"conflict",...}}`.
+ */
+function isDropboxConflictError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const status = (error as { status?: unknown }).status;
+  const inner = (error as { error?: { error?: unknown } }).error?.error;
+  return status === 409 && hasTag(inner, "path") && hasTag((inner as { reason?: unknown }).reason, "conflict");
+}
+
 /**
  * Dropbox-backed `DocumentStore`, selected via `STORAGE_PROVIDER=dropbox`
  * (see lib/storage/config.ts and lib/storage/DocumentStore.ts). Every key
@@ -43,19 +78,14 @@ function describeDropboxError(error: unknown): string {
  * API refuses if the path already exists — matching the write-once
  * contract in DocumentStore.ts, without needing any code change here.
  *
- * NOT YET DONE (needs a live/sandbox call to verify before relying on
- * it): mapping Dropbox's specific error tags onto `DocumentNotFoundError`/
- * `DocumentAlreadyExistsError` (see DocumentStore.ts). Today both `save`
- * and `read` wrap every failure into one generic Error, deliberately
- * unchanged by this pass — the documented Dropbox v2 API error shape for
- * "not found" (`error.error['.tag'] === 'path'`,
- * `error.error.path['.tag'] === 'not_found'` on download) and "conflict"
- * (`error.error.reason['.tag'] === 'conflict'` on a non-overwriting
- * upload) look stable, but this codebase has never made a real call
- * against them, so hardcoding that tag-matching now would be guessing at
- * an unverified contract. Verify against a live/sandbox call first, then
- * narrow these two catch blocks to throw the typed errors for those
- * specific tags and keep the generic wrap for everything else.
+ * `save`/`read` map the confirmed real Dropbox error shapes onto
+ * `DocumentAlreadyExistsError`/`DocumentNotFoundError` (see
+ * `isDropboxConflictError`/`isDropboxNotFoundError` above and
+ * DocumentStore.ts for the contract every implementation shares). These
+ * two tag shapes were verified against a live Dropbox API call, not just
+ * assumed from docs — see docs/INTEGRATION_ARCHITECTURE.md. Every other
+ * failure still wraps into one generic Error, exactly as before, so a
+ * transient/unexpected Dropbox error never leaks raw API details.
  */
 export class DropboxDocumentStore implements DocumentStore {
   private readonly client: Dropbox;
@@ -92,6 +122,9 @@ export class DropboxDocumentStore implements DocumentStore {
         mute: true,
       });
     } catch (error) {
+      if (isDropboxConflictError(error)) {
+        throw new DocumentAlreadyExistsError(key);
+      }
       console.error("[DropboxDocumentStore] upload failed", describeDropboxError(error));
       throw new Error("Failed to save file to Dropbox.");
     }
@@ -104,6 +137,9 @@ export class DropboxDocumentStore implements DocumentStore {
       const { fileBinary } = response.result as unknown as { fileBinary: Uint8Array };
       return Buffer.from(fileBinary);
     } catch (error) {
+      if (isDropboxNotFoundError(error)) {
+        throw new DocumentNotFoundError(key);
+      }
       console.error("[DropboxDocumentStore] download failed", describeDropboxError(error));
       throw new Error("Failed to read file from Dropbox.");
     }

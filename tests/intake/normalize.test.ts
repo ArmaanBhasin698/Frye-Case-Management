@@ -6,6 +6,8 @@ import {
   incompleteLeadEvent,
   malformedLeadEvent,
   newLeadEvent,
+  restShapedContactNameOnlyEvent,
+  unsplittableContactNameEvent,
   updatedLeadEvent,
 } from "@/lib/intake/fixtures";
 
@@ -69,5 +71,38 @@ describe("normalizeIntakeLead", () => {
     expect(normalizeIntakeLead(null).ok).toBe(false);
     expect(normalizeIntakeLead("garbage").ok).toBe(false);
     expect(normalizeIntakeLead(42).ok).toBe(false);
+  });
+
+  it("accepts the real REST-shaped id field and splits contactName when firstName/lastName are absent", () => {
+    const result = normalizeIntakeLead(restShapedContactNameOnlyEvent);
+
+    expect(result).toEqual({
+      ok: true,
+      lead: {
+        externalContactId: "fictional-contact-0004",
+        firstName: "Taylor",
+        lastName: "Rivera",
+        email: "taylor.rivera.fictional@example.com",
+        phone: "+15550142222",
+        receivedAt: new Date("2026-01-03T08:00:00Z"),
+      },
+    });
+  });
+
+  it("rejects a single-word contactName as malformed rather than guessing a last name", () => {
+    const result = normalizeIntakeLead(unsplittableContactNameEvent);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("malformed");
+  });
+
+  it("rejects a payload with neither contactId nor id", () => {
+    const result = normalizeIntakeLead({ ...newLeadEvent, contactId: undefined });
+    expect(result.ok).toBe(false);
+  });
+
+  it("prefers contactId over id when both are present", () => {
+    const result = normalizeIntakeLead({ ...newLeadEvent, id: "should-not-win" });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.lead.externalContactId).toBe("fictional-contact-0001");
   });
 });

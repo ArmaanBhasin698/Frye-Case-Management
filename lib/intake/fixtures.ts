@@ -40,3 +40,26 @@ export const malformedLeadEvent = {
   type: "SomethingElseEntirely",
   contactId: "fictional-contact-0003",
 };
+
+/**
+ * Shaped like the real HighLevel contacts API response (see
+ * docs/INTEGRATION_ARCHITECTURE.md's live-verified finding): `id` instead
+ * of `contactId`, and no discrete `firstName`/`lastName` — only a combined
+ * `contactName`, which normalizeIntakeLead must split.
+ */
+export const restShapedContactNameOnlyEvent = {
+  type: "ContactCreate",
+  id: "fictional-contact-0004",
+  contactName: "Taylor Rivera",
+  email: "taylor.rivera.fictional@example.com",
+  phone: "+15550142222",
+  dateAdded: "2026-01-03T08:00:00Z",
+};
+
+/** A single-word contactName has no splittable last name — must be rejected as incomplete, not guessed at. */
+export const unsplittableContactNameEvent = {
+  type: "ContactCreate",
+  id: "fictional-contact-0005",
+  contactName: "Cher",
+  dateAdded: "2026-01-04T08:00:00Z",
+};

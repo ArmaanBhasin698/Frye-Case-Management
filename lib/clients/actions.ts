@@ -7,6 +7,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { requireCurrentUser } from "@/lib/auth/session";
 import { canManageClientsAndMatters } from "@/lib/auth/authorization";
+import { createClientRecord, readClientFields } from "@/lib/clients/clientFields";
 import { diffFields } from "@/lib/utils";
 import type { ActionResult } from "@/lib/matters/actions";
 
@@ -24,55 +25,6 @@ import type { ActionResult } from "@/lib/matters/actions";
 export type FormActionState = { error: string | null };
 const NOT_FOUND_ERROR = "Not found or access denied.";
 
-const emailSchema = z.string().trim().email("Invalid email address.");
-
-const clientFieldsSchema = z.object({
-  firstName: z.string().trim().min(1, "First name is required.").max(100, "First name is too long."),
-  lastName: z.string().trim().min(1, "Last name is required.").max(100, "Last name is too long."),
-  dateOfBirth: z
-    .string()
-    .optional()
-    .transform((v) => (v ? v : undefined))
-    .refine((v) => !v || !Number.isNaN(Date.parse(v)), "Invalid date of birth."),
-  email: z
-    .string()
-    .trim()
-    .max(200, "Email is too long.")
-    .optional()
-    .transform((v) => (v ? v : undefined))
-    .refine((v) => !v || emailSchema.safeParse(v).success, "Invalid email address."),
-  phone: z
-    .string()
-    .trim()
-    .max(30, "Phone number is too long.")
-    .optional()
-    .transform((v) => (v ? v : undefined)),
-  address: z
-    .string()
-    .trim()
-    .max(300, "Address is too long.")
-    .optional()
-    .transform((v) => (v ? v : undefined)),
-  notes: z
-    .string()
-    .trim()
-    .max(5_000, "Notes are too long.")
-    .optional()
-    .transform((v) => (v ? v : undefined)),
-});
-
-function readClientFields(formData: FormData) {
-  return clientFieldsSchema.safeParse({
-    firstName: formData.get("firstName"),
-    lastName: formData.get("lastName"),
-    dateOfBirth: formData.get("dateOfBirth") ?? undefined,
-    email: formData.get("email") ?? undefined,
-    phone: formData.get("phone") ?? undefined,
-    address: formData.get("address") ?? undefined,
-    notes: formData.get("notes") ?? undefined,
-  });
-}
-
 export async function createClient(
   _prevState: FormActionState,
   formData: FormData,
@@ -86,21 +38,8 @@ export async function createClient(
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
   }
-  const { dateOfBirth, ...rest } = parsed.data;
 
-  const client = await prisma.client.create({
-    data: { ...rest, dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined },
-  });
-
-  await prisma.auditEvent.create({
-    data: {
-      actorId: user.id,
-      action: "CREATE",
-      entityType: "Client",
-      entityId: client.id,
-      metadata: { firstName: client.firstName, lastName: client.lastName },
-    },
-  });
+  const client = await createClientRecord(parsed.data, user.id);
 
   revalidatePath("/clients");
   redirect(`/clients/${client.id}`);
