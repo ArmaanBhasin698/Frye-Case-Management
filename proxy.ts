@@ -43,5 +43,13 @@ export const config = {
   // fetchable without auth. No application route is affected. `api/health`
   // is excluded because a host's uptime probe has no session cookie to
   // send — the route itself returns no sensitive data (see its handler).
-  matcher: ["/((?!api/auth|api/health|_next/static|_next/image|favicon.ico|brand).*)"],
+  // `api/intake/highlevel` is excluded the same way: HighLevel's webhook
+  // delivery has no session cookie either — that route enforces its own
+  // shared-secret check instead (see lib/intake/webhookAuth.ts).
+  // `api/cron/highlevel-sync` is excluded for the identical reason: a
+  // deployment scheduler has no session cookie, and that route enforces
+  // its own HIGHLEVEL_SYNC_CRON_SECRET check.
+  matcher: [
+    "/((?!api/auth|api/health|api/intake/highlevel|api/cron/highlevel-sync|_next/static|_next/image|favicon.ico|brand).*)",
+  ],
 };

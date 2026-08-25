@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { DocumentAlreadyExistsError, DocumentNotFoundError } from "@/lib/storage/DocumentStore";
 import { DropboxDocumentStore } from "@/lib/storage/DropboxDocumentStore";
 
 const baseConfig = {
@@ -103,6 +104,42 @@ describe("DropboxDocumentStore.save", () => {
     expect(message).toBe("Failed to save file to Dropbox.");
     expect(message).not.toContain("super-secret-token-value");
   });
+
+  it("throws DocumentAlreadyExistsError for the real, verified conflict shape (status 409, path/conflict)", async () => {
+    const client = fakeClient();
+    client.filesUpload.mockRejectedValue({
+      status: 409,
+      headers: {},
+      error: {
+        error_summary: "path/conflict/file/",
+        error: { ".tag": "path", reason: { ".tag": "conflict", conflict: { ".tag": "file" } } },
+      },
+    });
+    const store = new DropboxDocumentStore(baseConfig, client as never);
+
+    await expect(store.save("matters/m1/discovery/p1/f1/original", Buffer.from("x"))).rejects.toBeInstanceOf(
+      DocumentAlreadyExistsError,
+    );
+  });
+
+  it("does not mistake an unrelated 409 for a conflict", async () => {
+    const client = fakeClient();
+    client.filesUpload.mockRejectedValue({
+      status: 409,
+      headers: {},
+      error: { error_summary: "path/insufficient_space/", error: { ".tag": "path", reason: { ".tag": "insufficient_space" } } },
+    });
+    const store = new DropboxDocumentStore(baseConfig, client as never);
+
+    let thrown: unknown;
+    try {
+      await store.save("some/key", Buffer.from("x"));
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).not.toBeInstanceOf(DocumentAlreadyExistsError);
+    expect((thrown as Error).message).toBe("Failed to save file to Dropbox.");
+  });
 });
 
 describe("DropboxDocumentStore.read", () => {
@@ -131,6 +168,40 @@ describe("DropboxDocumentStore.read", () => {
     const store = new DropboxDocumentStore(baseConfig, client as never);
 
     await expect(store.read("missing/key")).rejects.toThrow("Failed to read file from Dropbox.");
+  });
+
+  it("throws DocumentNotFoundError for the real, verified not-found shape (status 409, path/not_found)", async () => {
+    const client = fakeClient();
+    client.filesDownload.mockRejectedValue({
+      status: 409,
+      headers: {},
+      error: {
+        error_summary: "path/not_found/",
+        error: { ".tag": "path", path: { ".tag": "not_found" } },
+      },
+    });
+    const store = new DropboxDocumentStore(baseConfig, client as never);
+
+    await expect(store.read("missing/key")).rejects.toBeInstanceOf(DocumentNotFoundError);
+  });
+
+  it("does not mistake an unrelated path error for not-found", async () => {
+    const client = fakeClient();
+    client.filesDownload.mockRejectedValue({
+      status: 409,
+      headers: {},
+      error: { error_summary: "path/restricted_content/", error: { ".tag": "path", path: { ".tag": "restricted_content" } } },
+    });
+    const store = new DropboxDocumentStore(baseConfig, client as never);
+
+    let thrown: unknown;
+    try {
+      await store.read("some/key");
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).not.toBeInstanceOf(DocumentNotFoundError);
+    expect((thrown as Error).message).toBe("Failed to read file from Dropbox.");
   });
 
   it("rejects an unsafe key before calling the Dropbox API", async () => {

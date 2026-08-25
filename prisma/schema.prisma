@@ -207,6 +207,7 @@ model User {
   mfaChallengeTickets      MfaChallengeTicket[]
   failedLoginAttempts      FailedLoginAttempt[]
   securityIncidents        SecurityIncident[]
+  reviewedIntakeLeads      IntakeLead[]          @relation("IntakeLeadReviewedBy")
 }
 
 /// One-time-use recovery code for bypassing a lost TOTP device. Codes are
@@ -276,6 +277,7 @@ model Client {
 
   matters           Matter[]
   externalLeadLinks ExternalLeadLink[]
+  linkedIntakeLeads IntakeLead[]        @relation("IntakeLeadLinkedClient")
 }
 
 /// Durable mapping from one external intake provider's contact/lead id to
@@ -298,6 +300,81 @@ model ExternalLeadLink {
 
   @@unique([provider, externalId])
   @@index([clientId])
+}
+
+/// Status of one IntakeLead's staff-review lifecycle — see IntakeLead below.
+enum IntakeLeadStatus {
+  PENDING
+  LINKED
+  DISMISSED
+}
+
+/// One normalized Loop/HighLevel contact awaiting staff review, created by
+/// the intake webhook (see lib/intake/ingest.ts) the first time a given
+/// external contact is seen and no ExternalLeadLink for it exists yet.
+/// Deliberately stores only the already-normalized fields this app actually
+/// needs (see lib/intake/types.ts#NormalizedIntakeLead) — never the raw
+/// webhook payload — so an unreviewed lead sitting in this table never
+/// accumulates unnecessary PII. `@@unique([provider, externalContactId])`
+/// makes a repeated webhook delivery for the same contact update this one
+/// row instead of creating duplicates, mirroring ExternalLeadLink's own
+/// idempotency boundary one step earlier in the pipeline. Once staff act on
+/// it (link to an existing Client, or create a new one), status moves to
+/// LINKED and reviewedById/reviewedAt/linkedClientId record the outcome —
+/// this row is never deleted, so "what did we do with this lead" stays
+/// answerable. Creating/linking the actual Client always goes through the
+/// existing, authenticated lib/clients/actions.ts#createClient and
+/// lib/intake/linking.ts#linkExternalContactToClient — this table is never
+/// itself the source of a Client write.
+model IntakeLead {
+  id                String               @id @default(cuid())
+  provider          ExternalLeadProvider
+  externalContactId String
+  firstName         String
+  lastName          String
+  email             String?
+  phone             String?
+  receivedAt        DateTime
+  status            IntakeLeadStatus     @default(PENDING)
+  linkedClientId    String?
+  linkedClient      Client?              @relation("IntakeLeadLinkedClient", fields: [linkedClientId], references: [id], onDelete: SetNull)
+  reviewedAt        DateTime?
+  reviewedById      String?
+  reviewedBy        User?                @relation("IntakeLeadReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  @@unique([provider, externalContactId])
+  @@index([status])
+}
+
+/// Singleton persisted state for the pull-based HighLevel contact sync (see
+/// lib/intake/highlevelSync.ts) — one row, always looked up by the same
+/// fixed id. `lastSuccessfulCheckpoint` is the `dateAdded` of the last
+/// contact actually processed in an unbroken top-down walk; it only ever
+/// advances to what a run genuinely finished, never past a rate limit,
+/// auth failure, or malformed response encountered mid-walk. `runningSince`
+/// is a mutex: a run claims it with an atomic conditional update (same
+/// pattern as MfaChallengeTicket's atomic consumption) and clears it on
+/// exit, so a manual "Sync from Loop" click and the scheduled cron entry
+/// point can never process the same window twice concurrently — a `null`
+/// or stale (past a short threshold, meaning a prior run crashed without
+/// releasing it) value means free to claim. `lastRunOutcome` and the four
+/// count fields are a safe summary only — counts, never contact names,
+/// emails, phone numbers, or any other PII.
+model HighLevelSyncState {
+  id                       String    @id @default(cuid())
+  lastSuccessfulCheckpoint DateTime?
+  lastSuccessfulSyncAt     DateTime?
+  lastAttemptedSyncAt      DateTime?
+  runningSince             DateTime?
+  contactsChecked          Int?
+  newLeadsCreated          Int?
+  pendingLeadsUpdated      Int?
+  linkedOrSkipped          Int?
+  failureCount             Int?
+  lastRunOutcome           String?
+  updatedAt                DateTime  @updatedAt
 }
 
 /// A single criminal matter/case for a Client. This is the hub every other
