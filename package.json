@@ -20,7 +20,8 @@
     "db:generate": "prisma generate",
     "db:seed": "prisma db seed",
     "db:reset": "node -e \"if(!['development','test'].includes(process.env.NODE_ENV)){console.error('Refusing db:reset: NODE_ENV is '+(process.env.NODE_ENV||'unset')+', not development/test. This drops and recreates the database.');process.exit(1)}\" && prisma migrate reset",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "bootstrap:admin": "tsx scripts/bootstrap-admin.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.2.1",

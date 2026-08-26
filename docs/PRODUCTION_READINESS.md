@@ -127,12 +127,10 @@ this document does not substitute for that review.
 - [ ] **Logging/monitoring.** No centralized log aggregation or error
       alerting exists yet; the app currently only logs to stdout/stderr in
       dev.
-- [ ] **Content-Security-Policy.** Deliberately not implemented yet
-      (`docs/SECURITY.md`, "Security headers") — Radix UI's inline-style
-      usage needs a nonce-based or scoped policy, not a one-line addition.
-      Not a hard launch blocker on its own (baseline headers are already
-      in place), but should be scheduled as near-term follow-up once
-      real traffic exists.
+- [x] **Content-Security-Policy — implemented.** `next.config.mjs#headers`
+      sends a CSP alongside the other baseline security headers (see
+      `docs/SECURITY.md`, "Security headers"), verified with 0 high
+      findings in an OWASP ZAP production-style scan.
 - [x] **Health/readiness endpoint — implemented.** `GET /api/health`
       checks real DB reachability, returns only `{status, db}` (no
       versions, counts, or internal config), and is excluded from the auth
@@ -197,9 +195,6 @@ setup or a limited pilot:
 - Full firm-wide raw audit-feed UI (per-matter Timeline already exists;
   only the firm-wide raw feed is missing — Reports' Activity section
   already gives derived counts).
-- Content-Security-Policy (see infrastructure section — not launch-blocking
-  given baseline headers are already in place, but shouldn't be pushed off
-  indefinitely).
 
 ## What can still be done without staff involvement
 
