@@ -8,7 +8,9 @@ const { requireCurrentUserMock, prismaMock, revalidatePathMock, redirectMock } =
   }),
   prismaMock: {
     client: { create: vi.fn(), update: vi.fn(), findUnique: vi.fn() },
+    contact: { updateMany: vi.fn() },
     matter: { count: vi.fn() },
+    $transaction: vi.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
     auditEvent: { create: vi.fn() },
   },
 }));
@@ -32,6 +34,7 @@ function clientFormData(fields: Record<string, string>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  prismaMock.$transaction.mockImplementation((ops: Promise<unknown>[]) => Promise.all(ops));
   requireCurrentUserMock.mockResolvedValue(attorney);
   redirectMock.mockImplementation(() => {
     throw new Error("NEXT_REDIRECT");
@@ -68,6 +71,24 @@ describe("createClient", () => {
     );
     expect(result?.error).toBeTruthy();
     expect(prismaMock.client.create).not.toHaveBeenCalled();
+  });
+
+  it("creates the client's Contact-directory entry in the same insert", async () => {
+    prismaMock.client.create.mockResolvedValue({ id: "client-1", firstName: "Jordan", lastName: "Ellis" });
+    await expect(createClient({ error: null }, clientFormData(validFields))).rejects.toThrow("NEXT_REDIRECT");
+    expect(prismaMock.client.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        contact: {
+          create: expect.objectContaining({
+            kind: "INDIVIDUAL",
+            firstName: "Jordan",
+            lastName: "Ellis",
+            displayName: "Jordan Ellis",
+            createdById: attorney.id,
+          }),
+        },
+      }),
+    });
   });
 
   it("creates the client, writes an audit event, and redirects to it", async () => {
@@ -137,6 +158,16 @@ describe("updateClient", () => {
       }),
     });
     expect(redirectMock).toHaveBeenCalledWith(`/clients/${clientId}`);
+  });
+
+  it("keeps the linked contact's names in sync, in the same transaction as the client update", async () => {
+    prismaMock.client.update.mockResolvedValue({});
+    await expect(updateClient({ error: null }, clientFormData(validFields))).rejects.toThrow("NEXT_REDIRECT");
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
+    expect(prismaMock.contact.updateMany).toHaveBeenCalledWith({
+      where: { clientId },
+      data: { firstName: "Jordan", lastName: "Ellis", displayName: "Jordan Ellis" },
+    });
   });
 
   it("records only that notes changed, never their content", async () => {

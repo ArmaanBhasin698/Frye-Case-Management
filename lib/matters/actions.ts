@@ -19,6 +19,7 @@ import { canEditMatter, canManageMatterTeam, hasMatterAccess } from "@/lib/auth/
 import { requireCurrentUser } from "@/lib/auth/session";
 import { canManageClientsAndMatters } from "@/lib/auth/authorization";
 import { diffFields } from "@/lib/utils";
+import { isContactOnMatter } from "@/lib/contacts/queries";
 
 /**
  * Server Actions backing the write paths on a Matter (notes, tasks, call
@@ -525,6 +526,12 @@ const createCallSchema = z.object({
     .optional()
     .transform((v) => (v ? v : undefined)),
   direction: z.enum(CALL_DIRECTION_VALUES),
+  contactId: z
+    .string()
+    .trim()
+    .max(100)
+    .optional()
+    .transform((v) => (v ? v : undefined)),
   contactName: z
     .string()
     .trim()
@@ -568,6 +575,7 @@ export async function createCall(
   const parsed = createCallSchema.safeParse({
     matterId: formData.get("matterId") ?? undefined,
     direction: formData.get("direction"),
+    contactId: formData.get("contactId") ?? undefined,
     contactName: formData.get("contactName") ?? undefined,
     fromNumber: formData.get("fromNumber"),
     toNumber: formData.get("toNumber"),
@@ -579,10 +587,16 @@ export async function createCall(
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
   }
-  const { matterId, direction, contactName, fromNumber, toNumber, occurredAt, durationSeconds, notes, flagged } =
+  const { matterId, direction, contactId, contactName, fromNumber, toNumber, occurredAt, durationSeconds, notes, flagged } =
     parsed.data;
 
   if (matterId && !(await hasMatterAccess(user, matterId))) {
+    return { error: NOT_FOUND.error };
+  }
+  // A directory contact can only be attached to a call filed on a matter
+  // that contact is actually on — a forged contactId can't attach a call
+  // (and its notes) to an unrelated person's timeline.
+  if (contactId && (!matterId || !(await isContactOnMatter(contactId, matterId)))) {
     return { error: NOT_FOUND.error };
   }
 
@@ -592,6 +606,7 @@ export async function createCall(
     call = await prisma.call.create({
       data: {
         matterId: matterId ?? null,
+        contactId: contactId ?? null,
         contactName: contactName ?? null,
         direction,
         fromNumber,
@@ -623,9 +638,18 @@ export async function createCall(
       entityType: "Call",
       entityId: call.id,
       matterId: matterId ?? null,
-      metadata: { direction, filed, flagged, notesProvided: Boolean(notes) },
+      metadata: { direction, filed, flagged, notesProvided: Boolean(notes), contactLinked: Boolean(contactId) },
     },
   });
+
+  if (contactId) {
+    const callTime = new Date(occurredAt);
+    await prisma.contact.updateMany({
+      where: { id: contactId, OR: [{ lastContactedAt: null }, { lastContactedAt: { lt: callTime } }] },
+      data: { lastContactedAt: callTime },
+    });
+    revalidatePath(`/contacts/${contactId}`);
+  }
 
   if (matterId) {
     revalidatePath(`/matters/${matterId}/calls`);

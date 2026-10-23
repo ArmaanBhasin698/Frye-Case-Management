@@ -104,6 +104,13 @@ One Next.js App Router application serves both UI and backend:
   exposes no internal details.
 - **Intake review** — `/intake`, a staff review queue for leads pulled
   from HighLevel (see below).
+- **Contacts** — `/contacts`, a permanent firm-wide directory (individuals
+  and organizations, multiple criminal-defense categories, phones/emails,
+  organization links), each client's own directory entry, per-matter roles
+  (matter **Contacts** tab), associated-people relationships, and an
+  interaction timeline that merges manual interactions with linked calls.
+  Visibility is strictly matter-derived (`lib/contacts/visibility.ts`;
+  `docs/SECURITY.md`, "Contact visibility").
 
 ### Integration status
 

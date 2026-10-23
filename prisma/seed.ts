@@ -37,6 +37,10 @@ async function main() {
   await prisma.discoveryComparison.deleteMany();
   await prisma.auditEvent.deleteMany();
   await prisma.call.deleteMany();
+  await prisma.contactInteraction.deleteMany();
+  await prisma.contactRelationship.deleteMany();
+  await prisma.matterContact.deleteMany();
+  await prisma.contact.deleteMany();
   await prisma.document.deleteMany();
   await prisma.discoveryFile.deleteMany();
   await prisma.discoveryProduction.deleteMany();
@@ -104,19 +108,47 @@ async function main() {
 
   // --- Clients -----------------------------------------------------------
   const jordan = await prisma.client.create({
-    data: { firstName: "Jordan", lastName: "Ellis", email: "jordan.ellis@example.com", phone: "555-0142" },
+    data: {
+      firstName: "Jordan",
+      lastName: "Ellis",
+      email: "jordan.ellis@example.com",
+      phone: "555-0142",
+      contact: { create: { firstName: "Jordan", lastName: "Ellis", displayName: "Jordan Ellis" } },
+    },
+    include: { contact: true },
   });
 
   const maria = await prisma.client.create({
-    data: { firstName: "Maria", lastName: "Alvarez", email: "maria.alvarez@example.com", phone: "555-0198" },
+    data: {
+      firstName: "Maria",
+      lastName: "Alvarez",
+      email: "maria.alvarez@example.com",
+      phone: "555-0198",
+      contact: { create: { firstName: "Maria", lastName: "Alvarez", displayName: "Maria Alvarez" } },
+    },
+    include: { contact: true },
   });
 
   const devon = await prisma.client.create({
-    data: { firstName: "Devon", lastName: "Marsh", email: "devon.marsh@example.com", phone: "555-0173" },
+    data: {
+      firstName: "Devon",
+      lastName: "Marsh",
+      email: "devon.marsh@example.com",
+      phone: "555-0173",
+      contact: { create: { firstName: "Devon", lastName: "Marsh", displayName: "Devon Marsh" } },
+    },
+    include: { contact: true },
   });
 
   const amara = await prisma.client.create({
-    data: { firstName: "Amara", lastName: "Patel", email: "amara.patel@example.com", phone: "555-0211" },
+    data: {
+      firstName: "Amara",
+      lastName: "Patel",
+      email: "amara.patel@example.com",
+      phone: "555-0211",
+      contact: { create: { firstName: "Amara", lastName: "Patel", displayName: "Amara Patel" } },
+    },
+    include: { contact: true },
   });
 
   // --- Matters -------------------------------------------------------------
@@ -1000,10 +1032,133 @@ async function main() {
     ],
   });
 
+  // --- Contacts -----------------------------------------------------------
+  // Fictional directory entries. Judge Vance sits on both the Ellis matter
+  // (Sarah's team) and the closed Marsh matter (Marcus's team), so strict
+  // matter-derived visibility can be exercised: each attorney sees the
+  // judge, but only their own matter in her Associated Matters list.
+  const policeDept = await prisma.contact.create({
+    data: {
+      kind: "ORGANIZATION",
+      displayName: "Example City Police Department (fictional)",
+      categories: ["LAW_ENFORCEMENT_AGENCY"],
+      city: "Example City",
+      state: "GA",
+      phones: { create: [{ number: "555-0300", label: "Records", isPrimary: true }] },
+      createdById: sarah.id,
+    },
+  });
+  const judgeVance = await prisma.contact.create({
+    data: {
+      firstName: "Harriet",
+      lastName: "Vance",
+      displayName: "Harriet Vance",
+      jobTitle: "Superior Court Judge",
+      categories: ["JUDGE"],
+      court: "Fulton County Superior Court (fictional)",
+      jurisdiction: "Fulton County (fictional)",
+      position: "Presiding Judge, Criminal Division",
+      phones: { create: [{ number: "555-0310", label: "Chambers", isPrimary: true }] },
+      createdById: sarah.id,
+    },
+  });
+  const adaRuiz = await prisma.contact.create({
+    data: {
+      firstName: "Kenneth",
+      lastName: "Ruiz",
+      displayName: "Kenneth Ruiz",
+      jobTitle: "Assistant District Attorney",
+      categories: ["ASSISTANT_DISTRICT_ATTORNEY", "PROSECUTOR"],
+      emails: { create: [{ address: "kenneth.ruiz@da.example.gov", label: "Work", isPrimary: true }] },
+      preferredContactMethod: "EMAIL",
+      createdById: sarah.id,
+    },
+  });
+  const officerPrice = await prisma.contact.create({
+    data: {
+      firstName: "Dana",
+      lastName: "Price",
+      displayName: "Dana Price",
+      jobTitle: "Patrol Officer",
+      categories: ["POLICE_OFFICER"],
+      organizationId: policeDept.id,
+      createdById: sarah.id,
+    },
+  });
+  const witnessChen = await prisma.contact.create({
+    data: {
+      firstName: "Riley",
+      lastName: "Chen",
+      displayName: "Riley Chen",
+      categories: ["WITNESS"],
+      phones: { create: [{ number: "555-0333", label: "Mobile", isPrimary: true }] },
+      createdById: marcus.id,
+    },
+  });
+  const parentEllis = await prisma.contact.create({
+    data: {
+      firstName: "Pat",
+      lastName: "Ellis",
+      displayName: "Pat Ellis",
+      categories: ["FAMILY_MEMBER", "EMERGENCY_CONTACT"],
+      phones: { create: [{ number: "555-0144", label: "Home", isPrimary: true }] },
+      createdById: priya.id,
+    },
+  });
+
+  await prisma.matterContact.createMany({
+    data: [
+      { matterId: ellisMatter.id, contactId: judgeVance.id, role: "JUDGE", addedById: sarah.id },
+      { matterId: marshMatter.id, contactId: judgeVance.id, role: "JUDGE", addedById: marcus.id },
+      { matterId: ellisMatter.id, contactId: adaRuiz.id, role: "ASSISTANT_DISTRICT_ATTORNEY", addedById: sarah.id },
+      { matterId: alvarezMatter.id, contactId: adaRuiz.id, role: "ASSISTANT_DISTRICT_ATTORNEY", addedById: sarah.id },
+      {
+        matterId: ellisMatter.id,
+        contactId: officerPrice.id,
+        role: "POLICE_OFFICER",
+        roleDetail: "Arresting officer",
+        addedById: sarah.id,
+      },
+      { matterId: marshMatter.id, contactId: witnessChen.id, role: "WITNESS", addedById: marcus.id },
+      { matterId: ellisMatter.id, contactId: parentEllis.id, role: "FAMILY_MEMBER", addedById: priya.id },
+    ],
+  });
+
+  await prisma.contactRelationship.createMany({
+    data: [
+      { fromContactId: parentEllis.id, toContactId: jordan.contact!.id, type: "PARENT", scope: "PERMANENT", createdById: priya.id },
+      {
+        fromContactId: officerPrice.id,
+        toContactId: jordan.contact!.id,
+        type: "ARRESTING_OFFICER",
+        scope: "MATTER",
+        matterId: ellisMatter.id,
+        createdById: sarah.id,
+      },
+    ],
+  });
+
+  const adaMeetingAt = new Date("2026-09-15T14:00:00Z");
+  await prisma.contactInteraction.create({
+    data: {
+      contactId: adaRuiz.id,
+      matterId: ellisMatter.id,
+      type: "MEETING",
+      occurredAt: adaMeetingAt,
+      staffId: sarah.id,
+      summary: "Fictional: brief discovery scheduling conference.",
+      outcome: "Agreed to exchange supplemental discovery list.",
+      followUpStatus: "PENDING",
+      recordedById: sarah.id,
+    },
+  });
+  await prisma.contact.update({ where: { id: adaRuiz.id }, data: { lastContactedAt: adaMeetingAt } });
+
   console.log("Seed complete:");
   console.log(`  Users: ${await prisma.user.count()}`);
   console.log(`  Clients: ${await prisma.client.count()}`);
   console.log(`  Matters: ${await prisma.matter.count()}`);
+  console.log(`  Contacts: ${await prisma.contact.count()}`);
   console.log(`  Discovery files: ${await prisma.discoveryFile.count()}`);
   console.log(`  Discovery comparisons: ${await prisma.discoveryComparison.count()}`);
   console.log(`  Calls: ${await prisma.call.count()}`);

@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { AttachCallList } from "@/components/shared/attach-call-list";
 import { LogCallForm } from "@/components/shared/log-call-form";
+import { listMatterContactOptions } from "@/lib/contacts/queries";
 
 export default async function MatterCallsPage({
   params,
@@ -16,10 +17,11 @@ export default async function MatterCallsPage({
 }) {
   const { matterId } = await params;
   const user = await requireCurrentUser();
-  const [matter, calls, unfiledCalls] = await Promise.all([
+  const [matter, calls, unfiledCalls, contactOptions] = await Promise.all([
     getMatterHeader(matterId),
     getMatterCalls(matterId),
     getUnfiledCalls(user),
+    listMatterContactOptions(matterId),
   ]);
 
   if (!matter) return null;
@@ -55,7 +57,10 @@ export default async function MatterCallsPage({
           <h2 className="text-sm font-semibold text-foreground">
             Calls on {formatMatterTitle(matter)}
           </h2>
-          <LogCallForm matterId={matterId} />
+          <LogCallForm
+            matterId={matterId}
+            contacts={contactOptions.map((c) => ({ id: c.id, label: c.displayName }))}
+          />
         </div>
         {calls.length === 0 ? (
           <Card>

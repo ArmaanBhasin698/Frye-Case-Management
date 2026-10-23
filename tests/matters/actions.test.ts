@@ -28,6 +28,7 @@ const {
     task: { create: vi.fn(), updateMany: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
     call: { updateMany: vi.fn(), create: vi.fn() },
     client: { findUnique: vi.fn() },
+    contact: { count: vi.fn(), updateMany: vi.fn() },
     user: { findMany: vi.fn(), findUnique: vi.fn() },
     matter: { create: vi.fn(), update: vi.fn(), findUnique: vi.fn() },
     matterAssignment: { create: vi.fn(), deleteMany: vi.fn(), count: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
@@ -560,6 +561,7 @@ describe("createCall", () => {
     expect(prismaMock.call.create).toHaveBeenCalledWith({
       data: {
         matterId,
+        contactId: null,
         contactName: "Jordan Ellis",
         direction: "OUTBOUND",
         fromNumber: "555-0100",
@@ -579,9 +581,40 @@ describe("createCall", () => {
         entityType: "Call",
         entityId: "call-new",
         matterId,
-        metadata: { direction: "OUTBOUND", filed: true, flagged: false, notesProvided: true },
+        metadata: { direction: "OUTBOUND", filed: true, flagged: false, notesProvided: true, contactLinked: false },
       },
     });
+  });
+
+  it("links a directory contact who is on the matter, and advances their last-contacted date", async () => {
+    prismaMock.call.create.mockResolvedValue({ id: "call-new" });
+    prismaMock.contact.count.mockResolvedValue(1);
+    const result = await createCall({ error: null }, formData({ ...validFields, contactId: "contact-1" }));
+    expect(result.error).toBeNull();
+    expect(prismaMock.contact.count).toHaveBeenCalledWith({
+      where: expect.objectContaining({ id: "contact-1" }),
+    });
+    expect(prismaMock.call.create).toHaveBeenCalledWith({ data: expect.objectContaining({ contactId: "contact-1" }) });
+    expect(prismaMock.contact.updateMany).toHaveBeenCalledWith({
+      where: { id: "contact-1", OR: [{ lastContactedAt: null }, { lastContactedAt: { lt: new Date("2026-08-09T10:00") } }] },
+      data: { lastContactedAt: new Date("2026-08-09T10:00") },
+    });
+  });
+
+  it("refuses a contact that isn't on the matter (forged contactId)", async () => {
+    prismaMock.contact.count.mockResolvedValue(0);
+    const result = await createCall({ error: null }, formData({ ...validFields, contactId: "contact-elsewhere" }));
+    expect(result.error).toBe("Not found or access denied.");
+    expect(prismaMock.call.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses a contact on an unfiled call, since there's no matter to check it against", async () => {
+    const fieldsWithNoMatter: Record<string, string> = { ...validFields, contactId: "contact-1" };
+    delete fieldsWithNoMatter.matterId;
+    const result = await createCall({ error: null }, formData(fieldsWithNoMatter));
+    expect(result.error).toBe("Not found or access denied.");
+    expect(prismaMock.contact.count).not.toHaveBeenCalled();
+    expect(prismaMock.call.create).not.toHaveBeenCalled();
   });
 
   it("never copies the notes text into the audit event", async () => {
