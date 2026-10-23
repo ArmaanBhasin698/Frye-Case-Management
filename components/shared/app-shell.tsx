@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { ActivityHeartbeat } from "@/components/shared/activity-heartbeat";
+import { TimerIndicator } from "@/components/shared/timer-indicator";
 import {
   Activity,
   BarChart3,
@@ -215,6 +216,7 @@ export function AppShell({
           </div>
 
           <div className="flex items-center gap-3">
+            <TimerIndicator />
             <Link
               href="/account/security"
               className="flex items-center gap-3 rounded-md px-1 py-1 hover:bg-accent"

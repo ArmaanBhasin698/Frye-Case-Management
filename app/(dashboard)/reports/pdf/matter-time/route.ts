@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { format } from "date-fns";
 
 import { prisma } from "@/lib/db";
+import { recordActivity } from "@/lib/usage/record";
 import { hasMatterAccess } from "@/lib/auth/access";
 import { getCurrentUser } from "@/lib/auth/session";
 import { isAdmin } from "@/lib/auth/authorization";
@@ -37,6 +38,17 @@ export async function GET(request: Request) {
       matterId,
       metadata: { from: range.from.toISOString(), to: range.to.toISOString(), entries: data.entries.length },
     },
+  });
+
+  await recordActivity({
+    userId: user.id,
+    sessionId: user.sessionId,
+    type: "REPORT_EXPORT",
+    module: "reports",
+    path: "/reports/pdf/matter-time",
+    resourceType: "MatterTimeReport",
+    resourceId: matterId,
+    matterId,
   });
 
   return new NextResponse(new Uint8Array(bytes), {

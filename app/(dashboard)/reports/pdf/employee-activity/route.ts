@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { format } from "date-fns";
 
 import { prisma } from "@/lib/db";
+import { recordActivity } from "@/lib/usage/record";
 import { getCurrentUser } from "@/lib/auth/session";
 import { isAdmin } from "@/lib/auth/authorization";
 import { pdfResponseHeaders } from "@/lib/reports/pdf";
@@ -35,6 +36,16 @@ export async function GET(request: Request) {
       entityId: userId,
       metadata: { from: range.from.toISOString(), to: range.to.toISOString() },
     },
+  });
+
+  await recordActivity({
+    userId: user.id,
+    sessionId: user.sessionId,
+    type: "REPORT_EXPORT",
+    module: "reports",
+    path: "/reports/pdf/employee-activity",
+    resourceType: "EmployeeActivityReport",
+    resourceId: userId,
   });
 
   return new NextResponse(new Uint8Array(bytes), {
