@@ -1355,6 +1355,27 @@ strict matter-only contact-visibility rule.
       editing a recorded interaction (append-only for now), professional
       history (phase 2).
 
+## Milestone — Firm Operations Expansion, complete scope (feature/firm-operations-complete)
+
+Consolidated delivery of the remaining expansion scope on one branch with
+one coordinated, owner-approved migration
+(`20261023163942_firm_operations_expansion`). Requirement-by-requirement
+status lives in `docs/FIRM_OPERATIONS_EXPANSION.md`, section 7.
+
+- [x] Professional history (rulings, observations) and structured matter
+      closure (close / amend / backfill / reopen).
+- [x] Calendar & virtual meetings (month/week/day/agenda, recurrence,
+      time zones, reminders, meeting links).
+- [x] Time tracking (manual + timers) and three PDF reports.
+- [x] Usage analytics (sessions, activity events, heartbeat estimates,
+      admin usage page, retention) + security-center integration.
+- [x] Team chat (channels, matter channels, DMs, group DMs) and
+      disconnected Slack scaffolding.
+- [ ] Follow-ups: chat reply-thread UI, per-occurrence recurrence
+      exceptions, "schedule with this contact" prefill, contact merge tool,
+      IP/user-agent capture on sessions, real-time push (would need a new
+      dependency).
+
 ## Phase 4 — Discovery management (core differentiator)
 
 - [x] `DiscoveryProduction` and `DiscoveryFile` create. *Real as of the

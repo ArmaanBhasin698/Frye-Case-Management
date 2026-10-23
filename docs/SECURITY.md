@@ -761,6 +761,47 @@ this pass.
     form; closing requires the validated structured report, and reopening
     is a separate audited action.
 
+- **Calendar (firm-operations expansion).** `lib/calendar/access.ts`: a
+  matter-linked event follows matter access (attendance never overrides
+  it); a matterless internal event is visible only to ADMIN, its creator,
+  and its staff attendees — enforced on every read and write. Attendees
+  must be active users; linked contacts must be visible to the editor
+  (contacts someone else linked that the editor can't see are preserved,
+  not silently dropped). Meeting links are user-entered, https-only, no
+  embedded credentials, length-capped, open with `noopener noreferrer`;
+  no provider API is ever called. Audit metadata never includes titles,
+  descriptions, locations, or links.
+- **Time tracking & PDF reports.** Matter time requires matter access;
+  users record their own time (ADMIN may record for others); adding time
+  to a CLOSED matter is ADMIN/ATTORNEY only; rates and amounts are
+  ADMIN-only. `/reports/pdf/matter-time` needs matter access;
+  `/reports/pdf/firm-utilization` and `/reports/pdf/employee-activity` are
+  ADMIN-only; every denial is the same 404; every export writes an EXPORT
+  audit event and a REPORT_EXPORT usage event (ids and date range only).
+  Reports never invent rows — empty sections say "No recorded activity".
+- **Usage analytics / employee monitoring.** ADMIN-only (`/admin/usage`).
+  Only identifiers, sanitized route patterns, and visibility/interaction
+  booleans are captured — never keystrokes, pointer data, screenshots,
+  message bodies, document contents, passwords, or tokens. Failed logins
+  stay in `FailedLoginAttempt` and are only read. The security center
+  shows failed-login patterns and recent access denials next to
+  incidents. Session instrumentation never blocks or alters sign-in, MFA,
+  forced password change, cooldown, or session invalidation. 365-day
+  retention with an explicit, audited, hold-aware ADMIN purge — never
+  automatic.
+- **Team chat.** `lib/chat/access.ts`: reading requires an active
+  membership plus, for a matter channel, current matter access re-checked
+  on every request (including the 5-second polling route) — revoking
+  matter access ends channel access even if the membership row remains.
+  ADMIN can manage channel membership but does not silently read
+  conversations they aren't in. Group DMs: ≤ 5 people, membership fixed.
+  Messages render as plain text (https links only); matter/document
+  references are re-authorized per viewer; search covers only currently
+  readable conversations; audit metadata never contains message text.
+- **Slack.** Scaffolding only: `DisconnectedSlackProvider` never makes a
+  network call and always reports not connected; no credentials are
+  stored; privileged messages are never synced.
+
 ## Audit logging
 
 - Every create/update/delete on Client, Matter, Note, Task, Deadline,

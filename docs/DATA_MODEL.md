@@ -267,6 +267,62 @@ It survives the closing or archiving of every matter it's linked to.
   rulings linked to the report → closing observations created → matter set
   CLOSED with `closedDate` → audit events.
 
+### CalendarEvent extensions, attendees, contacts — calendar & meetings
+- `CalendarEvent.matterId` is now nullable (internal meetings). New fields:
+  `description`, `allDay`, `timeZone` (IANA, default America/New_York),
+  `status` (scheduled/confirmed/cancelled/completed — cancelling never
+  deletes), `meetingUrl` + auto-detected `meetingProvider` (Zoom, Teams,
+  Google Meet, Webex, other), `reminderMinutesBefore` (in-app reminders
+  only), recurrence rule (`recurrenceFrequency` NONE/DAILY/WEEKLY/MONTHLY,
+  `recurrenceInterval`, `recurrenceUntil`, `recurrenceCount`), `createdById`.
+- Times are stored in UTC; recurrence is expanded at read time on local
+  wall-clock time in the event's zone (DST-safe, capped at 500
+  occurrences). No per-occurrence exceptions — edits apply to the series.
+- `CalendarEventAttendee` (event ↔ active staff user) and
+  `CalendarEventContact` (event ↔ visible directory contact).
+
+### TimeEntry / ActiveTimer — recorded work time
+- `TimeEntry`: matter, user, work date, `durationMinutes`, optional
+  start/end, `category` (legal research, discovery/document review,
+  drafting, court preparation/appearance, trial work, client
+  communication, consultation, witness interview, investigation, internal
+  discussion, administrative, other), description, `billable`, optional
+  `hourlyRateCents` (amounts ADMIN-only; no invoicing), `status`
+  DRAFT/SUBMITTED, `source` MANUAL/TIMER, `voidedAt`/`voidReason` (never
+  deleted). Kept for closed matters.
+- `ActiveTimer`: one per user (`userId @unique`), matter, start,
+  `runningSince` (null while paused), `accumulatedSeconds`. Stopping
+  produces a DRAFT entry the user confirms; 12h+ timers must be confirmed
+  or adjusted.
+- Never derived from usage analytics.
+
+### UserSession / UserActivityEvent / UserActivityMinute — usage analytics
+- `UserSession`: one per login (id carried in the JWT as `sid`), start,
+  last seen, end + reason (LOGOUT / EXPIRED / REVOKED / UNKNOWN).
+- `UserActivityEvent`: append-only, identifier-only events (login, logout,
+  session start/expiry, matter view, document/discovery download, report
+  export, access denied, …) with module, sanitized route path, optional
+  matter/resource ids, result. Never content, tokens, or free text.
+- `UserActivityMinute`: unique per user per minute, written by the
+  client heartbeat only from visible, recently-used tabs — so multiple
+  tabs/devices never double-count. Every active-time figure is an
+  estimate and labelled as one.
+- Retention: 365 days, purged only by an ADMIN with typed confirmation,
+  blocked while `USAGE_RETENTION_HOLD=true`.
+
+### ChatConversation / ChatMembership / ChatMessage — team chat
+- `ChatConversation`: `type` CHANNEL/DIRECT/GROUP, channel name,
+  description, `channelKind` (matter/team/department/general/topic),
+  optional `matterId`, `participantKey @unique` for DIRECT/GROUP (sorted
+  member ids — the same people always reuse one conversation).
+- `ChatMembership`: per-member `lastReadAt` (read state), `leftAt`
+  (never deleted), `isOwner`.
+- `ChatMessage`: body (plain text), `editedAt`, `deletedAt` (soft
+  delete), optional `parentId`, `matterRefId`, `documentRefId`
+  (re-authorized for every viewer).
+- Slack has no table: `lib/integrations/slack/` holds interfaces and
+  mapping design types only.
+
 ### Matter
 A single case.
 - `id`, `clientId` (FK → Client), `caseNumber`, `court`, `charges`

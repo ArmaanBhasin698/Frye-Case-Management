@@ -1,6 +1,6 @@
 # Firm Operations Expansion — Architecture & Delivery Plan
 
-Status: **in progress — Phase 1 (Contacts) is in review; no phase is merged yet.**
+Status: **Phase 1 (Contacts) merged (#27). Remaining scope implemented on `feature/firm-operations-complete` and in review — see section 7.**
 This document is the single source of truth for the multi-phase
 "Comprehensive Firm Operations Expansion" initiative (contacts, professional
 history, matter closure, calendar, time tracking, usage reporting, team
@@ -62,7 +62,7 @@ All data in development and tests is fictional (CLAUDE.md, section 2).
 8. **No external connections.** Slack is interface + settings screen only;
    meeting links are user-entered URLs; nothing calls Zoom/Teams/Slack.
 
-## 3. Data model (proposed; each phase's slice requires explicit approval)
+## 3. Data model (as designed; implemented — see `docs/DATA_MODEL.md` for the final shape)
 
 Names below are proposals. Every model gets a purpose comment in
 `schema.prisma`, per CLAUDE.md section 6.
@@ -258,3 +258,64 @@ Recorded 2026-10-23 from the project owner:
 4. **Recurring events** — deferred (tracked here), one-off events first.
 5. **Activity-data retention** — 365 days by default, ADMIN-only purge.
 6. **Phase 1 schema** — approved as proposed in section 3.
+7. **Consolidated delivery** — on 2026-10-23 the owner consolidated phases
+   2–8 into one branch (`feature/firm-operations-complete`) with a scoped
+   approval for one coordinated additive migration
+   (`20261023163942_firm_operations_expansion`). The only relaxation is
+   `CalendarEvent.matterId` becoming nullable (internal meetings).
+
+## 7. Requirements checklist
+
+Legend: **TESTED** = implemented with automated tests (and browser-checked
+where noted "B"); **IMPLEMENTED** = implemented, covered indirectly;
+**PARTIAL** = some of the requirement remains; **NOT STARTED**.
+
+| Area | Requirement | Status |
+|---|---|---|
+| Contacts | Directory, categories, phones/emails, associations, relationships, interactions, search/filters, duplicates (#27) | TESTED (B) |
+| Judicial history | Judge profile: court, jurisdiction, position, contact info, current/previous matters | TESTED (B) |
+| | Ruling history: matter, judge, date, court, proceeding, motion type, result, context, supporting document, recorder, created date | TESTED (B) |
+| | Ruling corrections / version history (supersede, never overwrite) | TESTED |
+| | Hearing/trial history and case outcomes on profile | TESTED (B) |
+| | Filters: date, court, proceeding, motion, result, matter | TESTED (B) |
+| | Aggregates as counts with sample size/date range, no predictions | TESTED (B) |
+| | Prosecutor/solicitor/opposing counsel: cases, outcomes, observations, communication history (interaction timeline) | IMPLEMENTED (B, judge path) |
+| | Observations: author, date, matter, category, kind (observation / impression / lesson), references | TESTED (B) |
+| | Matter-restricted default; firm-wide only by explicit sharing with no-privilege confirmation and no matter link | TESTED |
+| | No cross-matter leaks via profiles, filters, counts, search, documents | TESTED (B) |
+| Matter closure | Structured Close Matter replaces direct status edit | TESTED (B) |
+| | Required fields, disposition incl. administrative exception, non-trial resolutions | TESTED (B) |
+| | Trial report only for trials (dates, bench/jury, charges, verdict by charge, rulings, sentencing, summary, observations) | TESTED |
+| | Significant rulings confirmation (recorded / none / documented exception), observation review | TESTED (B) |
+| | Transactional: report, ruling links, observations, status, audit | TESTED (B) |
+| | Amendments (versioned), reopen (audited), historical backfill (flagged, never fabricated) | TESTED |
+| Calendar | Month / week / day / agenda, prev/next, Today, view switcher, date selection | TESTED (B) |
+| | Event create/edit/cancel, detail page, categories, matter/staff/type filters | TESTED (B) |
+| | Attendees, linked contacts, time zones, all-day, reminders (in-app) | TESTED |
+| | Recurrence (daily/weekly/monthly, interval, until/count) | TESTED — no per-occurrence exceptions (documented) |
+| | Meeting URL validation, provider recognition, Join (safe), Copy | TESTED (B) |
+| | Matter appointments tab; history after closure; contact meeting history | IMPLEMENTED (B, matter tab) |
+| | "Schedule meeting with this contact" prefill | PARTIAL — event form links contacts; no prefill from profile |
+| Time | Manual entries, start/pause/resume/stop timers, persistence, 12h interruption handling, one timer per user | TESTED (B) |
+| | Categories, descriptions, billable flag, optional rates (amounts ADMIN-only), corrections, void | TESTED |
+| | Matter Time & Activity: totals, billable/nonbillable, by staff, by category, over time, history | TESTED (B) |
+| | Closed matters retain entries; no billable inference from usage; no invoicing | TESTED |
+| Usage | Sessions (start, last activity, end/reason, expiry), login/logout events | TESTED |
+| | Matter access, document/discovery downloads, access denials, report exports | TESTED |
+| | Note/task/contact/calendar/admin modifications (derived from AuditEvent, not duplicated) | IMPLEMENTED |
+| | Heartbeat with idle detection, multi-tab/device de-duplication, estimates labelled | TESTED |
+| | Admin usage dashboard with filters; security-center integration | TESTED (B) |
+| | 365-day retention, ADMIN purge with confirmation, preservation hold | TESTED |
+| | Session IP address / user agent | PARTIAL — not captured (sign-in callback lacks the request) |
+| PDFs | Matter Time, Employee Activity, Firm Utilization; branding, multipage, totals | TESTED (B) |
+| | Server-side authorization before generation | TESTED (B) |
+| Chat | Channels (matter/team/department/general/topic), description, membership management | TESTED (B) |
+| | DMs, group DMs (≤ 5, fixed membership, participant-set reuse) | TESTED (B, DM) |
+| | Matter channels with per-request matter re-check (revocation) | TESTED (B) |
+| | History, search (authorized only), unread state, dashboard notification | TESTED (B) |
+| | Edit own, soft delete, matter/document references (re-authorized), safe rendering | TESTED |
+| | Reply threads | PARTIAL — validated server-side; no reply UI |
+| | Refresh | IMPLEMENTED — 5 s polling, no new dependency |
+| Slack | Provider interface, OAuth boundary, workspace/user/channel/matter mapping design, notification interface, settings card, Not Connected | TESTED (B) |
+| Integration | Matter tabs (Contacts, Rulings & Outcome, Deadlines & Calendar, Time & Activity, Chat), dashboard cards, navigation, header timer | IMPLEMENTED (B) |
+
