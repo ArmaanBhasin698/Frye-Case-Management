@@ -29,7 +29,7 @@ const RULE = rgb(0.85, 0.85, 0.85);
 export function toWinAnsi(text: string): string {
   return text
     .replace(/[\r\t]/g, " ")
-    .replace(/[^\n\x20-\x7E\xA0-\xFF–—‘’“”•…]/g, "?");
+    .replace(/[^\n\x20-\x7E\xA0-\xFF–—‘’“”•…]/gu, "?");
 }
 
 export type PdfColumn = { header: string; width: number; align?: "left" | "right" };
