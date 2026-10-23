@@ -111,6 +111,25 @@ One Next.js App Router application serves both UI and backend:
   interaction timeline that merges manual interactions with linked calls.
   Visibility is strictly matter-derived (`lib/contacts/visibility.ts`;
   `docs/SECURITY.md`, "Contact visibility").
+- **Professional history & matter closure** — versioned judicial rulings
+  and attorney observations (`lib/history/`), judge/prosecutor/counsel
+  history on contact profiles, and a structured Close Matter / amend /
+  historical-backfill / reopen workflow on the matter "Rulings & Outcome"
+  tab. A matter can no longer be closed by editing its status.
+- **Calendar & meetings** — month/week/day/agenda calendar
+  (`lib/calendar/`), internal and matter events, attendees, linked
+  contacts, time zones, recurrence, in-app reminders, validated meeting
+  links (Join / Copy).
+- **Time tracking & PDF reports** — manual entries and persistent timers
+  (`lib/time/`), matter Time & Activity tab, `/time`, and Matter Time /
+  Firm Utilization / Employee Activity PDFs (`lib/reports/`, pdf-lib).
+- **Usage analytics** — sessions, identifier-only activity events,
+  heartbeat-based *estimated* active time (`lib/usage/`), ADMIN-only
+  `/admin/usage`, security-center integration, 365-day retention.
+- **Team chat** — channels (incl. matter channels), DMs, fixed group DMs
+  (≤ 5), unread state, search, polling refresh (`lib/chat/`).
+- **Slack** — disconnected scaffolding only (`lib/integrations/slack/`,
+  `/admin/integrations`).
 
 ### Integration status
 
@@ -121,6 +140,7 @@ One Next.js App Router application serves both UI and backend:
 | Vonage | Library code only (`lib/telephony/`): payload normalization, idempotent unfiled-Call ingestion, and recording storage, tested with fixtures. No route, webhook, or API client calls it. | Not connected. Calls are logged manually today. |
 | MyCase | Nothing. | No data migration has started. |
 | QuickBooks Online | Nothing. | Later phase. |
+| Slack | Interfaces and a `DisconnectedSlackProvider` only (`lib/integrations/slack/`); admin card shows Not connected. No network calls, no credentials. | Not connected; any real connection needs explicit authorization. |
 
 Existing integration code may be maintained and extended **only when a
 human explicitly authorizes that specific work**. Production connections and

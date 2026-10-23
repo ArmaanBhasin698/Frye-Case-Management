@@ -4,6 +4,7 @@ import Credentials from "next-auth/providers/credentials";
 import { prisma } from "@/lib/db";
 import { canCompleteCredentialsSignIn, verifyPassword } from "@/lib/auth/credentials";
 import { consumeVerifiedTicket } from "@/lib/auth/mfa/tickets";
+import { endUserSession, startUserSession } from "@/lib/usage/sessions";
 
 /**
  * Auth.js configuration for credentials-based, session-based auth (see
@@ -108,6 +109,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.id = user.id;
         token.role = user.role;
         token.sessionStamp = user.sessionStamp;
+        // `user` is only present when a sign-in has just fully succeeded
+        // (after every MFA / password-change gate above), so this is the
+        // one place a usage-analytics session begins. startUserSession
+        // never throws; a failure just means no `sid`.
+        const sid = await startUserSession(user.id);
+        if (sid) token.sid = sid;
       }
       return token;
     },
@@ -115,7 +122,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       session.user.id = token.id;
       session.user.role = token.role;
       session.user.sessionStamp = token.sessionStamp;
+      session.user.sid = token.sid;
       return session;
+    },
+  },
+  events: {
+    async signOut(message) {
+      const token = "token" in message ? message.token : null;
+      await endUserSession(token?.sid, token?.id, "LOGOUT");
     },
   },
 });

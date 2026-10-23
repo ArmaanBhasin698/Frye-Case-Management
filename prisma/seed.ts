@@ -37,6 +37,19 @@ async function main() {
   await prisma.discoveryComparison.deleteMany();
   await prisma.auditEvent.deleteMany();
   await prisma.call.deleteMany();
+  await prisma.chatMessage.deleteMany();
+  await prisma.chatMembership.deleteMany();
+  await prisma.chatConversation.deleteMany();
+  await prisma.timeEntry.deleteMany();
+  await prisma.activeTimer.deleteMany();
+  await prisma.userActivityMinute.deleteMany();
+  await prisma.userActivityEvent.deleteMany();
+  await prisma.userSession.deleteMany();
+  await prisma.calendarEventAttendee.deleteMany();
+  await prisma.calendarEventContact.deleteMany();
+  await prisma.judicialRuling.deleteMany();
+  await prisma.professionalObservation.deleteMany();
+  await prisma.matterClosureReport.deleteMany();
   await prisma.contactInteraction.deleteMany();
   await prisma.contactRelationship.deleteMany();
   await prisma.matterContact.deleteMany();
@@ -1153,6 +1166,68 @@ async function main() {
     },
   });
   await prisma.contact.update({ where: { id: adaRuiz.id }, data: { lastContactedAt: adaMeetingAt } });
+
+  // --- Professional history ------------------------------------------------
+  // Fictional rulings/observations. The Marsh matter is intentionally left
+  // CLOSED without a closure report (closureReviewStatus NEEDS_BACKFILL) so
+  // the historical-backfill flow can be exercised.
+  await prisma.matter.update({ where: { id: marshMatter.id }, data: { closureReviewStatus: "NEEDS_BACKFILL" } });
+  await prisma.judicialRuling.createMany({
+    data: [
+      {
+        matterId: ellisMatter.id,
+        judgeContactId: judgeVance.id,
+        rulingDate: new Date("2026-03-12"),
+        court: "Fulton County Superior Court (fictional)",
+        proceedingType: "MOTION_HEARING",
+        issueType: "MOTION_TO_SUPPRESS",
+        result: "DENIED",
+        issueDetail: "Fictional: suppression of traffic-stop evidence",
+        recordedById: sarah.id,
+      },
+      {
+        matterId: ellisMatter.id,
+        judgeContactId: judgeVance.id,
+        rulingDate: new Date("2026-05-02"),
+        court: "Fulton County Superior Court (fictional)",
+        proceedingType: "BOND_HEARING",
+        issueType: "BOND_MODIFICATION",
+        result: "GRANTED",
+        recordedById: sarah.id,
+      },
+      {
+        matterId: marshMatter.id,
+        judgeContactId: judgeVance.id,
+        rulingDate: new Date("2024-08-20"),
+        court: "DeKalb County Superior Court (fictional)",
+        proceedingType: "MOTION_HEARING",
+        issueType: "CONTINUANCE",
+        result: "GRANTED",
+        recordedById: marcus.id,
+      },
+    ],
+  });
+  await prisma.professionalObservation.createMany({
+    data: [
+      {
+        subjectContactId: judgeVance.id,
+        matterId: ellisMatter.id,
+        authorId: sarah.id,
+        category: "HEARING_PROCEDURE",
+        kind: "PROCEDURAL_OBSERVATION",
+        body: "Fictional: asked for proposed orders to be submitted with each motion.",
+        shareScope: "MATTER_ONLY",
+      },
+      {
+        subjectContactId: judgeVance.id,
+        authorId: marcus.id,
+        category: "SCHEDULING",
+        kind: "PROCEDURAL_OBSERVATION",
+        body: "Fictional reference note: motion calendars start promptly at 9:00; courtesy copies expected two days ahead.",
+        shareScope: "FIRM_ATTORNEYS",
+      },
+    ],
+  });
 
   console.log("Seed complete:");
   console.log(`  Users: ${await prisma.user.count()}`);

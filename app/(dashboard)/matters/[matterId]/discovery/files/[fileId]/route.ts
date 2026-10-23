@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { hasMatterAccess } from "@/lib/auth/access";
 import { getCurrentUser } from "@/lib/auth/session";
 import { documentStore } from "@/lib/storage/DocumentStore";
+import { recordActivity } from "@/lib/usage/record";
 
 /**
  * Streams a registered discovery file's bytes — either the untouched
@@ -24,6 +25,15 @@ export async function GET(
   }
 
   if (!(await hasMatterAccess(user, matterId))) {
+    await recordActivity({
+      userId: user.id,
+      sessionId: user.sessionId,
+      type: "ACCESS_DENIED",
+      module: "discovery",
+      path: request.nextUrl.pathname,
+      resourceType: "DiscoveryFile",
+      result: "DENIED",
+    });
     return new NextResponse("Not found.", { status: 404 });
   }
 
@@ -56,6 +66,16 @@ export async function GET(
       matterId,
       metadata: { variant },
     },
+  });
+  await recordActivity({
+    userId: user.id,
+    sessionId: user.sessionId,
+    type: "DOCUMENT_DOWNLOAD",
+    module: "discovery",
+    path: request.nextUrl.pathname,
+    matterId,
+    resourceType: "DiscoveryFile",
+    resourceId: file.id,
   });
 
   const filename = variant === "stamped" ? `stamped-${file.originalFilename}` : file.originalFilename;

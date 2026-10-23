@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { auth } from "@/lib/auth/config";
 import { prisma } from "@/lib/db";
+import { endUserSession } from "@/lib/usage/sessions";
 
 /** The shape every authorization helper in lib/auth/authorization.ts expects. */
 export type SessionUser = {
@@ -9,6 +10,8 @@ export type SessionUser = {
   name?: string | null;
   email?: string | null;
   role: import("@prisma/client").UserRole;
+  /** UserSession id for usage analytics only — never an authorization input. */
+  sessionId?: string;
 };
 
 /**
@@ -54,13 +57,19 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
   // oldest possible one means it's trusted only until this account's
   // first-ever invalidation bump, exactly the behavior a stamped session
   // already gets.
-  if (invalidatedAt > (session.user.sessionStamp ?? 0)) return null;
+  if (invalidatedAt > (session.user.sessionStamp ?? 0)) {
+    // Close the analytics session for a revoked JWT; this never affects the
+    // decision above (endUserSession swallows its own errors).
+    await endUserSession(session.user.sid, session.user.id, "REVOKED");
+    return null;
+  }
 
   return {
     id: session.user.id,
     name: session.user.name,
     email: session.user.email,
     role: dbUser.role,
+    sessionId: session.user.sid,
   };
 }
 
