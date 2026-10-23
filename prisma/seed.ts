@@ -37,6 +37,19 @@ async function main() {
   await prisma.discoveryComparison.deleteMany();
   await prisma.auditEvent.deleteMany();
   await prisma.call.deleteMany();
+  await prisma.notification.deleteMany();
+  await prisma.notificationPreference.deleteMany();
+  await prisma.schedulerLock.deleteMany();
+  await prisma.savedReport.deleteMany();
+  await prisma.expense.deleteMany();
+  await prisma.customFieldValue.deleteMany();
+  await prisma.customFieldDefinition.deleteMany();
+  await prisma.matterStageChange.deleteMany();
+  await prisma.workflowApplication.deleteMany();
+  await prisma.workflowTemplate.deleteMany();
+  await prisma.documentTemplate.deleteMany();
+  await prisma.documentFolderSet.deleteMany();
+  await prisma.calendarEventException.deleteMany();
   await prisma.chatMessage.deleteMany();
   await prisma.chatMembership.deleteMany();
   await prisma.chatConversation.deleteMany();
@@ -62,7 +75,10 @@ async function main() {
   await prisma.task.deleteMany();
   await prisma.note.deleteMany();
   await prisma.matterAssignment.deleteMany();
+  await prisma.document.updateMany({ data: { currentVersionId: null } });
+  await prisma.documentVersion.deleteMany();
   await prisma.matter.deleteMany();
+  await prisma.matterStage.deleteMany();
   await prisma.client.deleteMany();
   await prisma.user.deleteMany();
 

@@ -259,6 +259,21 @@ model User {
   createdConversations        ChatConversation[]        @relation("ChatConversationCreatedBy")
   chatMemberships             ChatMembership[]          @relation("ChatMembershipUser")
   chatMessages                ChatMessage[]             @relation("ChatMessageAuthor")
+  workflowTemplatesCreated    WorkflowTemplate[]        @relation("WorkflowTemplateCreatedBy")
+  workflowVersionsCreated     WorkflowTemplateVersion[] @relation("WorkflowTemplateVersionCreatedBy")
+  workflowStepAssignments     WorkflowTemplateStep[]    @relation("WorkflowStepAssignee")
+  workflowApplications        WorkflowApplication[]     @relation("WorkflowApplicationAppliedBy")
+  stageChanges                MatterStageChange[]       @relation("MatterStageChangedBy")
+  customFieldValueUpdates     CustomFieldValue[]        @relation("CustomFieldValueUpdatedBy")
+  savedReports                SavedReport[]             @relation("SavedReportOwner")
+  documentVersionsUploaded    DocumentVersion[]         @relation("DocumentVersionUploadedBy")
+  documentTemplatesCreated    DocumentTemplate[]        @relation("DocumentTemplateCreatedBy")
+  documentTemplateVersions    DocumentTemplateVersion[] @relation("DocumentTemplateVersionCreatedBy")
+  notifications               Notification[]            @relation("NotificationRecipient")
+  notificationPreferences     NotificationPreference[]  @relation("NotificationPreferenceUser")
+  calendarExceptions          CalendarEventException[]  @relation("CalendarExceptionCreatedBy")
+  expensesRecorded            Expense[]                 @relation("ExpenseRecordedBy")
+  expensesResponsible         Expense[]                 @relation("ExpenseResponsibleUser")
 }
 
 /// One-time-use recovery code for bypassing a lost TOTP device. Codes are
@@ -328,6 +343,7 @@ model Client {
 
   matters           Matter[]
   contact           Contact?
+  customFieldValues CustomFieldValue[]
   externalLeadLinks ExternalLeadLink[]
   linkedIntakeLeads IntakeLead[]        @relation("IntakeLeadLinkedClient")
 }
@@ -480,6 +496,14 @@ model Matter {
   activityMinutes      UserActivityMinute[]
   chatConversations    ChatConversation[]
   chatMessageRefs      ChatMessage[]             @relation("ChatMessageMatterRef")
+  stageId              String?
+  stage                MatterStage?              @relation(fields: [stageId], references: [id], onDelete: SetNull)
+  stageChanges         MatterStageChange[]
+  workflowApplications WorkflowApplication[]
+  customFieldValues    CustomFieldValue[]
+  documentFolders      DocumentFolder[]
+  notifications        Notification[]
+  expenses             Expense[]
 }
 
 /// Join table: which staff are assigned to a Matter, and in what capacity.
@@ -526,6 +550,14 @@ model Task {
   priority     TaskPriority @default(NORMAL)
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
+
+  /// Workflow provenance (never rewritten by later template edits).
+  workflowApplicationId  String?
+  workflowApplication    WorkflowApplication?  @relation(fields: [workflowApplicationId], references: [id], onDelete: SetNull)
+  workflowStepId         String?
+  workflowStep           WorkflowTemplateStep? @relation(fields: [workflowStepId], references: [id], onDelete: SetNull)
+  /// Additional in-app reminder offsets before `dueDate`, in minutes.
+  reminderOffsetsMinutes Int[]                 @default([])
 }
 
 /// A date-driven legal obligation on a Matter (statute of limitations,
@@ -585,6 +617,14 @@ model CalendarEvent {
 
   attendees CalendarEventAttendee[]
   contacts  CalendarEventContact[]
+
+  workflowApplicationId  String?
+  workflowApplication    WorkflowApplication?     @relation(fields: [workflowApplicationId], references: [id], onDelete: SetNull)
+  workflowStepId         String?
+  workflowStep           WorkflowTemplateStep?    @relation(fields: [workflowStepId], references: [id], onDelete: SetNull)
+  /// Additional in-app reminder offsets (minutes); `reminderMinutesBefore` is still honored.
+  reminderOffsetsMinutes Int[]                    @default([])
+  exceptions             CalendarEventException[]
 
   @@index([startTime])
   @@index([matterId])
@@ -715,6 +755,18 @@ model Document {
 
   judicialRulings JudicialRuling[]
   chatMessageRefs ChatMessage[]    @relation("ChatMessageDocumentRef")
+
+  folderId                      String?
+  folder                        DocumentFolder?          @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  tags                          String[]                 @default([])
+  /// Mirrors the current DocumentVersion; storage columns above always
+  /// describe that version so existing links keep working.
+  currentVersionId              String?                  @unique
+  currentVersion                DocumentVersion?         @relation("DocumentCurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+  versions                      DocumentVersion[]        @relation("DocumentVersions")
+  generatedFromTemplateVersionId String?
+  generatedFromTemplateVersion  DocumentTemplateVersion? @relation("DocumentGeneratedFrom", fields: [generatedFromTemplateVersionId], references: [id], onDelete: SetNull)
+  expenseReceipts               Expense[]                @relation("ExpenseReceipt")
 }
 
 /// A phone call. `matterId` is nullable to represent the "unfiled call"
@@ -964,6 +1016,7 @@ model Contact {
   closuresAsProsecutor MatterClosureReport[]     @relation("ClosureReportProsecutor")
   closuresAsOpposing   MatterClosureReport[]     @relation("ClosureReportOpposingCounsel")
   calendarEvents       CalendarEventContact[]
+  customFieldValues    CustomFieldValue[]
   relationshipsFrom    ContactRelationship[] @relation("ContactRelationshipFrom")
   relationshipsTo      ContactRelationship[] @relation("ContactRelationshipTo")
   interactions         ContactInteraction[]
@@ -1603,4 +1656,482 @@ model ChatMessage {
   deletedAt      DateTime?
 
   @@index([conversationId, createdAt])
+}
+
+// --- MyCase parity pass (docs/MYCASE_PARITY_SCHEMA_PROPOSAL.md, domains A–H) ---
+
+// A. Workflow templates ---------------------------------------------------------
+
+enum WorkflowCategory {
+  RETAINED_CLIENT_SETUP
+  DISCOVERY_REVIEW
+  HEARING_PREPARATION
+  TRIAL_PREPARATION
+  CLOSURE_FOLLOW_UP
+  OTHER
+}
+
+enum WorkflowTemplateStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum WorkflowStepKind {
+  TASK
+  EVENT
+}
+
+enum WorkflowAssigneeRule {
+  UNASSIGNED
+  LEAD_ATTORNEY
+  ASSIGNED_PARALEGAL
+  SPECIFIC_USER
+}
+
+/// A reusable, ADMIN-managed checklist of task/event steps applied to a
+/// matter. Editing creates a new immutable WorkflowTemplateVersion, so
+/// previously applied workflows always reference exactly what was used.
+model WorkflowTemplate {
+  id          String                 @id @default(cuid())
+  name        String
+  description String?
+  category    WorkflowCategory       @default(OTHER)
+  status      WorkflowTemplateStatus @default(ACTIVE)
+  createdById String?
+  createdBy   User?                  @relation("WorkflowTemplateCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+
+  versions WorkflowTemplateVersion[]
+}
+
+model WorkflowTemplateVersion {
+  id          String           @id @default(cuid())
+  templateId  String
+  template    WorkflowTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  version     Int
+  createdById String?
+  createdBy   User?            @relation("WorkflowTemplateVersionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime         @default(now())
+
+  steps        WorkflowTemplateStep[]
+  applications WorkflowApplication[]
+
+  @@unique([templateId, version])
+}
+
+/// One ordered step. `offsetDays` are plain calendar days from the
+/// application's anchor date — never a court-rule or business-day
+/// computation, and never a legal Deadline.
+model WorkflowTemplateStep {
+  id              String               @id @default(cuid())
+  versionId       String
+  version         WorkflowTemplateVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  position        Int
+  kind            WorkflowStepKind
+  title           String
+  description     String?
+  priority        TaskPriority         @default(NORMAL)
+  offsetDays      Int
+  timeOfDay       String?
+  durationMinutes Int?
+  eventType       CalendarEventType?
+  assigneeRule    WorkflowAssigneeRule @default(UNASSIGNED)
+  assigneeUserId  String?
+  assigneeUser    User?                @relation("WorkflowStepAssignee", fields: [assigneeUserId], references: [id], onDelete: SetNull)
+
+  tasks  Task[]
+  events CalendarEvent[]
+
+  @@unique([versionId, position])
+}
+
+/// One application of a template version to a matter. `requestKey` is
+/// generated per form submission, so a retried submit is a no-op while a
+/// deliberate second application (new key) is allowed even for the same
+/// template and anchor.
+model WorkflowApplication {
+  id                String                  @id @default(cuid())
+  matterId          String
+  matter            Matter                  @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  templateVersionId String
+  templateVersion   WorkflowTemplateVersion @relation(fields: [templateVersionId], references: [id])
+  anchorDate        DateTime
+  timeZone          String
+  requestKey        String                  @unique
+  appliedById       String?
+  appliedBy         User?                   @relation("WorkflowApplicationAppliedBy", fields: [appliedById], references: [id], onDelete: SetNull)
+  createdAt         DateTime                @default(now())
+  recalculatedAt    DateTime?
+
+  tasks  Task[]
+  events CalendarEvent[]
+
+  @@index([matterId])
+}
+
+// B. Case stages ------------------------------------------------------------------
+
+/// A configurable progress stage (Investigation, Discovery, ...). Entirely
+/// separate from Matter.status / archive / closure: changing a stage never
+/// closes or reopens a matter.
+model MatterStage {
+  id         String    @id @default(cuid())
+  name       String
+  position   Int
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  matters     Matter[]
+  changesFrom MatterStageChange[] @relation("StageChangeFrom")
+  changesTo   MatterStageChange[] @relation("StageChangeTo")
+}
+
+model MatterStageChange {
+  id          String       @id @default(cuid())
+  matterId    String
+  matter      Matter       @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  fromStageId String?
+  fromStage   MatterStage? @relation("StageChangeFrom", fields: [fromStageId], references: [id], onDelete: SetNull)
+  toStageId   String?
+  toStage     MatterStage? @relation("StageChangeTo", fields: [toStageId], references: [id], onDelete: SetNull)
+  changedById String?
+  changedBy   User?        @relation("MatterStageChangedBy", fields: [changedById], references: [id], onDelete: SetNull)
+  changedAt   DateTime     @default(now())
+
+  @@index([matterId, changedAt])
+}
+
+// C. Custom fields ----------------------------------------------------------------
+
+enum CustomFieldEntity {
+  MATTER
+  CONTACT
+  CLIENT
+}
+
+enum CustomFieldType {
+  SHORT_TEXT
+  LONG_TEXT
+  NUMBER
+  BOOLEAN
+  DATE
+  SINGLE_SELECT
+}
+
+/// ADMIN-defined extra field. `type` is immutable once values exist, and
+/// select options (`options`: [{ id, label, archived }]) are retired rather
+/// than deleted, so stored values never become unreadable.
+model CustomFieldDefinition {
+  id         String            @id @default(cuid())
+  entity     CustomFieldEntity
+  key        String
+  label      String
+  helpText   String?
+  type       CustomFieldType
+  options    Json?
+  position   Int               @default(0)
+  archivedAt DateTime?
+  createdAt  DateTime          @default(now())
+
+  values CustomFieldValue[]
+
+  @@unique([entity, key])
+}
+
+/// One typed value. Exactly one owner column is set, matching the
+/// definition's entity; exactly one value column is set, matching its type.
+model CustomFieldValue {
+  id            String                @id @default(cuid())
+  definitionId  String
+  definition    CustomFieldDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
+  matterId      String?
+  matter        Matter?               @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  contactId     String?
+  contact       Contact?              @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  clientId      String?
+  client        Client?               @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  valueText     String?
+  valueNumber   Decimal?              @db.Decimal(18, 4)
+  valueBoolean  Boolean?
+  valueDate     DateTime?
+  valueOptionId String?
+  updatedById   String?
+  updatedBy     User?                 @relation("CustomFieldValueUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  updatedAt     DateTime              @updatedAt
+
+  @@unique([definitionId, matterId])
+  @@unique([definitionId, contactId])
+  @@unique([definitionId, clientId])
+}
+
+// D. Saved reports ----------------------------------------------------------------
+
+enum SavedReportKind {
+  MATTERS
+  TASKS
+  TIME
+  USAGE
+  SEARCH
+  EXPENSES
+}
+
+/// A saved filter configuration — never saved results or privileges. It is
+/// re-scoped to whoever runs it, every time.
+model SavedReport {
+  id        String          @id @default(cuid())
+  ownerId   String
+  owner     User            @relation("SavedReportOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  name      String
+  kind      SavedReportKind
+  filters   Json
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@index([ownerId])
+}
+
+// E. Document workflows -----------------------------------------------------------
+
+model DocumentFolder {
+  id        String           @id @default(cuid())
+  matterId  String
+  matter    Matter           @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  name      String
+  parentId  String?
+  parent    DocumentFolder?  @relation("DocumentFolderTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children  DocumentFolder[] @relation("DocumentFolderTree")
+  position  Int              @default(0)
+  createdAt DateTime         @default(now())
+
+  documents Document[]
+
+  @@unique([matterId, parentId, name])
+}
+
+/// Reusable folder layout (e.g. "Criminal defense standard") applied to a
+/// matter; applying creates only missing folders.
+model DocumentFolderSet {
+  id         String                  @id @default(cuid())
+  name       String
+  archivedAt DateTime?
+  createdAt  DateTime                @default(now())
+
+  items DocumentFolderSetItem[]
+}
+
+model DocumentFolderSetItem {
+  id       String            @id @default(cuid())
+  setId    String
+  set      DocumentFolderSet @relation(fields: [setId], references: [id], onDelete: Cascade)
+  path     String
+  position Int
+
+  @@unique([setId, path])
+}
+
+/// Append-only version of a general Document's bytes. The Document's own
+/// storage columns mirror its current version, so existing download links
+/// and references keep working; earlier versions stay downloadable.
+model DocumentVersion {
+  id               String   @id @default(cuid())
+  documentId       String
+  document         Document @relation("DocumentVersions", fields: [documentId], references: [id], onDelete: Cascade)
+  version          Int
+  storageKey       String
+  originalFilename String?
+  mimeType         String?
+  sizeBytes        Int?
+  contentHash      String?
+  uploadedById     String?
+  uploadedBy       User?    @relation("DocumentVersionUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+  createdAt        DateTime @default(now())
+
+  currentFor Document?          @relation("DocumentCurrentVersion")
+  textIndex  DocumentTextIndex?
+
+  @@unique([documentId, version])
+}
+
+enum DocumentTemplateStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+/// Merge template for generated correspondence. Body text lives in
+/// immutable versions; generating never modifies the template.
+model DocumentTemplate {
+  id          String                 @id @default(cuid())
+  name        String
+  category    DocumentCategory       @default(CORRESPONDENCE)
+  status      DocumentTemplateStatus @default(ACTIVE)
+  createdById String?
+  createdBy   User?                  @relation("DocumentTemplateCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+
+  versions DocumentTemplateVersion[]
+}
+
+model DocumentTemplateVersion {
+  id          String           @id @default(cuid())
+  templateId  String
+  template    DocumentTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  version     Int
+  body        String
+  createdById String?
+  createdBy   User?            @relation("DocumentTemplateVersionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime         @default(now())
+
+  generatedDocuments Document[] @relation("DocumentGeneratedFrom")
+
+  @@unique([templateId, version])
+}
+
+enum DocumentIndexStatus {
+  PENDING
+  INDEXED
+  UNSUPPORTED
+  FAILED
+}
+
+/// Extracted text for one document version, searched only inside the
+/// caller's matter scope. UNSUPPORTED (e.g. scanned PDFs, images) is
+/// recorded honestly and never matches.
+model DocumentTextIndex {
+  id                String              @id @default(cuid())
+  documentVersionId String              @unique
+  documentVersion   DocumentVersion     @relation(fields: [documentVersionId], references: [id], onDelete: Cascade)
+  status            DocumentIndexStatus @default(PENDING)
+  text              String?
+  extractor         String?
+  extractedAt       DateTime?
+}
+
+// F. Notifications ----------------------------------------------------------------
+
+enum NotificationKind {
+  TASK_ASSIGNED
+  TASK_DUE
+  TASK_OVERDUE
+  DEADLINE_DUE
+  DEADLINE_OVERDUE
+  EVENT_REMINDER
+  EVENT_CHANGED
+  EVENT_CANCELLED
+  CHAT_DIRECT_MESSAGE
+}
+
+/// Persisted in-app notification. `dedupeKey` makes scheduler retries and
+/// concurrent runs idempotent per user. `title` is generated from safe
+/// labels — never note, message, or document text. Access to the
+/// referenced record is re-checked whenever notifications are listed,
+/// counted, or opened.
+model Notification {
+  id          String           @id @default(cuid())
+  userId      String
+  user        User             @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  kind        NotificationKind
+  entityType  String
+  entityId    String
+  matterId    String?
+  matter      Matter?          @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  dedupeKey   String
+  title       String
+  createdAt   DateTime         @default(now())
+  readAt      DateTime?
+  dismissedAt DateTime?
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, dismissedAt, createdAt])
+}
+
+model NotificationPreference {
+  id     String           @id @default(cuid())
+  userId String
+  user   User             @relation("NotificationPreferenceUser", fields: [userId], references: [id], onDelete: Cascade)
+  kind   NotificationKind
+  inApp  Boolean          @default(true)
+
+  @@unique([userId, kind])
+}
+
+/// Mutex + last-run record for bounded background jobs (notification
+/// scheduler), claimed with an atomic conditional update.
+model SchedulerLock {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  lockedUntil DateTime?
+  lastRunAt   DateTime?
+  lastOutcome String?
+}
+
+// G. Calendar occurrence exceptions -------------------------------------------------
+
+enum CalendarExceptionKind {
+  CANCELLED
+  MODIFIED
+}
+
+/// Per-occurrence change to a recurring CalendarEvent, identified by the
+/// occurrence's original UTC start (stable identity for future sync).
+model CalendarEventException {
+  id            String                @id @default(cuid())
+  eventId       String
+  event         CalendarEvent         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  originalStart DateTime
+  kind          CalendarExceptionKind
+  startTime     DateTime?
+  endTime       DateTime?
+  title         String?
+  location      String?
+  meetingUrl    String?
+  createdById   String?
+  createdBy     User?                 @relation("CalendarExceptionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt     DateTime              @default(now())
+
+  @@unique([eventId, originalStart])
+}
+
+// H. Matter expenses ----------------------------------------------------------------
+
+enum ExpenseCategory {
+  FILING_FEE
+  EXPERT
+  INVESTIGATOR
+  TRANSCRIPT
+  COPIES
+  POSTAGE
+  TRAVEL
+  SERVICE_OF_PROCESS
+  OTHER
+}
+
+/// A case cost recorded against a matter — separate from TimeEntry. Money
+/// is integer cents; `totalCents` is computed server-side from quantity ×
+/// unit cost (half-up). Amounts are visible to ADMIN and the matter's
+/// attorneys only. No invoices, payments, trust, or QuickBooks.
+model Expense {
+  id                String          @id @default(cuid())
+  matterId          String
+  matter            Matter          @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  incurredOn        DateTime
+  recordedById      String?
+  recordedBy        User?           @relation("ExpenseRecordedBy", fields: [recordedById], references: [id], onDelete: SetNull)
+  responsibleUserId String?
+  responsibleUser   User?           @relation("ExpenseResponsibleUser", fields: [responsibleUserId], references: [id], onDelete: SetNull)
+  category          ExpenseCategory
+  description       String
+  quantity          Decimal         @db.Decimal(12, 3)
+  unitCostCents     Int
+  totalCents        Int
+  billable          Boolean         @default(true)
+  receiptDocumentId String?
+  receiptDocument   Document?       @relation("ExpenseReceipt", fields: [receiptDocumentId], references: [id], onDelete: SetNull)
+  voidedAt          DateTime?
+  voidReason        String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@index([matterId, incurredOn])
 }
