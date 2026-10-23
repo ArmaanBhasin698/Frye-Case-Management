@@ -9,6 +9,7 @@ import {
   isAdmin,
 } from "@/lib/auth/authorization";
 import type { AuthorizableUser } from "@/lib/auth/authorization";
+import { recordActivity } from "@/lib/usage/record";
 
 /** Matter ids `user` is assigned to. Meaningless (and unused) for admins. */
 export async function getAssignedMatterIds(userId: string): Promise<string[]> {
@@ -53,6 +54,17 @@ export async function hasMatterAccess(user: AuthorizableUser, matterId: string):
  */
 export async function assertMatterAccess(user: AuthorizableUser, matterId: string): Promise<void> {
   if (!(await hasMatterAccess(user, matterId))) {
+    // Usage analytics only (never throws, never changes the decision). The
+    // attempted id goes in `resourceId`, not the `matterId` FK, since a
+    // forged id may not exist at all.
+    await recordActivity({
+      userId: user.id,
+      type: "ACCESS_DENIED",
+      module: "matters",
+      resourceType: "Matter",
+      resourceId: matterId,
+      result: "DENIED",
+    });
     notFound();
   }
 }
