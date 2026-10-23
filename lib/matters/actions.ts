@@ -924,6 +924,17 @@ export async function updateMatter(
   if (!before) {
     return { error: NOT_FOUND.error };
   }
+  // Closing and reopening go through the structured closure workflow
+  // (lib/history/actions.ts#closeMatter/reopenMatter), which validates and
+  // records the closure report — never a bare status edit.
+  if (status !== before.status && (status === "CLOSED" || before.status === "CLOSED")) {
+    return {
+      error:
+        status === "CLOSED"
+          ? "Use Close Matter on the matter's Outcome tab — closing requires a closure report."
+          : "Use Reopen Matter on the matter's Outcome tab to reopen a closed matter.",
+    };
+  }
 
   const nextClosedDate = closedDate ? new Date(closedDate) : null;
   try {

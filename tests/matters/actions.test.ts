@@ -863,6 +863,28 @@ describe("updateMatter", () => {
     });
   });
 
+  it("refuses to close a matter by editing its status — closure needs the structured report", async () => {
+    canEditMatterMock.mockResolvedValue(true);
+    const result = await updateMatter({ error: null }, matterFormData({ ...validFields, status: "CLOSED", closedDate: "2026-09-01" }));
+    expect(result?.error).toMatch(/Close Matter/);
+    expect(prismaMock.matter.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses to reopen a closed matter by editing its status", async () => {
+    canEditMatterMock.mockResolvedValue(true);
+    prismaMock.matter.findUnique.mockResolvedValue({
+      caseNumber: "26-CR-00000",
+      court: "Old Court",
+      charges: "Old charge",
+      status: "CLOSED",
+      openedDate: new Date("2026-07-01"),
+      closedDate: new Date("2026-08-01"),
+    });
+    const result = await updateMatter({ error: null }, matterFormData(validFields));
+    expect(result?.error).toMatch(/Reopen Matter/);
+    expect(prismaMock.matter.update).not.toHaveBeenCalled();
+  });
+
   it("denies the update when the caller can't edit this matter (ID scoping)", async () => {
     canEditMatterMock.mockResolvedValue(false);
     const result = await updateMatter({ error: null }, matterFormData(validFields));

@@ -28,6 +28,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArchiveContactButton } from "@/components/shared/archive-contact-button";
 import { ContactRelationshipForm, DeleteRelationshipButton } from "@/components/shared/contact-relationship-form";
 import { CompleteFollowUpButton, ContactInteractionForm } from "@/components/shared/contact-interaction-form";
+import {
+  PROFESSIONAL_HISTORY_CATEGORIES,
+  ProfessionalHistorySection,
+  readHistoryFilters,
+} from "@/components/shared/history/professional-history-section";
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -44,8 +49,15 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
  * matter-derived section on it is already limited to matters this user can
  * access — including the client-status badge.
  */
-export default async function ContactDetailPage({ params }: { params: Promise<{ contactId: string }> }) {
+export default async function ContactDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ contactId: string }>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   const { contactId } = await params;
+  const historyFilters = readHistoryFilters(await searchParams);
   const user = await requireCurrentUser();
   const detail = await getContactDetail(user, contactId);
   if (!detail) notFound();
@@ -249,6 +261,16 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
           )}
         </CardContent>
       </Card>
+
+      {contact.categories.some((c) => PROFESSIONAL_HISTORY_CATEGORIES.has(c)) && (
+        <ProfessionalHistorySection
+          user={user}
+          contactId={contact.id}
+          isJudge={contact.categories.includes("JUDGE")}
+          filters={historyFilters}
+          matterOptions={matterSelect}
+        />
+      )}
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
