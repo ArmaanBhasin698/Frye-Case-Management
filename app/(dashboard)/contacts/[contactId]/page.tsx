@@ -28,6 +28,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArchiveContactButton } from "@/components/shared/archive-contact-button";
+import { ScheduleWithContactLink } from "@/components/shared/calendar/schedule-with-contact-link";
 import { ContactRelationshipForm, DeleteRelationshipButton } from "@/components/shared/contact-relationship-form";
 import { CompleteFollowUpButton, ContactInteractionForm } from "@/components/shared/contact-interaction-form";
 import {
@@ -278,9 +279,7 @@ export default async function ContactDetailPage({
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
           <CardTitle>Meetings &amp; appointments</CardTitle>
-          <Button variant="outline" size="sm" asChild>
-            <Link href="/calendar/events/new">Schedule meeting</Link>
-          </Button>
+          {!contact.archived && <ScheduleWithContactLink contactId={contact.id} />}
         </CardHeader>
         <CardContent>
           {meetings.length === 0 ? (

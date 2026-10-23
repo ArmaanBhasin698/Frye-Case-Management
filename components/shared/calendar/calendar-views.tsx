@@ -1,8 +1,9 @@
 import Link from "next/link";
-import { Bell, Repeat, Video } from "lucide-react";
+import { Bell, CheckSquare, Pencil, Repeat, Video } from "lucide-react";
 
 import type { CalendarItem } from "@/lib/calendar/queries";
 import { isAllDayLike, itemsByDay, layoutTimedItems } from "@/lib/calendar/layout";
+import { occurrenceHref } from "@/lib/calendar/occurrences";
 import { formatInZone, formatTimeInZone, parseDateKey } from "@/lib/calendar/timezone";
 import { calendarEventTypeLabel, deadlineTypeLabel } from "@/lib/matters/format";
 import { cn } from "@/lib/utils";
@@ -16,26 +17,37 @@ import { cn } from "@/lib/utils";
 const HOUR_HEIGHT = 44;
 
 function itemHref(item: CalendarItem) {
-  return item.kind === "event" ? `/calendar/events/${item.id}` : `/matters/${item.matter?.id}/deadlines`;
+  if (item.kind === "event") return occurrenceHref(item.id, item.originalStart);
+  if (item.kind === "task") return `/matters/${item.matter?.id}/tasks`;
+  return `/matters/${item.matter?.id}/deadlines`;
 }
 
 function itemTone(item: CalendarItem) {
   if (item.kind === "deadline") return "border-amber-300 bg-amber-50 text-amber-900";
+  if (item.kind === "task") {
+    return item.taskStatus === "DONE"
+      ? "border-border bg-muted text-muted-foreground line-through"
+      : "border-emerald-200 bg-emerald-50 text-emerald-900";
+  }
   if (item.status === "CANCELLED") return "border-border bg-muted text-muted-foreground line-through";
   if (item.eventType === "HEARING" || item.eventType === "TRIAL") return "border-primary/40 bg-primary/10 text-foreground";
   return "border-sky-200 bg-sky-50 text-sky-950";
 }
 
 function itemLabel(item: CalendarItem) {
-  return item.kind === "deadline" && item.deadlineType ? `${deadlineTypeLabel(item.deadlineType)}: ${item.title}` : item.title;
+  if (item.kind === "deadline" && item.deadlineType) return `${deadlineTypeLabel(item.deadlineType)}: ${item.title}`;
+  if (item.kind === "task") return `Task due: ${item.title}`;
+  return item.title;
 }
 
 function Icons({ item }: { item: CalendarItem }) {
   return (
     <>
+      {item.kind === "task" && <CheckSquare className="mr-1 inline h-3 w-3" aria-label="Task" />}
       {item.meetingUrl && <Video className="mr-1 inline h-3 w-3" aria-label="Has meeting link" />}
       {item.recurring && <Repeat className="mr-1 inline h-3 w-3" aria-label="Repeats" />}
-      {item.reminderMinutesBefore !== null && <Bell className="mr-1 inline h-3 w-3" aria-label="Reminder set" />}
+      {item.modified && <Pencil className="mr-1 inline h-3 w-3" aria-label="This occurrence was changed" />}
+      {item.reminderOffsetsMinutes.length > 0 && <Bell className="mr-1 inline h-3 w-3" aria-label="Reminder set" />}
     </>
   );
 }
@@ -254,6 +266,7 @@ export function AgendaView({ days, items, timeZone, today }: { days: string[]; i
                         ? "All day"
                         : `${formatTimeInZone(item.start, timeZone)}${item.end ? ` – ${formatTimeInZone(item.end, timeZone)}` : ""}`}
                       {item.kind === "event" && item.eventType ? ` · ${calendarEventTypeLabel(item.eventType)}` : ""}
+                      {item.kind === "task" ? " · Task (read-only)" : ""}
                       {item.matter ? ` · ${item.matter.caseNumber}` : " · Internal"}
                       {item.location ? ` · ${item.location}` : ""}
                     </p>
