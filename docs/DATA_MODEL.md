@@ -231,6 +231,42 @@ It survives the closing or archiving of every matter it's linked to.
   `summary`, `outcome`, `followUpStatus` (`NONE` | `PENDING` |
   `COMPLETED`), `recordedById`.
 
+### JudicialRuling / ProfessionalObservation — professional history
+- `JudicialRuling`: matter, judge contact, ruling date, court,
+  `proceedingType`, `issueType` (motion to suppress/dismiss, bond,
+  discovery, evidentiary, continuance, sentencing, probation, jury
+  instruction, other), `result`, issue detail, context, optional
+  supporting document (same matter), recording attorney, optional
+  `closureReportId`. Versioned: a correction is a new row
+  (`version + 1`, `supersedesId` → old row, `correctionReason`) and the old
+  row gets `supersededAt`. A duplicate current ruling (same matter, judge,
+  date, issue, proceeding) is refused.
+- `ProfessionalObservation`: subject contact, optional matter, author,
+  `category`, `kind` (attorney observation / subjective impression /
+  lesson learned), body, references, `shareScope` (MATTER_ONLY requires a
+  matter; FIRM_ATTORNEYS has none), optional `closureReportId`. Versioned
+  the same way.
+- Prosecutor/solicitor/opposing-counsel history is derived (closure
+  reports naming them + observations + interactions), not stored twice.
+
+### MatterClosureReport / TrialOutcome — structured closure
+- Report: matter, `version` (unique per matter), `supersededAt`,
+  `amendmentReason`, `isHistoricalBackfill`, responsible and closing
+  attorneys, closure date, case type, charges, `disposition`,
+  `resolutionProcedure`, outcome date/summary, judge / prosecutor /
+  opposing-counsel contacts (must be on the matter), `noSignificantRulings`,
+  `exceptionReason`, final notes, lessons learned.
+- `TrialOutcome` (only when the resolution was a trial): dates, bench/jury,
+  defense attorneys, charges tried, `verdicts` (JSON `{charge, verdict}[]`),
+  evidentiary issues, significant motions, sentencing, summary,
+  observations, lessons learned.
+- `Matter.closureReviewStatus`: NOT_APPLICABLE / NEEDS_BACKFILL (set by the
+  migration for matters already closed — no report is fabricated) /
+  COMPLETE.
+- Closing runs in one transaction: report (+ trial outcome) → current
+  rulings linked to the report → closing observations created → matter set
+  CLOSED with `closedDate` → audit events.
+
 ### Matter
 A single case.
 - `id`, `clientId` (FK → Client), `caseNumber`, `court`, `charges`

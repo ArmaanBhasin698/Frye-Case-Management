@@ -61,6 +61,11 @@ export default async function MatterLayout({
                 {matterStatusLabel(matter.status)}
               </Badge>
               {matter.archived && <Badge variant="secondary">Archived</Badge>}
+              {matter.closureReviewStatus === "NEEDS_BACKFILL" && (
+                <Link href={`/matters/${matter.id}/outcome`}>
+                  <Badge variant="warning">Closure report not reviewed</Badge>
+                </Link>
+              )}
               {canManageClientsAndMatters(user) && (
                 <Button variant="outline" size="sm" asChild>
                   <Link href={`/matters/${matter.id}/edit`}>Edit Matter</Link>

@@ -733,6 +733,34 @@ this pass.
     field names only — never notes, interaction summaries, or relationship
     context.
 
+- **Professional history & matter closure (firm-operations expansion).**
+  Rules live in `lib/history/visibility.ts` (pure, tested) and every query
+  in `lib/history/queries.ts` composes them with the viewer's assigned
+  matters, so judge/prosecutor/counsel profiles, filters, counts, and
+  summaries only ever include matters the viewer can open:
+  - `JudicialRuling` and `MatterClosureReport` — strictly matter access
+    (owner decision: no anonymized cross-matter summaries). Recording or
+    correcting a ruling, and closing/amending/backfilling/reopening a
+    matter, require `canEditMatter` (ADMIN, or an ATTORNEY on the matter).
+    The judge must be a JUDGE-category contact actually on the matter; a
+    supporting document must belong to the same matter.
+  - `ProfessionalObservation` — MATTER_ONLY (default) follows matter
+    access; FIRM_ATTORNEYS reference notes are an explicit choice, require
+    confirming the note contains no privileged/matter-specific content,
+    are stored **without** a matter (so they cannot disclose one), and are
+    visible to ADMIN/ATTORNEY users who can see the subject contact. Only
+    ADMIN/ATTORNEY may author; only the author or ADMIN may correct.
+  - Corrections and amendments never overwrite: a new version supersedes
+    the old (`supersedesId`/`supersededAt`, or report `version`), and the
+    old version stays readable to the same audience.
+  - Summaries are counts with sample size and date range, labelled as
+    Frye's recorded history — never percentages or predictions.
+  - Audit metadata records ids, enum values, versions, and modes only —
+    never ruling context, observation text, outcome summaries, or notes.
+  - A matter can no longer be moved into or out of CLOSED through the edit
+    form; closing requires the validated structured report, and reopening
+    is a separate audited action.
+
 ## Audit logging
 
 - Every create/update/delete on Client, Matter, Note, Task, Deadline,
