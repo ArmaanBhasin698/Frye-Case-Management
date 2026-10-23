@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { format } from "date-fns";
 
 import { prisma } from "@/lib/db";
+import { getContactMeetingHistory } from "@/lib/calendar/queries";
+import { formatInZone } from "@/lib/calendar/timezone";
 import { requireCurrentUser } from "@/lib/auth/session";
 import { canManageClientsAndMatters } from "@/lib/auth/authorization";
 import { getContactDetail, listAccessibleMatterOptions, listContactOptions } from "@/lib/contacts/queries";
@@ -63,10 +65,11 @@ export default async function ContactDetailPage({
   if (!detail) notFound();
   const { contact, clientStatus, associatedMatters, relationships, timeline } = detail;
 
-  const [contactOptions, matterOptions, staff] = await Promise.all([
+  const [contactOptions, matterOptions, staff, meetings] = await Promise.all([
     listContactOptions(user),
     listAccessibleMatterOptions(user),
     prisma.user.findMany({ where: { status: "ACTIVE" }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    getContactMeetingHistory(user, contactId),
   ]);
   const matterSelect = matterOptions.map((m) => ({ id: m.id, label: `${m.caseNumber} — ${matterTitle(m)}` }));
 
@@ -271,6 +274,48 @@ export default async function ContactDetailPage({
           matterOptions={matterSelect}
         />
       )}
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
+          <CardTitle>Meetings &amp; appointments</CardTitle>
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/calendar/events/new">Schedule meeting</Link>
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {meetings.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No calendar events you can see are linked to this contact.</p>
+          ) : (
+            <ul className="divide-y divide-border text-sm">
+              {meetings.map((m) => (
+                <li key={m.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                  <div>
+                    <Link href={`/calendar/events/${m.id}`} className="font-medium hover:underline">
+                      {m.title}
+                    </Link>
+                    <p className="text-xs text-muted-foreground">
+                      {formatInZone(
+                        m.startTime,
+                        m.timeZone,
+                        m.allDay ? { dateStyle: "medium" } : { dateStyle: "medium", timeStyle: "short", timeZoneName: "short" },
+                      )}
+                      {m.matter ? ` · ${m.matter.caseNumber}` : " · Internal"}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {m.status === "CANCELLED" && <Badge variant="secondary">Cancelled</Badge>}
+                    {m.meetingUrl && m.status !== "CANCELLED" && (
+                      <a href={m.meetingUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">
+                        Join meeting
+                      </a>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">

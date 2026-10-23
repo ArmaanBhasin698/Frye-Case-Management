@@ -36,13 +36,15 @@ import { requireCurrentUser } from "@/lib/auth/session";
 import { getMyTimeSummary } from "@/lib/time/queries";
 import { getUnreadChatSummary } from "@/lib/chat/queries";
 import { TimeShortcutsCard } from "@/components/shared/time-shortcuts-card";
+import { getUpcomingMeetings } from "@/lib/calendar/queries";
+import { UpcomingMeetingsCard } from "@/components/shared/upcoming-meetings-card";
 import { UnreadMessagesCard } from "@/components/shared/unread-messages-card";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export default async function DashboardPage() {
   const user = await requireCurrentUser();
-  const [stats, activeMatters, keyDates, openTasks, recentDiscovery, recentCalls, timeSummary, chatSummary] =
+  const [stats, activeMatters, keyDates, openTasks, recentDiscovery, recentCalls, timeSummary, chatSummary, upcoming] =
     await Promise.all([
       getDashboardStats(user),
       getActiveMatters(user, 5),
@@ -52,6 +54,7 @@ export default async function DashboardPage() {
       getRecentCallsAcrossMatters(user, 6),
       getMyTimeSummary(user),
       getUnreadChatSummary(user),
+      getUpcomingMeetings(user, 5),
     ]);
 
   return (
@@ -79,7 +82,8 @@ export default async function DashboardPage() {
         <StatCard icon={PhoneMissed} label="Unfiled Calls" value={stats.unfiledCalls} />
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-6 lg:grid-cols-3">
+        <UpcomingMeetingsCard meetings={upcoming.meetings} reminders={upcoming.reminders} />
         <TimeShortcutsCard summary={timeSummary} />
         <UnreadMessagesCard summary={chatSummary} />
       </div>
