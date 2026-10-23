@@ -271,6 +271,10 @@ short:
 - `docs/SECURITY_MONITORING_ASSESSMENT.md` — record of the local,
   fictional-data exercise that added suspicious-login detection and admin
   incident triage.
+- `docs/FIRM_OPERATIONS_EXPANSION.md` — architecture, confidentiality
+  model, and phased delivery plan for the contacts / professional history /
+  matter closure / calendar / time tracking / usage reporting / team chat /
+  Slack scaffolding initiative, including open decisions.
 
 Keep these documents current. If you make an architectural decision while
 implementing a feature, record it in the relevant doc in the same change.

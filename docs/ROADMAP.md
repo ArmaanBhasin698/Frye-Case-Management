@@ -1418,6 +1418,14 @@ save recording" workflow described in the project goals works end-to-end.
       `AuditEvent` feed, by design (see `docs/SECURITY.md`).
 - [ ] UI/UX polish pass.
 
+## Initiative — Comprehensive Firm Operations Expansion (planned)
+
+Planned in `docs/FIRM_OPERATIONS_EXPANSION.md`: eight phases (contacts,
+professional history, matter closure, calendar, time tracking, usage
+reports, team chat, Slack scaffolding), each on its own branch/PR. No phase
+has started; every schema-bearing phase is waiting on explicit migration
+approval.
+
 ## Later / not yet scheduled
 
 - [x] **Pre-integration scaffolding pass** (`integration/prep-scaffolding`
