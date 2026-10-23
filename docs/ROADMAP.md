@@ -1376,6 +1376,21 @@ status lives in `docs/FIRM_OPERATIONS_EXPANSION.md`, section 7.
       IP/user-agent capture on sessions, real-time push (would need a new
       dependency).
 
+## Milestone — MyCase parity pass (feature/mycase-parity-completion)
+
+Owner-approved schema domains A–H (one additive migration) and
+dependencies `unpdf`, `mammoth`. Capability-level status and evidence:
+`docs/MYCASE_PARITY_CHECKLIST.md`.
+
+- [x] Workflow templates, case stages, custom fields, global search,
+      saved reports + CSV, document folders/versions/templates/content
+      search, notification inbox + scheduler, calendar occurrence
+      exceptions, chat threads, matter expenses.
+- [ ] Blocked/deferred (see checklist §10–13): client portal, email/SMS
+      filing, calendar sync, e-signatures, production integrations,
+      import/cutover (domain I), billing/trust, AI/MCP, contact merge,
+      session IP/UA capture, OCR, DOCX templates, production scheduler host.
+
 ## Phase 4 — Discovery management (core differentiator)
 
 - [x] `DiscoveryProduction` and `DiscoveryFile` create. *Real as of the

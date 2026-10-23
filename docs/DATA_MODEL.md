@@ -323,6 +323,39 @@ It survives the closing or archiving of every matter it's linked to.
 - Slack has no table: `lib/integrations/slack/` holds interfaces and
   mapping design types only.
 
+### MyCase parity pass (migration `20261023180000_mycase_parity`)
+Full field-level design: `docs/MYCASE_PARITY_SCHEMA_PROPOSAL.md`.
+- **Workflow templates** — `WorkflowTemplate` → immutable
+  `WorkflowTemplateVersion` → ordered `WorkflowTemplateStep` (TASK/EVENT,
+  calendar-day `offsetDays`, assignee rule). `WorkflowApplication` records
+  matter, exact version, anchor date/zone, and a per-submission
+  `requestKey @unique` (retry-safe; deliberate re-application allowed).
+  `Task`/`CalendarEvent` carry nullable `workflowApplicationId` /
+  `workflowStepId` provenance.
+- **Case stages** — ordered, archivable `MatterStage`; `Matter.stageId`
+  (optional, independent of status/closure); append-only
+  `MatterStageChange`.
+- **Custom fields** — `CustomFieldDefinition` (MATTER/CONTACT/CLIENT,
+  immutable key, type locked once values exist, retire-only select
+  options) and typed `CustomFieldValue` columns (one owner, one value).
+- **Saved reports** — `SavedReport` stores owner + kind + validated
+  filters only; re-scoped on every run.
+- **Documents** — `DocumentFolder` tree + `Document.folderId`/`tags`;
+  reusable `DocumentFolderSet`/`Item`; append-only `DocumentVersion` (new
+  storage key each time; existing documents backfilled as v1;
+  `Document.currentVersionId` + mirrored storage columns);
+  `DocumentTemplate`/`DocumentTemplateVersion` with generated-document
+  provenance; `DocumentTextIndex` per version (INDEXED / UNSUPPORTED /
+  FAILED / PENDING).
+- **Notifications** — `Notification` (`@@unique([userId, dedupeKey])`),
+  `NotificationPreference`, `SchedulerLock`; `Task.reminderOffsetsMinutes`,
+  `CalendarEvent.reminderOffsetsMinutes`.
+- **Calendar** — `CalendarEventException` (CANCELLED/MODIFIED) keyed by
+  `(eventId, originalStart)`.
+- **Expenses** — `Expense`: quantity Decimal(12,3) × `unitCostCents` →
+  server-computed `totalCents` (integer, half-up), billable, receipt
+  Document (same matter), void-not-delete.
+
 ### Matter
 A single case.
 - `id`, `clientId` (FK → Client), `caseNumber`, `court`, `charges`
