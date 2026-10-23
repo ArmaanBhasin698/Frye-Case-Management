@@ -3,7 +3,10 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+
+import { ActivityHeartbeat } from "@/components/shared/activity-heartbeat";
 import {
+  Activity,
   BarChart3,
   CalendarDays,
   CheckSquare,
@@ -13,9 +16,12 @@ import {
   Inbox,
   LayoutDashboard,
   Menu,
+  MessagesSquare,
   Phone,
+  Plug,
   ShieldAlert,
   ShieldCheck,
+  Timer,
   Users,
 } from "lucide-react";
 
@@ -78,6 +84,8 @@ function navItemsFor(role: string): NavItem[] {
     },
     { href: "/tasks", label: "Tasks", icon: CheckSquare },
     { href: "/calendar", label: "Calendar", icon: CalendarDays },
+    { href: "/time", label: "Time", icon: Timer },
+    { href: "/chat", label: "Team Chat", icon: MessagesSquare },
     { href: "/discovery", label: "Discovery", icon: FileSearch },
     { href: "/communications", label: "Communications", icon: Phone },
     { href: "/reports", label: "Reports", icon: BarChart3 },
@@ -89,6 +97,8 @@ function navItemsFor(role: string): NavItem[] {
   if (role === "ADMIN") {
     items.push({ href: "/admin/users", label: "Users", icon: ShieldCheck });
     items.push({ href: "/admin/security", label: "Security", icon: ShieldAlert });
+    items.push({ href: "/admin/usage", label: "Usage & Reports", icon: Activity });
+    items.push({ href: "/admin/integrations", label: "Integrations", icon: Plug });
   }
   return items;
 }
@@ -169,6 +179,7 @@ export function AppShell({
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
+      <ActivityHeartbeat />
       <aside className="hidden w-64 shrink-0 md:block">
         <SidebarContent role={user.role} />
       </aside>
