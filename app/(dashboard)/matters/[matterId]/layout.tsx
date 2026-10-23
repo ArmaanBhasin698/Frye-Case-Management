@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { after } from "next/server";
 import { ArrowLeft } from "lucide-react";
 import { format } from "date-fns";
 
@@ -15,6 +16,7 @@ import {
 import { assertMatterAccess } from "@/lib/auth/access";
 import { requireCurrentUser } from "@/lib/auth/session";
 import { canManageClientsAndMatters } from "@/lib/auth/authorization";
+import { recordActivity } from "@/lib/usage/record";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { MatterTabs } from "@/components/shared/matter-tabs";
@@ -41,6 +43,11 @@ export default async function MatterLayout({
   // page as a nonexistent matter id — access is never distinguishable
   // from "doesn't exist."
   await assertMatterAccess(user, matter.id);
+  // Usage analytics after the response is sent. The layout persists across
+  // this matter's tabs, so this records entering the matter, not each tab.
+  after(() =>
+    recordActivity({ userId: user.id, sessionId: user.sessionId, type: "MATTER_VIEW", module: "matters", matterId: matter.id }),
+  );
 
   return (
     <div className="space-y-6">

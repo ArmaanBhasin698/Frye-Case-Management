@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { hasMatterAccess } from "@/lib/auth/access";
 import { getCurrentUser } from "@/lib/auth/session";
 import { documentStore } from "@/lib/storage/DocumentStore";
+import { recordActivity } from "@/lib/usage/record";
 
 /**
  * Streams a general matter document's original bytes. Same posture as
@@ -15,7 +16,7 @@ import { documentStore } from "@/lib/storage/DocumentStore";
  * inherit the matter layout's access check, so this repeats it itself.
  */
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ matterId: string; documentId: string }> },
 ) {
   const { matterId, documentId } = await params;
@@ -23,8 +24,18 @@ export async function GET(
   if (!user) {
     return new NextResponse("Not found.", { status: 404 });
   }
+  const path = new URL(request.url).pathname;
 
   if (!(await hasMatterAccess(user, matterId))) {
+    await recordActivity({
+      userId: user.id,
+      sessionId: user.sessionId,
+      type: "ACCESS_DENIED",
+      module: "matters",
+      path,
+      resourceType: "Document",
+      result: "DENIED",
+    });
     return new NextResponse("Not found.", { status: 404 });
   }
 
@@ -51,6 +62,16 @@ export async function GET(
       entityId: document.id,
       matterId,
     },
+  });
+  await recordActivity({
+    userId: user.id,
+    sessionId: user.sessionId,
+    type: "DOCUMENT_DOWNLOAD",
+    module: "matters",
+    path,
+    matterId,
+    resourceType: "Document",
+    resourceId: document.id,
   });
 
   const filename = (document.originalFilename ?? document.title).replace(/"/g, "");

@@ -22,6 +22,8 @@ declare module "@auth/core/types" {
       id: string;
       role: UserRole;
       sessionStamp: number;
+      /** UserSession id for usage analytics (lib/usage/sessions.ts); absent on tokens issued before it existed. */
+      sid?: string;
     } & DefaultSession["user"];
   }
 }
@@ -31,5 +33,6 @@ declare module "@auth/core/jwt" {
     id: string;
     role: UserRole;
     sessionStamp: number;
+    sid?: string;
   }
 }
