@@ -105,7 +105,11 @@ export async function getUpcomingKeyDates(user: AuthorizableUser, limit = 6): Pr
       deadlineType: d.type,
       matter: d.matter,
     })),
-    ...events.map((e) => ({
+    // Matterless (internal) events aren't part of this matter-scoped view.
+    ...events.flatMap((e) =>
+      e.matter
+        ? [
+            {
       kind: "event" as const,
       id: e.id,
       date: e.startTime,
@@ -113,7 +117,10 @@ export async function getUpcomingKeyDates(user: AuthorizableUser, limit = 6): Pr
       eventType: e.type,
       location: e.location,
       matter: e.matter,
-    })),
+            },
+          ]
+        : [],
+    ),
   ];
 
   merged.sort((a, b) => a.date.getTime() - b.date.getTime());

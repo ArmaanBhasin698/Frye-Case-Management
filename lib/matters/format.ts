@@ -226,6 +226,14 @@ const CALENDAR_EVENT_TYPE_LABEL: Record<CalendarEventType, string> = {
   DEPOSITION: "Deposition",
   MEETING: "Meeting",
   OTHER: "Other",
+  CLIENT_MEETING: "Client meeting",
+  INTERNAL_MEETING: "Internal meeting",
+  TRIAL: "Trial",
+  CONSULTATION: "Consultation",
+  VIRTUAL_MEETING: "Virtual meeting",
+  PHONE_CALL: "Phone call",
+  FILING_DEADLINE: "Filing deadline",
+  DISCOVERY_DEADLINE: "Discovery deadline",
 };
 
 export function calendarEventTypeLabel(type: CalendarEventType) {

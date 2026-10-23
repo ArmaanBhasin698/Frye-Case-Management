@@ -107,6 +107,14 @@ enum CalendarEventType {
   DEPOSITION
   MEETING
   OTHER
+  CLIENT_MEETING
+  INTERNAL_MEETING
+  TRIAL
+  CONSULTATION
+  VIRTUAL_MEETING
+  PHONE_CALL
+  FILING_DEADLINE
+  DISCOVERY_DEADLINE
 }
 
 enum DocumentCategory {
@@ -237,6 +245,20 @@ model User {
   createdContactRelationships ContactRelationship[] @relation("ContactRelationshipCreatedBy")
   contactInteractions         ContactInteraction[]  @relation("ContactInteractionStaff")
   recordedContactInteractions ContactInteraction[]  @relation("ContactInteractionRecordedBy")
+  recordedRulings             JudicialRuling[]          @relation("JudicialRulingRecordedBy")
+  authoredObservations        ProfessionalObservation[] @relation("ProfessionalObservationAuthor")
+  closureReportsClosed        MatterClosureReport[]     @relation("ClosureReportClosingAttorney")
+  closureReportsResponsible   MatterClosureReport[]     @relation("ClosureReportResponsibleAttorney")
+  createdCalendarEvents       CalendarEvent[]           @relation("CalendarEventCreatedBy")
+  calendarAttendance          CalendarEventAttendee[]
+  timeEntries                 TimeEntry[]               @relation("TimeEntryUser")
+  activeTimer                 ActiveTimer?
+  sessions                    UserSession[]
+  activityEvents              UserActivityEvent[]
+  activityMinutes             UserActivityMinute[]
+  createdConversations        ChatConversation[]        @relation("ChatConversationCreatedBy")
+  chatMemberships             ChatMembership[]          @relation("ChatMembershipUser")
+  chatMessages                ChatMessage[]             @relation("ChatMessageAuthor")
 }
 
 /// One-time-use recovery code for bypassing a lost TOTP device. Codes are
@@ -445,6 +467,19 @@ model Matter {
   contactLinks         MatterContact[]
   contactRelationships ContactRelationship[]
   contactInteractions  ContactInteraction[]
+  /// Whether this matter has a structured closure report. Matters already
+  /// CLOSED before the closure workflow existed are marked NEEDS_BACKFILL by
+  /// the migration — never given a fabricated report.
+  closureReviewStatus  ClosureReviewStatus       @default(NOT_APPLICABLE)
+  judicialRulings      JudicialRuling[]
+  observations         ProfessionalObservation[]
+  closureReports       MatterClosureReport[]
+  timeEntries          TimeEntry[]
+  activeTimers         ActiveTimer[]
+  activityEvents       UserActivityEvent[]
+  activityMinutes      UserActivityMinute[]
+  chatConversations    ChatConversation[]
+  chatMessageRefs      ChatMessage[]             @relation("ChatMessageMatterRef")
 }
 
 /// Join table: which staff are assigned to a Matter, and in what capacity.
@@ -515,18 +550,44 @@ model Deadline {
 /// Distinct from Deadline: a Deadline is a legal obligation with a
 /// satisfied/audit lifecycle, while a CalendarEvent is simply something
 /// happening on the calendar (it may have no legal consequence if missed).
+///
+/// Firm-operations extension: `matterId` is optional so internal meetings
+/// can exist without a matter. A matter-linked event keeps the existing
+/// matter-scope rule; a matterless event is visible only to ADMIN, its
+/// creator, and its staff attendees (lib/calendar/access.ts). Recurrence is
+/// a simple rule (frequency/interval/until/count) expanded at read time —
+/// no per-occurrence exceptions (see docs/DATA_MODEL.md).
 model CalendarEvent {
-  id        String            @id @default(cuid())
-  matterId  String
-  matter    Matter            @relation(fields: [matterId], references: [id], onDelete: Cascade)
-  title     String
-  type      CalendarEventType @default(OTHER)
-  startTime DateTime
-  endTime   DateTime?
-  location  String?
-  notes     String?
-  createdAt DateTime          @default(now())
-  updatedAt DateTime          @updatedAt
+  id                    String              @id @default(cuid())
+  matterId              String?
+  matter                Matter?             @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  title                 String
+  type                  CalendarEventType   @default(OTHER)
+  startTime             DateTime
+  endTime               DateTime?
+  location              String?
+  notes                 String?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  description           String?
+  allDay                Boolean             @default(false)
+  timeZone              String              @default("America/New_York")
+  status                CalendarEventStatus @default(SCHEDULED)
+  meetingUrl            String?
+  meetingProvider       MeetingProvider?
+  reminderMinutesBefore Int?
+  recurrenceFrequency   RecurrenceFrequency @default(NONE)
+  recurrenceInterval    Int                 @default(1)
+  recurrenceUntil       DateTime?
+  recurrenceCount       Int?
+  createdById           String?
+  createdBy             User?               @relation("CalendarEventCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  attendees CalendarEventAttendee[]
+  contacts  CalendarEventContact[]
+
+  @@index([startTime])
+  @@index([matterId])
 }
 
 /// One batch of discovery received on a Matter. `batesPrefix` is also used
@@ -651,6 +712,9 @@ model Document {
   uploadedBy       User             @relation(fields: [uploadedById], references: [id])
   uploadedAt       DateTime         @default(now())
   notes            String?
+
+  judicialRulings JudicialRuling[]
+  chatMessageRefs ChatMessage[]    @relation("ChatMessageDocumentRef")
 }
 
 /// A phone call. `matterId` is nullable to represent the "unfiled call"
@@ -894,6 +958,12 @@ model Contact {
   phones               ContactPhone[]
   emails               ContactEmail[]
   matterLinks          MatterContact[]
+  rulingsAsJudge       JudicialRuling[]          @relation("JudicialRulingJudge")
+  observationsAbout    ProfessionalObservation[] @relation("ProfessionalObservationSubject")
+  closuresAsJudge      MatterClosureReport[]     @relation("ClosureReportJudge")
+  closuresAsProsecutor MatterClosureReport[]     @relation("ClosureReportProsecutor")
+  closuresAsOpposing   MatterClosureReport[]     @relation("ClosureReportOpposingCounsel")
+  calendarEvents       CalendarEventContact[]
   relationshipsFrom    ContactRelationship[] @relation("ContactRelationshipFrom")
   relationshipsTo      ContactRelationship[] @relation("ContactRelationshipTo")
   interactions         ContactInteraction[]
@@ -1000,4 +1070,537 @@ model ContactInteraction {
 
   @@index([contactId, occurredAt])
   @@index([matterId])
+}
+
+// --- Professional history & matter closure -----------------------------------
+//
+// Rulings and observations are always owned by (and authorized through) a
+// matter, except firm-wide reference notes, which by construction carry no
+// matter at all. See lib/history/ and docs/SECURITY.md, "Professional
+// history".
+
+enum ProceedingType {
+  ARRAIGNMENT
+  BOND_HEARING
+  MOTION_HEARING
+  PRETRIAL_CONFERENCE
+  PLEA_HEARING
+  TRIAL
+  SENTENCING
+  PROBATION_HEARING
+  OTHER
+}
+
+enum RulingIssueType {
+  MOTION_TO_SUPPRESS
+  MOTION_TO_DISMISS
+  BOND_MODIFICATION
+  DISCOVERY_MOTION
+  EVIDENTIARY_MOTION
+  CONTINUANCE
+  SENTENCING
+  PROBATION_MOTION
+  JURY_INSTRUCTION
+  OTHER_MOTION
+}
+
+enum RulingResult {
+  GRANTED
+  DENIED
+  PARTIALLY_GRANTED
+  WITHDRAWN
+  MOOT
+  TAKEN_UNDER_ADVISEMENT
+  OTHER
+}
+
+/// A recorded court ruling — a verified fact about a proceeding, distinct
+/// from an attorney's opinion (ProfessionalObservation). Corrections never
+/// overwrite: a correction is a new row whose `supersedesId` points at the
+/// row it replaces, which gets `supersededAt`; the "current" ruling is the
+/// one with `supersededAt` null. `supersedesId @unique` keeps each
+/// revision chain linear.
+model JudicialRuling {
+  id               String          @id @default(cuid())
+  matterId         String
+  matter           Matter          @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  judgeContactId   String
+  judge            Contact         @relation("JudicialRulingJudge", fields: [judgeContactId], references: [id])
+  rulingDate       DateTime
+  court            String
+  proceedingType   ProceedingType
+  issueType        RulingIssueType
+  issueDetail      String?
+  result           RulingResult
+  context          String?
+  documentId       String?
+  document         Document?       @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  closureReportId  String?
+  closureReport    MatterClosureReport? @relation(fields: [closureReportId], references: [id], onDelete: SetNull)
+  recordedById     String?
+  recordedBy       User?           @relation("JudicialRulingRecordedBy", fields: [recordedById], references: [id], onDelete: SetNull)
+  createdAt        DateTime        @default(now())
+  version          Int             @default(1)
+  supersedesId     String?         @unique
+  supersedes       JudicialRuling? @relation("JudicialRulingRevisions", fields: [supersedesId], references: [id])
+  supersededBy     JudicialRuling? @relation("JudicialRulingRevisions")
+  supersededAt     DateTime?
+  correctionReason String?
+
+  @@index([judgeContactId, supersededAt])
+  @@index([matterId])
+}
+
+enum ObservationKind {
+  PROCEDURAL_OBSERVATION
+  SUBJECTIVE_IMPRESSION
+  LESSON_LEARNED
+}
+
+enum ObservationCategory {
+  HEARING_PROCEDURE
+  SCHEDULING
+  COURTROOM_MANAGEMENT
+  EVIDENTIARY
+  LEGAL_ISSUE
+  NEGOTIATION
+  COMMUNICATION
+  PREPARATION
+  OTHER
+}
+
+/// MATTER_ONLY observations require a matter and follow that matter's
+/// access. FIRM_ATTORNEYS reference notes are an explicit sharing choice,
+/// visible to ADMIN/ATTORNEY users who can see the subject contact, and
+/// never carry a matter (so they can't disclose one).
+enum ObservationShareScope {
+  MATTER_ONLY
+  FIRM_ATTORNEYS
+}
+
+/// An attorney's professional note about a judge, prosecutor, solicitor,
+/// or opposing counsel. `kind` keeps observations, subjective impressions,
+/// and lessons learned explicitly labelled as opinion, never presented as
+/// verified fact. Versioned exactly like JudicialRuling.
+model ProfessionalObservation {
+  id               String                   @id @default(cuid())
+  subjectContactId String
+  subject          Contact                  @relation("ProfessionalObservationSubject", fields: [subjectContactId], references: [id])
+  matterId         String?
+  matter           Matter?                  @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  authorId         String?
+  author           User?                    @relation("ProfessionalObservationAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  category         ObservationCategory
+  kind             ObservationKind
+  body             String
+  references       String?
+  shareScope       ObservationShareScope    @default(MATTER_ONLY)
+  closureReportId  String?
+  closureReport    MatterClosureReport?     @relation(fields: [closureReportId], references: [id], onDelete: SetNull)
+  createdAt        DateTime                 @default(now())
+  version          Int                      @default(1)
+  supersedesId     String?                  @unique
+  supersedes       ProfessionalObservation? @relation("ProfessionalObservationRevisions", fields: [supersedesId], references: [id])
+  supersededBy     ProfessionalObservation? @relation("ProfessionalObservationRevisions")
+  supersededAt     DateTime?
+  correctionReason String?
+
+  @@index([subjectContactId, supersededAt])
+  @@index([matterId])
+}
+
+enum ClosureReviewStatus {
+  NOT_APPLICABLE
+  NEEDS_BACKFILL
+  COMPLETE
+}
+
+enum CaseDisposition {
+  DISMISSAL
+  ACQUITTAL
+  CONVICTION
+  PLEA_AGREEMENT
+  DIVERSION
+  NOLLE_PROSEQUI
+  DEFERRED_ADJUDICATION
+  ADMINISTRATIVE_CLOSURE
+  OTHER
+}
+
+enum ResolutionProcedure {
+  TRIAL
+  PLEA
+  DISMISSAL
+  DIVERSION
+  OTHER
+}
+
+/// Structured outcome report written when a matter is closed (or
+/// backfilled for a matter closed before this existed). Versioned: an
+/// amendment is a new row with the next `version`, and the previous row
+/// gets `supersededAt` — nothing is overwritten.
+model MatterClosureReport {
+  id                       String               @id @default(cuid())
+  matterId                 String
+  matter                   Matter               @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  version                  Int
+  supersededAt             DateTime?
+  amendmentReason          String?
+  isHistoricalBackfill     Boolean              @default(false)
+  responsibleAttorneyId    String?
+  responsibleAttorney      User?                @relation("ClosureReportResponsibleAttorney", fields: [responsibleAttorneyId], references: [id], onDelete: SetNull)
+  closingAttorneyId        String?
+  closingAttorney          User?                @relation("ClosureReportClosingAttorney", fields: [closingAttorneyId], references: [id], onDelete: SetNull)
+  closureDate              DateTime
+  caseType                 String?
+  charges                  String
+  disposition              CaseDisposition
+  dispositionDetail        String?
+  outcomeDate              DateTime?
+  resolutionProcedure      ResolutionProcedure
+  outcomeSummary           String
+  judgeContactId           String?
+  judge                    Contact?             @relation("ClosureReportJudge", fields: [judgeContactId], references: [id], onDelete: SetNull)
+  prosecutorContactId      String?
+  prosecutor               Contact?             @relation("ClosureReportProsecutor", fields: [prosecutorContactId], references: [id], onDelete: SetNull)
+  opposingCounselContactId String?
+  opposingCounsel          Contact?             @relation("ClosureReportOpposingCounsel", fields: [opposingCounselContactId], references: [id], onDelete: SetNull)
+  noSignificantRulings     Boolean              @default(false)
+  exceptionReason          String?
+  finalNotes               String?
+  lessonsLearned           String?
+  createdAt                DateTime             @default(now())
+
+  trialOutcome TrialOutcome?
+  rulings      JudicialRuling[]
+  observations ProfessionalObservation[]
+
+  @@unique([matterId, version])
+}
+
+enum TrialType {
+  BENCH
+  JURY
+}
+
+/// Trial details for a closure report whose resolution was a trial.
+/// `verdicts` is a Zod-validated JSON array of { charge, verdict }.
+model TrialOutcome {
+  id                   String              @id @default(cuid())
+  closureReportId      String              @unique
+  closureReport        MatterClosureReport @relation(fields: [closureReportId], references: [id], onDelete: Cascade)
+  trialStartDate       DateTime
+  trialEndDate         DateTime?
+  trialType            TrialType
+  defenseAttorneys     String?
+  chargesTried         String
+  verdicts             Json
+  evidentiaryIssues    String?
+  significantMotions   String?
+  sentencingOutcome    String?
+  trialSummary         String
+  attorneyObservations String?
+  lessonsLearned       String?
+}
+
+// --- Calendar ------------------------------------------------------------------
+
+enum CalendarEventStatus {
+  SCHEDULED
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+enum MeetingProvider {
+  ZOOM
+  MICROSOFT_TEAMS
+  GOOGLE_MEET
+  WEBEX
+  OTHER
+}
+
+enum RecurrenceFrequency {
+  NONE
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+/// Firm staff attending a CalendarEvent. Attendance also grants visibility
+/// of a matterless (internal) event; a matter-linked event still requires
+/// matter access.
+model CalendarEventAttendee {
+  id      String        @id @default(cuid())
+  eventId String
+  event   CalendarEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  userId  String
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, userId])
+  @@index([userId])
+}
+
+/// Directory contacts linked to a CalendarEvent (client, witness, ...).
+model CalendarEventContact {
+  id        String        @id @default(cuid())
+  eventId   String
+  event     CalendarEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  contactId String
+  contact   Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, contactId])
+  @@index([contactId])
+}
+
+// --- Time tracking ---------------------------------------------------------------
+
+enum TimeActivityCategory {
+  LEGAL_RESEARCH
+  DISCOVERY_REVIEW
+  DOCUMENT_REVIEW
+  DRAFTING
+  COURT_PREPARATION
+  COURT_APPEARANCE
+  TRIAL_WORK
+  CLIENT_COMMUNICATION
+  CONSULTATION
+  WITNESS_INTERVIEW
+  INVESTIGATION
+  INTERNAL_DISCUSSION
+  ADMINISTRATIVE
+  OTHER
+}
+
+enum TimeEntryStatus {
+  DRAFT
+  SUBMITTED
+}
+
+enum TimeEntrySource {
+  MANUAL
+  TIMER
+}
+
+/// Work time an employee actually recorded against a matter. Entirely
+/// separate from inferred application usage (UserActivityMinute) — nothing
+/// ever converts usage into a TimeEntry. Corrections are edits audited
+/// field-by-field; removal is a void (`voidedAt` + reason), never a delete.
+/// `hourlyRateCents` is optional and monetary amounts are ADMIN-only; no
+/// invoicing exists (CLAUDE.md).
+model TimeEntry {
+  id              String               @id @default(cuid())
+  matterId        String
+  matter          Matter               @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User                 @relation("TimeEntryUser", fields: [userId], references: [id])
+  workDate        DateTime
+  durationMinutes Int
+  startedAt       DateTime?
+  endedAt         DateTime?
+  category        TimeActivityCategory
+  description     String
+  billable        Boolean              @default(true)
+  hourlyRateCents Int?
+  status          TimeEntryStatus      @default(SUBMITTED)
+  source          TimeEntrySource      @default(MANUAL)
+  voidedAt        DateTime?
+  voidReason      String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  @@index([matterId, workDate])
+  @@index([userId, workDate])
+}
+
+/// The single running (or paused) matter timer per user — persisted so it
+/// survives reloads, closed tabs, and restarts. Stopping it produces a
+/// DRAFT TimeEntry the user confirms; nothing is committed silently.
+model ActiveTimer {
+  id                 String                @id @default(cuid())
+  userId             String                @unique
+  user               User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  matterId           String
+  matter             Matter                @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  category           TimeActivityCategory?
+  description        String?
+  startedAt          DateTime
+  runningSince       DateTime?
+  accumulatedSeconds Int                   @default(0)
+}
+
+// --- Usage analytics -------------------------------------------------------------
+
+enum SessionEndReason {
+  LOGOUT
+  EXPIRED
+  REVOKED
+  UNKNOWN
+}
+
+/// One authenticated session (id carried in the JWT as `sid`). `endedAt` is
+/// set on logout or when a maintenance pass finds it past the JWT lifetime;
+/// active time is estimated from UserActivityMinute, never measured.
+model UserSession {
+  id         String            @id @default(cuid())
+  userId     String
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startedAt  DateTime          @default(now())
+  lastSeenAt DateTime          @default(now())
+  endedAt    DateTime?
+  endReason  SessionEndReason?
+  ipAddress  String?
+  userAgent  String?
+
+  activityEvents  UserActivityEvent[]
+  activityMinutes UserActivityMinute[]
+
+  @@index([userId, startedAt])
+}
+
+enum ActivityEventType {
+  LOGIN_SUCCESS
+  LOGOUT
+  SESSION_START
+  SESSION_EXPIRED
+  PAGE_VIEW
+  MATTER_VIEW
+  DOCUMENT_DOWNLOAD
+  REPORT_EXPORT
+  DATA_CHANGE
+  ADMIN_ACTION
+  ACCESS_DENIED
+}
+
+enum ActivityResult {
+  SUCCESS
+  DENIED
+  FAILURE
+}
+
+/// Append-only usage event. Carries a module, a sanitized route path, and
+/// safe identifiers only — never content, tokens, passwords, or free text.
+/// Failed logins stay in FailedLoginAttempt (the security center's source).
+model UserActivityEvent {
+  id           String            @id @default(cuid())
+  userId       String?
+  user         User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  sessionId    String?
+  session      UserSession?      @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  type         ActivityEventType
+  module       String?
+  path         String?
+  matterId     String?
+  matter       Matter?           @relation(fields: [matterId], references: [id], onDelete: SetNull)
+  resourceType String?
+  resourceId   String?
+  result       ActivityResult    @default(SUCCESS)
+  occurredAt   DateTime          @default(now())
+
+  @@index([userId, occurredAt])
+  @@index([type, occurredAt])
+  @@index([occurredAt])
+}
+
+/// One row per user per active minute, written by the client heartbeat only
+/// while a tab is visible and recently interacted with. The unique key
+/// collapses several tabs/devices into one minute, so overlapping activity
+/// is never double-counted. Estimated active time = count of rows.
+model UserActivityMinute {
+  id        String       @id @default(cuid())
+  userId    String
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  minute    DateTime
+  sessionId String?
+  session   UserSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  module    String?
+  matterId  String?
+  matter    Matter?      @relation(fields: [matterId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, minute])
+  @@index([minute])
+}
+
+// --- Team chat -------------------------------------------------------------------
+
+enum ChatConversationType {
+  CHANNEL
+  DIRECT
+  GROUP
+}
+
+enum ChatChannelKind {
+  MATTER
+  TEAM
+  DEPARTMENT
+  GENERAL
+  TOPIC
+}
+
+/// A channel, direct message, or group DM. DIRECT/GROUP conversations carry
+/// `participantKey` (sorted member ids) so the same set of people always
+/// resolves to the same conversation; their membership is fixed at
+/// creation. A matter-linked channel additionally requires matter access on
+/// every read, so revoking matter access revokes the channel.
+model ChatConversation {
+  id             String               @id @default(cuid())
+  type           ChatConversationType
+  name           String?
+  description    String?
+  channelKind    ChatChannelKind?
+  matterId       String?
+  matter         Matter?              @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  participantKey String?              @unique
+  createdById    String?
+  createdBy      User?                @relation("ChatConversationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  archivedAt     DateTime?
+  lastMessageAt  DateTime?
+  createdAt      DateTime             @default(now())
+
+  memberships ChatMembership[]
+  messages    ChatMessage[]
+
+  @@index([matterId])
+}
+
+/// Conversation membership plus per-member read state (`lastReadAt`).
+/// Leaving or removal sets `leftAt` rather than deleting, so message
+/// authorship history stays intact.
+model ChatMembership {
+  id             String           @id @default(cuid())
+  conversationId String
+  conversation   ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User             @relation("ChatMembershipUser", fields: [userId], references: [id], onDelete: Cascade)
+  isOwner        Boolean          @default(false)
+  joinedAt       DateTime         @default(now())
+  leftAt         DateTime?
+  lastReadAt     DateTime?
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+}
+
+/// A chat message. Edits set `editedAt`; deletion is soft (`deletedAt`,
+/// body hidden on read). Matter/document references are re-authorized on
+/// every read — a reference never grants access by itself.
+model ChatMessage {
+  id             String           @id @default(cuid())
+  conversationId String
+  conversation   ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  authorId       String?
+  author         User?            @relation("ChatMessageAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  body           String
+  parentId       String?
+  parent         ChatMessage?     @relation("ChatMessageThread", fields: [parentId], references: [id], onDelete: SetNull)
+  replies        ChatMessage[]    @relation("ChatMessageThread")
+  matterRefId    String?
+  matterRef      Matter?          @relation("ChatMessageMatterRef", fields: [matterRefId], references: [id], onDelete: SetNull)
+  documentRefId  String?
+  documentRef    Document?        @relation("ChatMessageDocumentRef", fields: [documentRefId], references: [id], onDelete: SetNull)
+  createdAt      DateTime         @default(now())
+  editedAt       DateTime?
+  deletedAt      DateTime?
+
+  @@index([conversationId, createdAt])
 }
