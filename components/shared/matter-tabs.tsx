@@ -14,9 +14,11 @@ const TABS = [
   { segment: "calls", label: "Calls" },
   { segment: "notes", label: "Notes" },
   { segment: "tasks", label: "Tasks" },
+  { segment: "workflows", label: "Workflows" },
   { segment: "deadlines", label: "Deadlines & Calendar" },
   { segment: "outcome", label: "Rulings & Outcome" },
   { segment: "time", label: "Time & Activity" },
+  { segment: "expenses", label: "Expenses" },
   { segment: "chat", label: "Chat" },
   { segment: "timeline", label: "Timeline" },
 ] as const;

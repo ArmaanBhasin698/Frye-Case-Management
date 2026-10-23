@@ -21,6 +21,10 @@ import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
 import { assertSeedAllowed } from "../lib/db/seed-guard";
+import { installStarterTemplates } from "../lib/workflows/starters";
+import { ensureSuggestedStages } from "../lib/stages/suggested";
+import { STARTER_FOLDER_SET } from "../lib/documents/folders";
+import { computeTotalCents, parseQuantity } from "../lib/expenses/money";
 
 assertSeedAllowed();
 
@@ -1243,6 +1247,73 @@ async function main() {
         shareScope: "FIRM_ATTORNEYS",
       },
     ],
+  });
+
+  // --- MyCase parity configuration (fictional, editable examples) ---------
+  // Starters are ordinary editable rows, exactly what the admin "install"
+  // buttons create — the app never reads them from code at apply time.
+  const alex = await prisma.user.findUniqueOrThrow({ where: { email: "alex.rivera@fryelawgroup.example" } });
+  await installStarterTemplates(prisma, alex.id);
+  await ensureSuggestedStages(prisma);
+  const discoveryStage = await prisma.matterStage.findFirst({ where: { name: "Discovery" } });
+  if (discoveryStage) {
+    await prisma.matter.update({ where: { id: alvarezMatter.id }, data: { stageId: discoveryStage.id } });
+    await prisma.matterStageChange.create({
+      data: { matterId: alvarezMatter.id, toStageId: discoveryStage.id, changedById: sarah.id },
+    });
+  }
+  await prisma.documentFolderSet.create({
+    data: {
+      name: STARTER_FOLDER_SET.name,
+      items: { create: STARTER_FOLDER_SET.paths.map((path, position) => ({ path, position })) },
+    },
+  });
+  await prisma.documentTemplate.create({
+    data: {
+      name: "Client status letter (fictional starter)",
+      category: "CORRESPONDENCE",
+      createdById: alex.id,
+      versions: {
+        create: {
+          version: 1,
+          createdById: alex.id,
+          body:
+            "{{today}}\n\nDear {{client.fullName}},\n\nThis letter summarizes the current status of your matter {{matter.caseNumber}} pending in {{matter.court}}.\n\nSincerely,\n{{user.name}}\n{{firm.name}}",
+        },
+      },
+    },
+  });
+  await prisma.customFieldDefinition.createMany({
+    data: [
+      { entity: "MATTER", key: "arrest_date", label: "Arrest date", type: "DATE", position: 1 },
+      {
+        entity: "MATTER",
+        key: "bond_status",
+        label: "Bond status",
+        type: "SINGLE_SELECT",
+        position: 2,
+        options: [
+          { id: "posted", label: "Posted", archived: false },
+          { id: "denied", label: "Denied", archived: false },
+          { id: "ror", label: "Released on recognizance", archived: false },
+        ],
+      },
+      { entity: "CONTACT", key: "badge_number", label: "Badge number", type: "SHORT_TEXT", position: 1 },
+    ],
+  });
+  const quantity = parseQuantity("1")!;
+  await prisma.expense.create({
+    data: {
+      matterId: ellisMatter.id,
+      incurredOn: new Date("2026-09-02"),
+      recordedById: priya.id,
+      category: "FILING_FEE",
+      description: "Fictional: motion filing fee",
+      quantity: "1.000",
+      unitCostCents: 7500,
+      totalCents: computeTotalCents(quantity, 7500),
+      billable: true,
+    },
   });
 
   console.log("Seed complete:");

@@ -4,6 +4,7 @@ import { format } from "date-fns";
 import { requireCurrentUser } from "@/lib/auth/session";
 import { listAccessibleMatterOptions } from "@/lib/contacts/queries";
 import { runGlobalSearch } from "@/lib/search";
+import { searchDocumentContent, snippetSegments } from "@/lib/documents/content-search";
 import {
   SEARCH_MAX_LENGTH,
   SEARCH_MIN_LENGTH,
@@ -38,6 +39,12 @@ export default async function SearchPage({
   const p = parsed.ok ? parsed.params : null;
   const outcome = p ? await runGlobalSearch(user, p) : null;
   const totalHits = outcome?.results.reduce((n, r) => n + r.total, 0) ?? 0;
+  // Document *contents* use the separate full-text index (lib/documents/
+  // content-search.ts), scoped inside its SQL to the viewer's matters.
+  const contentResults =
+    p && (!p.type || p.type === "documents")
+      ? await searchDocumentContent(user, p.q, { matterId: p.matterId, take: 10 })
+      : null;
 
   return (
     <div className="space-y-6">
@@ -45,7 +52,8 @@ export default async function SearchPage({
         <h1 className="page-title">Search</h1>
         <p className="text-sm text-muted-foreground">
           Case-insensitive partial matching across records you can access. Exact matches on a record&apos;s main field
-          are listed first. Documents are searched by title, filename, and exact tag only (metadata, not file contents).
+          are listed first. The Documents type matches title, filename, and exact tag (metadata); indexed file contents are
+          shown separately under “Document contents”.
         </p>
       </div>
 
@@ -168,6 +176,53 @@ export default async function SearchPage({
               );
             })}
         </>
+      )}
+
+      {contentResults && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Document contents ({contentResults.total})</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Full-text matches in the current version of indexed documents (text files, text-layer PDFs, .docx). Scanned
+              PDFs and other unsupported formats are never searched. Date and archive filters don&apos;t apply here.
+            </p>
+          </CardHeader>
+          <CardContent>
+            {contentResults.hits.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No document contents match.</p>
+            ) : (
+              <ul className="divide-y divide-border">
+                {contentResults.hits.map((hit) => (
+                  <li key={hit.versionId} className="py-2 text-sm">
+                    <Link
+                      href={`/matters/${hit.matterId}/documents/files/${hit.documentId}/versions/${hit.versionId}`}
+                      className="font-medium hover:underline"
+                    >
+                      {hit.title}
+                    </Link>{" "}
+                    <span className="text-xs text-muted-foreground">v{hit.version}</span>
+                    <p className="text-xs text-muted-foreground">
+                      {snippetSegments(hit.snippet).map((seg, i) =>
+                        seg.match ? (
+                          <mark key={i} className="bg-amber-100 text-foreground">
+                            {seg.text}
+                          </mark>
+                        ) : (
+                          <span key={i}>{seg.text}</span>
+                        ),
+                      )}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {contentResults.total > contentResults.hits.length && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Showing the top {contentResults.hits.length}; narrow by matter or use a matter&apos;s document search for more.
+              </p>
+            )}
+          </CardContent>
+        </Card>
       )}
     </div>
   );
