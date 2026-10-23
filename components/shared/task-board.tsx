@@ -8,6 +8,7 @@ import type { TaskPriority, TaskStatus } from "@prisma/client";
 import { cn } from "@/lib/utils";
 import { asCalendarDate, taskPriorityLabel } from "@/lib/matters/format";
 import { updateTask, updateTaskStatus, type FormActionState } from "@/lib/matters/actions";
+import { TaskReminderOffsetsField } from "@/components/shared/task-reminder-offsets-field";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -25,6 +26,7 @@ export type BoardTask = {
   priority: TaskPriority;
   dueDate: Date | null;
   assignedTo: { id: string; name: string } | null;
+  reminderOffsetsMinutes?: number[];
 };
 
 export type AssignableUser = { id: string; name: string };
@@ -237,6 +239,8 @@ function TaskEditForm({
           </Select>
         </div>
       </div>
+
+      <TaskReminderOffsetsField idPrefix={`task-reminder-${task.id}`} defaultOffsets={task.reminderOffsetsMinutes ?? []} />
 
       {state.error && (
         <p className="text-xs font-medium text-destructive" role="alert">
