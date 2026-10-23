@@ -17,6 +17,11 @@ import { unreadSince } from "@/lib/chat/rules";
 export type MessageView = {
   id: string;
   conversationId: string;
+  /** Set on thread replies; top-level messages have null. */
+  parentId: string | null;
+  /** Top-level messages only: live (non-deleted) replies, and those unread by the viewer. */
+  replyCount: number;
+  unreadReplies: number;
   body: string | null;
   deleted: boolean;
   edited: boolean;
@@ -31,6 +36,7 @@ export type MessageView = {
 const messageSelect = {
   id: true,
   conversationId: true,
+  parentId: true,
   body: true,
   authorId: true,
   author: { select: { name: true } },
@@ -54,11 +60,19 @@ async function accessibleMatterSet(user: AuthorizableUser): Promise<Set<string> 
  * reference posted by someone else never discloses a matter or document
  * the viewer can't access.
  */
-export function toMessageView(row: MessageRow, viewerId: string, matters: Set<string> | null): MessageView {
+export function toMessageView(
+  row: MessageRow,
+  viewerId: string,
+  matters: Set<string> | null,
+  replies: { count: number; unread: number } = { count: 0, unread: 0 },
+): MessageView {
   const canSee = (matterId: string) => matters === null || matters.has(matterId);
   return {
     id: row.id,
     conversationId: row.conversationId,
+    parentId: row.parentId,
+    replyCount: replies.count,
+    unreadReplies: replies.unread,
     body: row.deletedAt ? null : row.body,
     deleted: Boolean(row.deletedAt),
     edited: Boolean(row.editedAt),
@@ -73,10 +87,47 @@ export function toMessageView(row: MessageRow, viewerId: string, matters: Set<st
 }
 
 export const MESSAGE_PAGE_SIZE = 50;
+export const THREAD_PAGE_SIZE = 50;
 
 /**
- * Newest `MESSAGE_PAGE_SIZE` messages (or those before `before`), oldest
- * first. Returns null when the conversation isn't readable.
+ * Live reply counts per parent, plus how many of those replies are unread
+ * by the viewer (written by others after the viewer's last read). Deleted
+ * replies never count.
+ */
+async function replyStats(
+  parentIds: string[],
+  viewerId: string,
+  readSince: Date,
+): Promise<Map<string, { count: number; unread: number }>> {
+  const stats = new Map<string, { count: number; unread: number }>();
+  if (parentIds.length === 0) return stats;
+  const [all, unread] = await Promise.all([
+    prisma.chatMessage.groupBy({
+      by: ["parentId"],
+      where: { parentId: { in: parentIds }, deletedAt: null },
+      _count: { _all: true },
+    }),
+    prisma.chatMessage.groupBy({
+      by: ["parentId"],
+      where: { parentId: { in: parentIds }, deletedAt: null, authorId: { not: viewerId }, createdAt: { gt: readSince } },
+      _count: { _all: true },
+    }),
+  ]);
+  for (const row of all) if (row.parentId) stats.set(row.parentId, { count: row._count._all, unread: 0 });
+  for (const row of unread) {
+    if (!row.parentId) continue;
+    const entry = stats.get(row.parentId) ?? { count: 0, unread: 0 };
+    entry.unread = row._count._all;
+    stats.set(row.parentId, entry);
+  }
+  return stats;
+}
+
+/**
+ * Newest `MESSAGE_PAGE_SIZE` top-level messages (or those before
+ * `before`), oldest first, each with its reply counts. Thread replies are
+ * deliberately kept out of the main timeline — they're read through
+ * `getThreadMessages`. Returns null when the conversation isn't readable.
  */
 export async function getConversationMessages(
   user: AuthorizableUser,
@@ -87,14 +138,68 @@ export async function getConversationMessages(
   if (!conversation) return null;
 
   const rows = await prisma.chatMessage.findMany({
-    where: { conversationId, ...(options.before ? { createdAt: { lt: options.before } } : {}) },
+    where: { conversationId, parentId: null, ...(options.before ? { createdAt: { lt: options.before } } : {}) },
     select: messageSelect,
     orderBy: { createdAt: "desc" },
     take: MESSAGE_PAGE_SIZE + 1,
   });
   const matters = await accessibleMatterSet(user);
   const page = rows.slice(0, MESSAGE_PAGE_SIZE).reverse();
-  return { messages: page.map((r) => toMessageView(r, user.id, matters)), hasOlder: rows.length > MESSAGE_PAGE_SIZE };
+  const stats = await replyStats(
+    page.map((r) => r.id),
+    user.id,
+    unreadSince(conversation.membership),
+  );
+  return {
+    messages: page.map((r) => toMessageView(r, user.id, matters, stats.get(r.id))),
+    hasOlder: rows.length > MESSAGE_PAGE_SIZE,
+  };
+}
+
+/**
+ * One thread: its parent (always shown for context — "message deleted" if
+ * it was soft-deleted) and its replies oldest first, paged forward with an
+ * `(createdAt, id)` cursor so equal timestamps are never skipped. Runs the
+ * same full conversation access check (membership + current matter access)
+ * as the main timeline, and the parent must be a top-level message of
+ * *this* conversation — a forged or cross-conversation parent id returns
+ * null exactly like an unreadable conversation.
+ */
+export async function getThreadMessages(
+  user: AuthorizableUser,
+  conversationId: string,
+  parentId: string,
+  options: { after?: { createdAt: Date; id: string } } = {},
+): Promise<{ parent: MessageView; replies: MessageView[]; hasMore: boolean } | null> {
+  const conversation = await getReadableConversation(user, conversationId);
+  if (!conversation) return null;
+
+  const parent = await prisma.chatMessage.findFirst({
+    where: { id: parentId, conversationId, parentId: null },
+    select: messageSelect,
+  });
+  if (!parent) return null;
+
+  const after = options.after;
+  const rows = await prisma.chatMessage.findMany({
+    where: {
+      conversationId,
+      parentId,
+      ...(after
+        ? { OR: [{ createdAt: { gt: after.createdAt } }, { createdAt: after.createdAt, id: { gt: after.id } }] }
+        : {}),
+    },
+    select: messageSelect,
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    take: THREAD_PAGE_SIZE + 1,
+  });
+  const matters = await accessibleMatterSet(user);
+  const stats = await replyStats([parent.id], user.id, unreadSince(conversation.membership));
+  return {
+    parent: toMessageView(parent, user.id, matters, stats.get(parent.id)),
+    replies: rows.slice(0, THREAD_PAGE_SIZE).map((r) => toMessageView(r, user.id, matters)),
+    hasMore: rows.length > THREAD_PAGE_SIZE,
+  };
 }
 
 function conversationLabel(

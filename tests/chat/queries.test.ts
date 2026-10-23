@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { prismaMock, readableIdsMock, getReadableConversationMock, getAssignedMatterIdsMock } = vi.hoisted(() => ({
   prismaMock: {
     chatConversation: { findMany: vi.fn() },
-    chatMessage: { findMany: vi.fn(), count: vi.fn() },
+    chatMessage: { findMany: vi.fn(), count: vi.fn(), findFirst: vi.fn(), groupBy: vi.fn() },
   },
   readableIdsMock: vi.fn(),
   getReadableConversationMock: vi.fn(),
@@ -17,7 +17,9 @@ vi.mock("@/lib/chat/access", () => ({
   getReadableConversation: getReadableConversationMock,
 }));
 
-const { getConversationMessages, getUnreadChatSummary, searchMessages, toMessageView } = await import("@/lib/chat/queries");
+const { getConversationMessages, getThreadMessages, getUnreadChatSummary, searchMessages, toMessageView } = await import(
+  "@/lib/chat/queries"
+);
 
 const staff = { id: "u-me", role: "STAFF" as const };
 
@@ -25,6 +27,7 @@ function row(overrides: Record<string, unknown> = {}) {
   return {
     id: "msg-1",
     conversationId: "conv-1",
+    parentId: null as string | null,
     body: "Hello",
     authorId: "u-other",
     author: { name: "Pat Example" },
@@ -37,9 +40,15 @@ function row(overrides: Record<string, unknown> = {}) {
   };
 }
 
+const readable = {
+  id: "conv-1",
+  membership: { id: "mem-1", isOwner: false, lastReadAt: new Date("2026-10-01T00:00:00Z"), joinedAt: new Date("2026-01-01") },
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   getAssignedMatterIdsMock.mockResolvedValue(["m-1"]);
+  prismaMock.chatMessage.groupBy.mockResolvedValue([]);
 });
 
 describe("toMessageView", () => {
@@ -76,13 +85,83 @@ describe("getConversationMessages", () => {
   });
 
   it("returns oldest-first and reports older pages", async () => {
-    getReadableConversationMock.mockResolvedValue({ id: "conv-1" });
+    getReadableConversationMock.mockResolvedValue(readable);
     const rows = Array.from({ length: 51 }, (_, i) => row({ id: `m${i}`, createdAt: new Date(2026, 0, 1, 0, 51 - i) }));
     prismaMock.chatMessage.findMany.mockResolvedValue(rows);
     const result = await getConversationMessages(staff, "conv-1");
     expect(result?.hasOlder).toBe(true);
     expect(result?.messages).toHaveLength(50);
     expect(result?.messages[0]!.id).toBe("m49");
+  });
+});
+
+describe("getConversationMessages — threads", () => {
+  it("keeps replies out of the main timeline and attaches reply counts", async () => {
+    getReadableConversationMock.mockResolvedValue(readable);
+    prismaMock.chatMessage.findMany.mockResolvedValue([row({ id: "top-1" })]);
+    prismaMock.chatMessage.groupBy
+      .mockResolvedValueOnce([{ parentId: "top-1", _count: { _all: 4 } }])
+      .mockResolvedValueOnce([{ parentId: "top-1", _count: { _all: 2 } }]);
+    const result = await getConversationMessages(staff, "conv-1");
+    expect(prismaMock.chatMessage.findMany.mock.calls[0]![0].where).toMatchObject({ conversationId: "conv-1", parentId: null });
+    expect(result?.messages[0]).toMatchObject({ id: "top-1", replyCount: 4, unreadReplies: 2 });
+    // Deleted replies never count; unread = other people's replies after the viewer's last read.
+    expect(prismaMock.chatMessage.groupBy.mock.calls[0]![0].where).toEqual({ parentId: { in: ["top-1"] }, deletedAt: null });
+    expect(prismaMock.chatMessage.groupBy.mock.calls[1]![0].where).toEqual({
+      parentId: { in: ["top-1"] },
+      deletedAt: null,
+      authorId: { not: "u-me" },
+      createdAt: { gt: readable.membership.lastReadAt },
+    });
+  });
+});
+
+describe("getThreadMessages", () => {
+  it("returns null without reading the thread when the conversation isn't readable (e.g. matter access revoked)", async () => {
+    getReadableConversationMock.mockResolvedValue(null);
+    expect(await getThreadMessages(staff, "conv-1", "top-1")).toBeNull();
+    expect(prismaMock.chatMessage.findFirst).not.toHaveBeenCalled();
+    expect(prismaMock.chatMessage.findMany).not.toHaveBeenCalled();
+  });
+
+  it("requires the parent to be a top-level message of the same conversation (forged/cross-conversation ids → null)", async () => {
+    getReadableConversationMock.mockResolvedValue(readable);
+    prismaMock.chatMessage.findFirst.mockResolvedValue(null);
+    expect(await getThreadMessages(staff, "conv-1", "msg-in-other-conv")).toBeNull();
+    expect(prismaMock.chatMessage.findFirst.mock.calls[0]![0].where).toEqual({
+      id: "msg-in-other-conv",
+      conversationId: "conv-1",
+      parentId: null,
+    });
+    expect(prismaMock.chatMessage.findMany).not.toHaveBeenCalled();
+  });
+
+  it("shows a deleted parent as deleted but keeps its replies readable", async () => {
+    getReadableConversationMock.mockResolvedValue(readable);
+    prismaMock.chatMessage.findFirst.mockResolvedValue(row({ id: "top-1", deletedAt: new Date(), body: "secret original" }));
+    prismaMock.chatMessage.findMany.mockResolvedValue([row({ id: "r1", parentId: "top-1", body: "still here" })]);
+    const thread = await getThreadMessages(staff, "conv-1", "top-1");
+    expect(thread?.parent).toMatchObject({ deleted: true, body: null });
+    expect(JSON.stringify(thread)).not.toContain("secret original");
+    expect(thread?.replies.map((r) => r.body)).toEqual(["still here"]);
+  });
+
+  it("pages replies oldest-first with a (createdAt, id) cursor", async () => {
+    getReadableConversationMock.mockResolvedValue(readable);
+    prismaMock.chatMessage.findFirst.mockResolvedValue(row({ id: "top-1" }));
+    const replies = Array.from({ length: 51 }, (_, i) => row({ id: `r${String(i).padStart(2, "0")}`, parentId: "top-1" }));
+    prismaMock.chatMessage.findMany.mockResolvedValue(replies);
+    const after = { createdAt: new Date("2026-10-02T00:00:00Z"), id: "r10" };
+    const thread = await getThreadMessages(staff, "conv-1", "top-1", { after });
+    expect(thread?.replies).toHaveLength(50);
+    expect(thread?.hasMore).toBe(true);
+    const args = prismaMock.chatMessage.findMany.mock.calls[0]![0];
+    expect(args.orderBy).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
+    expect(args.where).toEqual({
+      conversationId: "conv-1",
+      parentId: "top-1",
+      OR: [{ createdAt: { gt: after.createdAt } }, { createdAt: after.createdAt, id: { gt: "r10" } }],
+    });
   });
 });
 

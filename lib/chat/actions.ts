@@ -326,9 +326,15 @@ export async function sendMessage(_prev: ChatFormState, formData: FormData): Pro
     const document = await prisma.document.findUnique({ where: { id: documentRefId }, select: { matterId: true } });
     if (!document || !(await hasMatterAccess(user, document.matterId))) return { error: NOT_FOUND };
   }
+  // Threads are one level deep: a reply's parent must be a top-level
+  // message of this same conversation. Replying under a soft-deleted parent
+  // is allowed — the thread stays readable and shows "message deleted".
   if (parentId) {
-    const parent = await prisma.chatMessage.findUnique({ where: { id: parentId }, select: { conversationId: true } });
-    if (!parent || parent.conversationId !== conversationId) return { error: NOT_FOUND };
+    const parent = await prisma.chatMessage.findUnique({
+      where: { id: parentId },
+      select: { conversationId: true, parentId: true },
+    });
+    if (!parent || parent.conversationId !== conversationId || parent.parentId !== null) return { error: NOT_FOUND };
   }
 
   const now = new Date();

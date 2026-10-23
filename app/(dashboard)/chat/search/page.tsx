@@ -23,7 +23,7 @@ export default async function ChatSearchPage({ searchParams }: { searchParams: P
             {q.length < 2 ? "Enter at least two characters." : `${results.length} result${results.length === 1 ? "" : "s"} for “${q}”.`}
           </p>
           {results.map((r) => (
-            <Link key={r.id} href={`/chat/${r.conversationId}`} className="block rounded-lg border border-border bg-card p-3 hover:bg-muted/40">
+            <Link key={r.id} href={r.parentId ? `/chat/${r.conversationId}?thread=${r.parentId}` : `/chat/${r.conversationId}`} className="block rounded-lg border border-border bg-card p-3 hover:bg-muted/40">
               <p className="text-xs text-muted-foreground">
                 {r.conversationLabel} · {r.authorName} · {format(new Date(r.createdAt), "MMM d, yyyy h:mm a")}
               </p>
