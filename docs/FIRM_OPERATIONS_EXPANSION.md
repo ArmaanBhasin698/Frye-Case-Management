@@ -73,7 +73,7 @@ Names below are proposals. Every model gets a purpose comment in
   to an ORGANIZATION contact), `jobTitle`, `categories ContactCategory[]`
   (multi-valued, the criminal-defense list in the requirements),
   structured mailing address, `preferredContactMethod`, `notes`,
-  `assignedStaffId`, `lastContactedAt`, `visibility` (see 4.1),
+  `assignedStaffId`, `lastContactedAt` (visibility is derived — see 4.1),
   `clientId @unique` (optional link to the existing `Client`; current vs.
   former client is **derived** from that client's matter statuses, never
   stored), `court`/`jurisdiction`/`position` (nullable, used by
@@ -149,7 +149,7 @@ Names below are proposals. Every model gets a purpose comment in
 ### Phase 5 — Time tracking
 - `TimeEntry` — matter, user, work date, `durationMinutes`, optional
   start/end, `category`, description, `billable`, optional
-  `rateCents` (see 6 — open question), `status` (DRAFT | SUBMITTED),
+  `hourlyRateCents` (amounts ADMIN-only — see 6), `status` (DRAFT | SUBMITTED),
   timestamps.
 - `ActiveTimer` — at most one running timer per user
   (`userId @unique`), `matterId`, `startedAt`, `pausedAt`, accumulated
@@ -198,25 +198,26 @@ Names below are proposals. Every model gets a purpose comment in
 
 ## 4. Confidentiality model for contacts and professional history
 
-### 4.1 Contact visibility
-- `FIRM_DIRECTORY` (default for professional categories: judge,
-  prosecutor, ADA, solicitor, clerk, court administrator, probation
-  officer, interpreter, bail bondsman, vendor, agency, opposing/defense
-  counsel): basic professional details visible to all active staff.
-- `MATTER_RESTRICTED` (default for clients, witnesses, co-defendants,
-  family members, emergency contacts, informants): visible only to
-  admins, the creator, and users who can access at least one matter the
-  contact is (non-removed) associated with.
-- In every case the **Associated Matters**, relationships, and
-  interactions sections list only rows on matters the viewer can access,
-  with no count of hidden rows.
+### 4.1 Contact visibility (decided: strict matter-only)
+- Every contact — including judges, prosecutors, and other professionals —
+  is visible only to ADMIN, to the user who created it, and to users who
+  can access at least one matter the contact is (non-removed) associated
+  with. There is no firm-wide directory tier.
+- The **Associated Matters**, relationships, and interactions sections
+  list only rows on matters the viewer can access, with no count of hidden
+  rows.
+- Duplicate-contact warnings only ever compare against contacts the
+  current user can already see, so a warning never reveals that a
+  restricted person exists. Consequence: non-admin users can create a
+  duplicate of a contact they cannot see; ADMIN sees every contact and the
+  admin duplicate view is the remedy (a merge tool is a tracked follow-up).
 
 ### 4.2 Professional-history layers
 | Layer | Example | Who sees it |
 |---|---|---|
-| General professional info | Judge's court, jurisdiction, phone | All staff (FIRM_DIRECTORY) |
-| Shareable observation | "Requires courtesy copies of motions 48 h before hearing" | ATTORNEY + ADMIN, firm-wide, when author marked FIRM_ATTORNEYS |
-| Matter-specific record | Ruling detail, closure report, MATTER_ONLY observation | Users with access to that matter |
+| General professional info | Judge's court, jurisdiction, phone | Per 4.1 (matter-scoped) |
+| Shareable observation | "Requires courtesy copies of motions 48 h before hearing" | ATTORNEY + ADMIN who can see the contact (per 4.1), when author marked FIRM_ATTORNEYS |
+| Matter-specific record | Rulings (all fields), closure report, MATTER_ONLY observation | Users with access to that matter only (decided: no anonymized cross-matter ruling summaries) |
 | Source documents | Order PDF, transcripts | Normal document authorization |
 
 Aggregates (counts by issue type/result) on a profile are computed only
@@ -242,18 +243,18 @@ Each phase: focused tests → full `npm run test` → `lint` → `typecheck` →
 `build` → browser check against a local dev database with fictional
 seed data → PR. Nothing merges without explicit authorization.
 
-## 6. Open decisions (need a human answer)
+## 6. Decisions
 
-1. **Contact visibility model** (section 4.1) — confirm the
-   FIRM_DIRECTORY / MATTER_RESTRICTED split.
-2. **Firm-wide visibility of ruling summaries** — should an attorney not on
-   a matter see a ruling's *non-privileged summary* (date, court, issue
-   type, result) on a judge's profile with the matter identity withheld,
-   or should rulings follow strict matter access only?
-3. **Billing rate / monetary totals** — CLAUDE.md prohibits billing and
-   invoicing. Proposal: store an optional rate on `TimeEntry` and show a
-   computed value to ADMIN only, with no invoices; or omit monetary fields
-   entirely until the QuickBooks phase.
-4. **Recurring events** — proposed deferral (explicit, tracked here) to
-   keep Phase 4 testable; one-off events only at first.
-5. **Activity-data retention window** — proposed 365 days.
+Recorded 2026-10-23 from the project owner:
+
+1. **Contact visibility** — strict matter-only (section 4.1).
+2. **Rulings** — strict matter access; no anonymized summaries for users
+   outside the source matter. Only observations the author marks
+   FIRM_ATTORNEYS cross matter boundaries.
+3. **Billing rate** — `TimeEntry` stores an optional hourly rate; computed
+   monetary amounts are shown to ADMIN only. No invoices, statements, or
+   payment features (CLAUDE.md's billing/invoicing prohibition still
+   applies).
+4. **Recurring events** — deferred (tracked here), one-off events first.
+5. **Activity-data retention** — 365 days by default, ADMIN-only purge.
+6. **Phase 1 schema** — approved as proposed in section 3.
