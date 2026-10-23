@@ -12,7 +12,7 @@ const { requireCurrentUserMock, hasMatterAccessMock, prismaMock, storeMock } = v
     documentFolderSet: { findFirst: vi.fn(), count: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     documentFolderSetItem: { deleteMany: vi.fn(), createMany: vi.fn() },
     auditEvent: { create: vi.fn() },
-    $queryRaw: vi.fn(),
+    $executeRaw: vi.fn(),
     $transaction: vi.fn(),
   },
 }));
@@ -81,7 +81,7 @@ describe("folder actions", () => {
     prismaMock.documentFolder.findMany.mockResolvedValue([{ id: "f1", parentId: null, name: "Motions" }]);
     const result = await createFolder({ error: null }, fd({ matterId: "m-1", name: "motions" }));
     expect(result.error).toMatch(/already exists/);
-    expect(prismaMock.$queryRaw).toHaveBeenCalled();
+    expect(prismaMock.$executeRaw).toHaveBeenCalled();
     expect(prismaMock.documentFolder.create).not.toHaveBeenCalled();
   });
 
@@ -142,7 +142,7 @@ describe("folder sets", () => {
     prismaMock.documentFolderSet.findFirst.mockResolvedValue(set);
     prismaMock.documentFolder.findMany.mockResolvedValue([{ id: "existing-disc", parentId: null, name: "discovery" }]);
     expect((await applyFolderSet({ error: null }, fd({ matterId: "m-1", setId: "set-1" }))).error).toBeNull();
-    expect(prismaMock.$queryRaw).toHaveBeenCalled();
+    expect(prismaMock.$executeRaw).toHaveBeenCalled();
     expect(prismaMock.documentFolder.create.mock.calls.map((c) => [c[0].data.name, c[0].data.parentId])).toEqual([
       ["Video", "existing-disc"],
       ["Motions", null],

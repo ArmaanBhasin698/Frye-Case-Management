@@ -34,7 +34,9 @@ const NOT_FOUND = "Not found or access denied.";
 const id = z.string().trim().min(1).max(100);
 
 async function lockMatterFolders(tx: Prisma.TransactionClient, matterId: string) {
-  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`document-folders:${matterId}`}))`;
+  // $executeRaw, not $queryRaw: pg_advisory_xact_lock returns `void`, which
+  // Prisma can't deserialize as a result row.
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`document-folders:${matterId}`}))`;
 }
 
 function revalidateDocs(matterId: string) {

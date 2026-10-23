@@ -5,7 +5,7 @@ import { format } from "date-fns";
 import { prisma } from "@/lib/db";
 import { CustomFieldsCard } from "@/components/shared/custom-fields/custom-fields-card";
 import { getContactMeetingHistory } from "@/lib/calendar/queries";
-import { formatInZone } from "@/lib/calendar/timezone";
+import { formatInZone, DATE_TIME_WITH_ZONE } from "@/lib/calendar/timezone";
 import { requireCurrentUser } from "@/lib/auth/session";
 import { canManageClientsAndMatters } from "@/lib/auth/authorization";
 import { getContactDetail, listAccessibleMatterOptions, listContactOptions } from "@/lib/contacts/queries";
@@ -300,7 +300,7 @@ export default async function ContactDetailPage({
                       {formatInZone(
                         m.startTime,
                         m.timeZone,
-                        m.allDay ? { dateStyle: "medium" } : { dateStyle: "medium", timeStyle: "short", timeZoneName: "short" },
+                        m.allDay ? { dateStyle: "medium" } : DATE_TIME_WITH_ZONE,
                       )}
                       {m.matter ? ` · ${m.matter.caseNumber}` : " · Internal"}
                     </p>

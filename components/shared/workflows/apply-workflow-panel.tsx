@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { applyWorkflow, previewWorkflow, type ApplyState } from "@/lib/workflows/actions";
-import { formatInZone } from "@/lib/calendar/timezone";
+import { formatInZone, DATE_TIME_WITH_ZONE } from "@/lib/calendar/timezone";
 import { OFFSET_DISCLAIMER } from "@/lib/workflows/labels";
 import type { PreviewItem } from "@/lib/workflows/schedule";
 
@@ -19,7 +19,7 @@ function describeWhen(item: PreviewItem, timeZone: string) {
   const s = item.schedule;
   if (s.kind === "TASK") return `Due ${s.dateKey}`;
   if (s.allDay) return `${s.dateKey} (all day)`;
-  return formatInZone(s.startTime, timeZone, { dateStyle: "medium", timeStyle: "short", timeZoneName: "short" });
+  return formatInZone(s.startTime, timeZone, DATE_TIME_WITH_ZONE);
 }
 
 /**

@@ -6,7 +6,7 @@ import { requireCurrentUser } from "@/lib/auth/session";
 import { assertMatterAccess } from "@/lib/auth/access";
 import { canApplyWorkflow, listApplicableTemplates, listMatterApplications } from "@/lib/workflows/queries";
 import { WORKFLOW_TIME_ZONES } from "@/lib/workflows/fields";
-import { dateKeyInZone, FIRM_TIME_ZONE, formatInZone } from "@/lib/calendar/timezone";
+import { dateKeyInZone, FIRM_TIME_ZONE, formatInZone, DATE_TIME_WITH_ZONE } from "@/lib/calendar/timezone";
 import { asCalendarDate, taskStatusLabel, taskStatusVariant } from "@/lib/matters/format";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -107,7 +107,7 @@ export default async function MatterWorkflowsPage({ params }: { params: Promise<
                               ·{" "}
                               {e.allDay
                                 ? formatInZone(e.startTime, e.timeZone, { dateStyle: "medium" })
-                                : formatInZone(e.startTime, e.timeZone, { dateStyle: "medium", timeStyle: "short", timeZoneName: "short" })}
+                                : formatInZone(e.startTime, e.timeZone, DATE_TIME_WITH_ZONE)}
                             </span>
                           </span>
                           <Badge variant={e.status === "CANCELLED" ? "secondary" : "outline"}>{e.status.toLowerCase()}</Badge>

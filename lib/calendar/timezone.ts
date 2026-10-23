@@ -125,6 +125,20 @@ export function fromDateTimeLocalInZone(value: string, timeZone: string): Date |
   return wallTimeToUtc({ ...date, hour, minute }, timeZone);
 }
 
+/**
+ * Date + time + zone abbreviation. Intl rejects `timeZoneName` combined
+ * with `dateStyle`/`timeStyle` (TypeError at runtime), so zone-labelled
+ * timestamps must use component options like these.
+ */
+export const DATE_TIME_WITH_ZONE: Intl.DateTimeFormatOptions = {
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  timeZoneName: "short",
+};
+
 export function formatInZone(date: Date, timeZone: string, options: Intl.DateTimeFormatOptions): string {
   return new Intl.DateTimeFormat("en-US", { timeZone, ...options }).format(date);
 }

@@ -48,7 +48,7 @@ duplicated here; regressions are re-checked in this pass's walkthrough.
 | Ordered TASK/EVENT steps: title, description, priority, calendar-day offsets (explicitly not business days/court rules), time of day, duration, event type, assignee rule | `lib/workflows/schedule.ts`, `components/shared/workflows/template-editor.tsx` | `tests/workflows/schedule.test.ts` (offsets incl. negative, DST) | §14-3 | TESTED |
 | Anchor date + time zone, full preview with resolved assignees/dates, explicit confirm | `components/shared/workflows/apply-workflow-panel.tsx`, `lib/workflows/actions.ts` | actions tests | §14-3 | TESTED |
 | Starter templates (retained client, discovery review, hearing prep, trial prep, closure follow-up) stored as editable DB rows | `lib/workflows/starters.ts` (idempotent install; seed) | actions tests | §14-1 | TESTED |
-| Atomic application into Task/CalendarEvent; normal board/calendar visibility; ids-only audit | `lib/workflows/actions.ts` | rollback + audit tests | §14-3 | TESTED |
+| Atomic application into Task/CalendarEvent; normal board/calendar visibility; ids-only audit | `lib/workflows/actions.ts` | rollback + audit tests | §14-3 (event on calendar verified in re-run) | TESTED +B |
 | Retry idempotency (per-form `requestKey`) vs deliberate second application | `WorkflowApplication.requestKey @unique` | concurrency/unique-violation tests | §14-3 | TESTED |
 | History references exact version; later edits never rewrite created records | matter Workflows tab | version-immutability tests | §14-1/3 | TESTED |
 | Preview-only confirmed recalculation; skips completed work; never moves Deadlines | `components/shared/workflows/recalculate-form.tsx` | recalculation tests | §14-3 (preview) | TESTED |
@@ -138,10 +138,41 @@ Computed dashboard reminder cards (pre-existing), persisted in-app notifications
 
 ## 14. Verification evidence (this pass)
 
-- Full Vitest: **114 files / 1329 tests passed** (baseline 1024).
+- Full Vitest: **115 files / 1331 tests passed** (baseline 1024).
 - `npm run lint`: clean. `npm run typecheck`: exit 0. `npm run build`: exit 0.
 - Migration `20261023180000_mycase_parity` applied to the disposable local DB; `prisma migrate diff` reports no drift; seed (fictional) succeeds.
-- Browser walkthrough: _pending — results recorded below when complete._
+- Browser walkthrough (production build, fictional seed accounts ADMIN /
+  2 ATTORNEYs / PARALEGAL / STAFF; screenshots kept out of the repo):
+  - First run: **71 PASS, 4 FAIL** from two real defects, plus 3 checks
+    blocked by them:
+    1. Document-folder writes failed at runtime — the per-matter advisory
+       lock used `$queryRaw` on a `void` function (Prisma P2010). Unit tests
+       mocked the client, so they passed. **Fixed:** `$executeRaw`
+       (`lib/documents/folder-actions.ts`).
+    2. Zone-labelled time formatting combined `dateStyle`/`timeStyle` with
+       `timeZoneName`, which Intl rejects (TypeError) — crashing workflow
+       previews with timed event steps, the workflow history page, and
+       contact profiles with a timed meeting (the last one shipped in PR
+       #28). **Fixed:** shared `DATE_TIME_WITH_ZONE` component options
+       (`lib/calendar/timezone.ts`) + a real-Intl regression test
+       (`tests/calendar/format-options.test.ts`).
+  - Re-run of every failed/blocked check after the fixes: **7/7 PASS**
+    (timed-event workflow preview + apply + event on calendar + history
+    page; folder set apply idempotent 8→8; document move changes folder
+    only, storage key/hash unchanged; contact profile with timed meeting);
+    server log free of P2010/Intl errors.
+  - Covered in the walkthrough: §14-1 admin configuration, §14-3 custom
+    values/stage change (status unchanged)/workflow apply incl. retry and
+    deliberate re-application, §14-4 global search incl. forged matter
+    filter, §14-5 versions (distinct bytes per version), content index
+    hit, template generation → PDF, §14-6 scheduler (23 created, re-run 0),
+    inbox read/dismiss, restricted user sees nothing, §14-7 occurrence
+    cancel, contact prefill, task layer, §14-8 thread reply + count, §14-9
+    expense amount gating (paralegal hidden / attorney + admin visible /
+    CSV / STAFF 404), §14-10 saved report + CSV, §14-11 STAFF 404 matrix,
+    §14-12 regression spot checks (history, outcome, time, chat, PDF,
+    usage), §14-13 mobile 390px without horizontal overflow (dashboard,
+    matter, search).
 
 
 ---
@@ -165,7 +196,7 @@ None of these are built in this pass. Nothing here is "integrated".
 | **A. Offline import/export & MyCase cutover** | Domain I (ImportBatch/ImportRow/ExternalRecordLink) proposed, **not approved**. No import code. CSV *exports* exist for saved reports/expenses (this pass). Current firm tools stay in use until staff acceptance, data coverage, backup/restore tests, and cutover approval. | DEFERRED BY OWNER |
 | **B. Billing, invoices, retainers, payments, trust accounting, reconciliation, financial reports** | Absent by design. Time `billable` flag/rates and expenses (this pass) are capture only and do **not** close these gaps. Decision needed: what stays in MyCase/QuickBooks/a specialist provider. | NOT STARTED (needs separately approved scope) |
 | **C. AI summaries / assistant / MCP connector** | None. No case data is sent to any AI service. Requirements to define: provider/data handling, inherited authorization, grounded citations, human review, retention, separately permissioned tool access; never infer billable time from activity or AI. | NOT STARTED (needs scope/security approval) |
-| **D1. Mobile** | Responsive web shell only; no native app, offline, or push. Mobile-width usability checked in this pass's walkthrough (see section 14 evidence). | PARTIAL |
+| **D1. Mobile** | Responsive web shell only; no native app, offline, or push. 390px-wide dashboard, matter, and search pages render without horizontal overflow (§14). | PARTIAL (web only) |
 | **D2. Conflict review** | Global search (this pass) can support a manual conflict check; there is no conflict-clearance record and never an automatic "clear". Hidden matters are never exposed. | NOT STARTED |
 | **D3. Lead intake** | Kept in Loop/HighLevel by decision; Frye's `/intake` review queue + `lib/intake/highlevelSync.ts` handle the handoff (not production-deployed). | TESTED (pre-existing; handoff only) |
 | **D4. Practice-specific MyCase offerings** (e.g. personal-injury/immigration-specific features) | Not applicable to criminal defense unless the firm says otherwise. | DEFERRED BY OWNER (applicability) |
