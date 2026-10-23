@@ -7,6 +7,7 @@ import {
   BarChart3,
   CalendarDays,
   CheckSquare,
+  Contact,
   FileSearch,
   FolderKanban,
   Inbox,
@@ -66,6 +67,7 @@ function navItemsFor(role: string): NavItem[] {
       disabledReason: "Restricted to Admin/Attorney",
       disabledBadge: "Restricted",
     },
+    { href: "/contacts", label: "Contacts", icon: Contact },
     {
       href: "/intake",
       label: "Intake",

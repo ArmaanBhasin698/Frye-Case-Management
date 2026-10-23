@@ -1323,6 +1323,38 @@ dependencies, manual click-check list) now lives in
   `docs/PRODUCTION_READINESS.md`'s manual click-check list before
   go-live.
 
+## Milestone — Centralized Contacts (Firm Operations Expansion, phase 1)
+
+First phase of the Comprehensive Firm Operations Expansion (planned in
+`docs/FIRM_OPERATIONS_EXPANSION.md`, delivered on `feature/contacts`).
+Schema/migration explicitly approved by the project owner, along with the
+strict matter-only contact-visibility rule.
+
+- [x] Migration `add_contacts`: `Contact` (+ `ContactPhone`,
+      `ContactEmail`), `MatterContact`, `ContactRelationship`,
+      `ContactInteraction`, nullable `Call.contactId`.
+- [x] `/contacts` directory — search (name, organization, email, phone,
+      title), category / organization / matter / current-or-former client
+      filters, name or recently-contacted sort, active/archived views,
+      pagination (25 per page).
+- [x] Contact profile — information, associated matters (role, dates, lead
+      attorney, last interaction, status; closed and archived matters
+      included), people at an organization, associated people (permanent vs.
+      matter-specific), interaction timeline (manual interactions + linked
+      calls), follow-up completion.
+- [x] Create/edit forms with duplicate-contact warnings; reversible archive.
+- [x] Matter **Contacts** tab — client plus linked contacts, add existing,
+      create new pre-linked, soft remove.
+- [x] Clients get a directory entry at creation; name edits sync; dev-only
+      `scripts/backfill-client-contacts.ts` for clients that predate this.
+- [x] Log a Call (matter-scoped) can link the call to a contact on that
+      matter.
+- [x] Tests: `tests/contacts/` (visibility, fields, duplicates, history,
+      actions, queries, backfill) plus client/call updates.
+- [ ] Not in this milestone: contact merge tool for admins (follow-up),
+      editing a recorded interaction (append-only for now), professional
+      history (phase 2).
+
 ## Phase 4 — Discovery management (core differentiator)
 
 - [x] `DiscoveryProduction` and `DiscoveryFile` create. *Real as of the

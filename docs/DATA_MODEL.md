@@ -5,21 +5,28 @@ not the implementation — the actual source of truth once built will be
 `prisma/schema.prisma`. Field lists below are representative, not exhaustive;
 expect refinement once real screens are built.
 
-Nothing in this document has been implemented yet (no `schema.prisma` exists
-yet in this groundwork phase).
+Much of this document is now implemented — `prisma/schema.prisma` is the
+source of truth, and sections marked "real as of …" describe what exists.
 
 ## Entity overview
 
 - **User** — firm staff (attorneys, paralegals, admins) who log into the
   system. Not to be confused with Client.
 - **Client** — a person or entity the firm represents.
-- **Contact** — any other person relevant to a matter who is not the client
-  (witness, opposing counsel, judge, expert, investigator, etc.).
+- **Contact** — the permanent firm-wide directory of people and
+  organizations (clients' own entries, judges, prosecutors, officers,
+  witnesses, family, experts, vendors…). Real as of the Contacts milestone;
+  see the `Contact` section below.
 - **Matter** — a single case/engagement for a client.
 - **MatterAssignment** — join table: which Users are assigned to a Matter,
   and in what role (lead attorney, associate attorney, paralegal, etc.).
-- **MatterContact** — join table: which Contacts are relevant to a Matter,
-  and in what role.
+- **MatterContact** — join table: which Contacts are involved in a Matter,
+  and in what role (soft-removable, so history survives).
+- **ContactRelationship** — "A is <type> of B" between two Contacts,
+  permanent or matter-specific.
+- **ContactInteraction** — a manually recorded interaction with a Contact
+  (meeting, email, court appearance, …); logged `Call`s link via
+  `Call.contactId` instead.
 - **Note** — free-text note attached to a Matter.
 - **Task** — actionable to-do attached to a Matter, assignable to a User.
 - **Deadline** — a date-driven obligation attached to a Matter (court
@@ -181,11 +188,48 @@ intake webhook delivery can't create a duplicate `Client`.
   rows), never a `Client` schema change. No write path automatically
   creates a `Client` from this yet — see `lib/intake/README.md`.
 
-### Contact
-Anyone relevant to a case who is not the client.
-- `id`, `firstName`, `lastName`, `type`
-  (`witness` | `opposing_counsel` | `judge` | `expert` | `investigator` |
-  `other`), `organization`, `email`, `phone`, `notes`.
+### Contact — real as of the Contacts milestone
+The permanent, firm-wide directory record for one person or organization.
+It survives the closing or archiving of every matter it's linked to.
+- `kind` (`INDIVIDUAL` | `ORGANIZATION`), `firstName`/`lastName`
+  (individuals), `displayName` (derived on write — "First Last" or the
+  organization name — used for search/sort), `organizationId` (self-FK to an
+  ORGANIZATION contact), `jobTitle`.
+- `categories` — a Postgres enum array (`ContactCategory`): judge,
+  prosecutor, ADA, solicitor, defense attorney, opposing counsel, police
+  officer, detective, sheriff/deputy, law-enforcement agency, court clerk,
+  court administrator, probation officer, investigator, expert witness,
+  witness, co-defendant, family member, emergency contact, interpreter, bail
+  bondsman, correctional-facility contact, vendor, other professional,
+  prospective client. **Current/former client is never stored** — it's
+  derived from the linked Client's matter statuses, counting only matters
+  the viewer can access.
+- Structured mailing address, `preferredContactMethod`, `notes`,
+  `court`/`jurisdiction`/`position` (professional contacts),
+  `assignedStaffId`, `lastContactedAt`, `createdById`, reversible
+  `archived`/`archivedAt`/`archivedById`.
+- `clientId` (`@unique`, nullable) — a Client's own directory entry. Every
+  Client gets one at creation (`lib/clients/clientFields.ts`, nested create);
+  names are kept in sync by `updateClient`; the client's email/phone/address
+  stay on `Client` and are not copied. `scripts/backfill-client-contacts.ts`
+  (development-only, re-runnable) links entries for clients that predate
+  this milestone.
+- `ContactPhone` / `ContactEmail` — multiple labelled values per contact;
+  the first is primary.
+- **Visibility is derived, never stored** — see `docs/SECURITY.md`,
+  "Contact visibility".
+
+### ContactRelationship
+- `fromContactId`, `toContactId`, `type` (`ContactRelationshipType`), read
+  as "from is <type> of to"; `scope` (`PERMANENT` | `MATTER`), `matterId`
+  (required for MATTER scope), `context`, `createdById`.
+
+### ContactInteraction
+- `contactId`, `matterId` (nullable), `type` (call, meeting, email, note,
+  court appearance, consultation, follow-up), `occurredAt` (must not be in
+  the future — a scheduled event is not an interaction), `staffId`,
+  `summary`, `outcome`, `followUpStatus` (`NONE` | `PENDING` |
+  `COMPLETED`), `recordedById`.
 
 ### Matter
 A single case.
@@ -217,10 +261,15 @@ Join table: staff assigned to a matter.
   previous one to `ASSOCIATE_ATTORNEY` in the same transaction, which is
   also how "change the lead attorney" works, through the same control.
 
-### MatterContact
-Join table: contacts relevant to a matter.
-- `id`, `matterId` (FK), `contactId` (FK), `role` (free text or enum, e.g.
-  "defense witness", "opposing counsel of record").
+### MatterContact — real as of the Contacts milestone
+Join table: contacts involved in a matter.
+- `id`, `matterId` (FK), `contactId` (FK), `role` (`ContactCategory`),
+  `roleDetail` (free text, e.g. "Arresting officer"), `startDate`/`endDate`,
+  `addedById`, `addedAt`, `removedAt`.
+- `@@unique([matterId, contactId, role])`. Removing a contact from a matter
+  stamps `removedAt` (never deletes the row or the contact); re-adding the
+  same contact in the same role restores the row. A removed link grants no
+  visibility.
 
 ### Note
 Free-text note on a matter.
@@ -260,8 +309,9 @@ the dedicated Call record).
 ### Call — real manual logging as of the fourteenth session
 Phone call — designed around future Vonage sync.
 - `id`, `matterId` (FK, nullable until filed), `contactName` (free text,
-  nullable — no `Contact` entity exists yet, see "Notes on design
-  choices" below), `vonageCallId` (nullable until integration exists,
+  nullable), `contactId` (FK → Contact, nullable — set only for a call filed
+  on a matter the contact is actively on, so it appears on that contact's
+  timeline without duplicating the call), `vonageCallId` (nullable until integration exists,
   `@unique` as of the pre-integration hardening pass — Postgres treats
   every `NULL` as distinct, so every manually-logged call is unaffected;
   the constraint only matters once a real external call id is present,

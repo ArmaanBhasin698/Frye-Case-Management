@@ -31,9 +31,12 @@ export type LogCallMatterOption = { id: string; label: string };
 export function LogCallForm({
   matterId,
   matters,
+  contacts,
 }: {
   matterId?: string;
   matters?: LogCallMatterOption[];
+  /** Matter-scoped only: directory contacts on this matter, so the call shows on that contact's timeline. */
+  contacts?: LogCallMatterOption[];
 }) {
   const [state, formAction, isPending] = useActionState(createCall, INITIAL_STATE);
   const [open, setOpen] = React.useState(false);
@@ -80,6 +83,19 @@ export function LogCallForm({
             <option value="INBOUND">Inbound</option>
           </Select>
         </div>
+        {matterId && contacts && contacts.length > 0 && (
+          <div className="space-y-1.5">
+            <Label htmlFor="call-contactId">Directory contact</Label>
+            <Select id="call-contactId" name="contactId" defaultValue="">
+              <option value="">None</option>
+              {contacts.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
         <div className="space-y-1.5">
           <Label htmlFor="call-contactName">Contact name</Label>
           <Input id="call-contactName" name="contactName" placeholder="Optional" />

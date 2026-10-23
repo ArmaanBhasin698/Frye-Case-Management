@@ -2,7 +2,7 @@
 //
 // This is the schema behind the Matters vertical slice and the Monday-demo
 // visual-polish pass on top of it. It intentionally omits entities not
-// needed yet (Contact, MatterContact, generic Communication) — see
+// needed yet (generic Communication) — see
 // docs/DATA_MODEL.md for the full target model and docs/ROADMAP.md for
 // when those land.
 //
@@ -230,6 +230,13 @@ model User {
   failedLoginAttempts      FailedLoginAttempt[]
   securityIncidents        SecurityIncident[]
   reviewedIntakeLeads      IntakeLead[]          @relation("IntakeLeadReviewedBy")
+  createdContacts             Contact[]             @relation("ContactCreatedBy")
+  assignedContacts            Contact[]             @relation("ContactAssignedStaff")
+  archivedContacts            Contact[]             @relation("ContactArchivedBy")
+  addedMatterContacts         MatterContact[]       @relation("MatterContactAddedBy")
+  createdContactRelationships ContactRelationship[] @relation("ContactRelationshipCreatedBy")
+  contactInteractions         ContactInteraction[]  @relation("ContactInteractionStaff")
+  recordedContactInteractions ContactInteraction[]  @relation("ContactInteractionRecordedBy")
 }
 
 /// One-time-use recovery code for bypassing a lost TOTP device. Codes are
@@ -298,6 +305,7 @@ model Client {
   archivedBy   User?     @relation("ClientArchivedBy", fields: [archivedById], references: [id], onDelete: SetNull)
 
   matters           Matter[]
+  contact           Contact?
   externalLeadLinks ExternalLeadLink[]
   linkedIntakeLeads IntakeLead[]        @relation("IntakeLeadLinkedClient")
 }
@@ -434,6 +442,9 @@ model Matter {
   documents            Document[]
   calls                Call[]
   auditEvents          AuditEvent[]
+  contactLinks         MatterContact[]
+  contactRelationships ContactRelationship[]
+  contactInteractions  ContactInteraction[]
 }
 
 /// Join table: which staff are assigned to a Matter, and in what capacity.
@@ -656,6 +667,11 @@ model Call {
   matterId             String?
   matter               Matter?       @relation(fields: [matterId], references: [id], onDelete: SetNull)
   contactName          String?
+  /// Optional link to the Contact directory so a logged call appears on
+  /// that contact's interaction timeline without a second copy of it.
+  /// `contactName` stays for calls with no directory entry.
+  contactId            String?
+  contact              Contact?      @relation(fields: [contactId], references: [id], onDelete: SetNull)
   vonageCallId         String?       @unique
   direction            CallDirection
   fromNumber           String
@@ -733,4 +749,255 @@ model SecurityIncident {
   notes              String?
 
   @@index([status])
+}
+
+// --- Contacts --------------------------------------------------------------
+//
+// The firm-wide contact directory (see docs/FIRM_OPERATIONS_EXPANSION.md).
+// Visibility is strictly matter-derived — there is no stored visibility
+// flag: a Contact is visible to ADMIN, to its creator, and to anyone who
+// can access a matter it's actively linked to (via MatterContact, or via
+// its linked Client's own matters). See lib/contacts/visibility.ts.
+
+enum ContactKind {
+  INDIVIDUAL
+  ORGANIZATION
+}
+
+/// Criminal-defense contact categories. Multi-valued on Contact (a person
+/// can be a witness on one matter and a family member on another), and
+/// reused as the per-matter role on MatterContact. "Current client" and
+/// "former client" are deliberately absent: they're derived from a linked
+/// Client's matter statuses, never stored.
+enum ContactCategory {
+  PROSPECTIVE_CLIENT
+  JUDGE
+  PROSECUTOR
+  ASSISTANT_DISTRICT_ATTORNEY
+  SOLICITOR
+  DEFENSE_ATTORNEY
+  OPPOSING_COUNSEL
+  POLICE_OFFICER
+  DETECTIVE
+  SHERIFF_DEPUTY
+  LAW_ENFORCEMENT_AGENCY
+  COURT_CLERK
+  COURT_ADMINISTRATOR
+  PROBATION_OFFICER
+  INVESTIGATOR
+  EXPERT_WITNESS
+  WITNESS
+  CO_DEFENDANT
+  FAMILY_MEMBER
+  EMERGENCY_CONTACT
+  INTERPRETER
+  BAIL_BONDSMAN
+  CORRECTIONAL_FACILITY_CONTACT
+  VENDOR
+  OTHER_PROFESSIONAL
+}
+
+enum PreferredContactMethod {
+  PHONE
+  TEXT
+  EMAIL
+  MAIL
+  IN_PERSON
+}
+
+/// Direction-sensitive: a ContactRelationship reads "from is <type> of to"
+/// (e.g. "Pat Doe is PARENT of Jane Doe").
+enum ContactRelationshipType {
+  PARENT
+  CHILD
+  SPOUSE
+  SIBLING
+  FAMILY_MEMBER
+  EMPLOYER
+  EMPLOYEE
+  WITNESS
+  CO_DEFENDANT
+  ARRESTING_OFFICER
+  INVESTIGATING_DETECTIVE
+  ASSIGNED_PROSECUTOR
+  ASSIGNED_JUDGE
+  EXPERT_WITNESS
+  DEFENSE_INVESTIGATOR
+  OTHER
+}
+
+enum ContactRelationshipScope {
+  PERMANENT
+  MATTER
+}
+
+enum ContactInteractionType {
+  CALL
+  MEETING
+  EMAIL
+  NOTE
+  COURT_APPEARANCE
+  CONSULTATION
+  FOLLOW_UP
+}
+
+enum FollowUpStatus {
+  NONE
+  PENDING
+  COMPLETED
+}
+
+/// One person or organization the firm has encountered, kept permanently —
+/// it survives the closing or archiving of every matter it's linked to.
+/// `displayName` is derived on write ("First Last" for individuals, the
+/// organization name otherwise) so search and sorting work for both kinds.
+/// A Contact linked to a Client (`clientId`) is that client's directory
+/// entry: its names are kept in sync from the Client record, and the
+/// client's own email/phone/address stay on Client rather than being
+/// copied here. `court`/`jurisdiction`/`position` describe professional
+/// contacts (judges, prosecutors, clerks).
+model Contact {
+  id                     String                  @id @default(cuid())
+  kind                   ContactKind             @default(INDIVIDUAL)
+  firstName              String?
+  lastName               String?
+  displayName            String
+  organizationId         String?
+  organization           Contact?                @relation("ContactOrganization", fields: [organizationId], references: [id], onDelete: SetNull)
+  members                Contact[]               @relation("ContactOrganization")
+  jobTitle               String?
+  categories             ContactCategory[]
+  addressLine1           String?
+  addressLine2           String?
+  city                   String?
+  state                  String?
+  postalCode             String?
+  preferredContactMethod PreferredContactMethod?
+  notes                  String?
+  court                  String?
+  jurisdiction           String?
+  position               String?
+  clientId               String?                 @unique
+  client                 Client?                 @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  assignedStaffId        String?
+  assignedStaff          User?                   @relation("ContactAssignedStaff", fields: [assignedStaffId], references: [id], onDelete: SetNull)
+  lastContactedAt        DateTime?
+  createdById            String?
+  createdBy              User?                   @relation("ContactCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  archived               Boolean                 @default(false)
+  archivedAt             DateTime?
+  archivedById           String?
+  archivedBy             User?                   @relation("ContactArchivedBy", fields: [archivedById], references: [id], onDelete: SetNull)
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+
+  phones               ContactPhone[]
+  emails               ContactEmail[]
+  matterLinks          MatterContact[]
+  relationshipsFrom    ContactRelationship[] @relation("ContactRelationshipFrom")
+  relationshipsTo      ContactRelationship[] @relation("ContactRelationshipTo")
+  interactions         ContactInteraction[]
+  calls                Call[]
+
+  @@index([displayName])
+  @@index([lastName, firstName])
+  @@index([organizationId])
+  @@index([createdById])
+}
+
+model ContactPhone {
+  id        String  @id @default(cuid())
+  contactId String
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  label     String?
+  number    String
+  isPrimary Boolean @default(false)
+
+  @@index([contactId])
+  @@index([number])
+}
+
+model ContactEmail {
+  id        String  @id @default(cuid())
+  contactId String
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  label     String?
+  address   String
+  isPrimary Boolean @default(false)
+
+  @@index([contactId])
+  @@index([address])
+}
+
+/// Which Contacts are involved in a Matter, and in what role. Removing a
+/// contact from a matter sets `removedAt` instead of deleting the row, so
+/// the history of who was involved survives; re-adding the same contact in
+/// the same role clears it again (hence the unique key). A removed link
+/// grants no visibility.
+model MatterContact {
+  id         String          @id @default(cuid())
+  matterId   String
+  matter     Matter          @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  contactId  String
+  contact    Contact         @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  role       ContactCategory
+  roleDetail String?
+  startDate  DateTime?
+  endDate    DateTime?
+  addedById  String?
+  addedBy    User?           @relation("MatterContactAddedBy", fields: [addedById], references: [id], onDelete: SetNull)
+  addedAt    DateTime        @default(now())
+  removedAt  DateTime?
+
+  @@unique([matterId, contactId, role])
+  @@index([contactId])
+}
+
+/// A relationship between two Contacts ("Pat Doe is PARENT of Jane Doe").
+/// PERMANENT relationships are personal facts independent of any case;
+/// MATTER-scoped ones (an arresting officer, a co-defendant) require
+/// `matterId` and are only visible to users with access to that matter.
+model ContactRelationship {
+  id            String                   @id @default(cuid())
+  fromContactId String
+  fromContact   Contact                  @relation("ContactRelationshipFrom", fields: [fromContactId], references: [id], onDelete: Cascade)
+  toContactId   String
+  toContact     Contact                  @relation("ContactRelationshipTo", fields: [toContactId], references: [id], onDelete: Cascade)
+  type          ContactRelationshipType
+  scope         ContactRelationshipScope @default(PERMANENT)
+  matterId      String?
+  matter        Matter?                  @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  context       String?
+  createdById   String?
+  createdBy     User?                    @relation("ContactRelationshipCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt     DateTime                 @default(now())
+
+  @@index([fromContactId])
+  @@index([toContactId])
+}
+
+/// A manually recorded interaction with a Contact (meeting, email, court
+/// appearance, ...). Phone calls already logged as `Call` rows link via
+/// `Call.contactId` instead of being copied here; the contact timeline
+/// merges both. Only something that actually happened belongs here — a
+/// scheduled event is not an interaction.
+model ContactInteraction {
+  id             String                 @id @default(cuid())
+  contactId      String
+  contact        Contact                @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  matterId       String?
+  matter         Matter?                @relation(fields: [matterId], references: [id], onDelete: SetNull)
+  type           ContactInteractionType
+  occurredAt     DateTime
+  staffId        String?
+  staff          User?                  @relation("ContactInteractionStaff", fields: [staffId], references: [id], onDelete: SetNull)
+  summary        String
+  outcome        String?
+  followUpStatus FollowUpStatus         @default(NONE)
+  recordedById   String?
+  recordedBy     User?                  @relation("ContactInteractionRecordedBy", fields: [recordedById], references: [id], onDelete: SetNull)
+  createdAt      DateTime               @default(now())
+
+  @@index([contactId, occurredAt])
+  @@index([matterId])
 }

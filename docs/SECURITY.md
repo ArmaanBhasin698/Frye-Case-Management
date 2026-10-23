@@ -694,6 +694,44 @@ this pass.
   Handlers don't render through layouts), which is exactly why each
   repeats the matter-access and matter-scoping checks itself instead of
   relying on that construction.
+- **Contact visibility (Contacts milestone) — strict, matter-derived.**
+  Decided by the project owner (see `docs/FIRM_OPERATIONS_EXPANSION.md`):
+  there is no firm-wide directory tier, because the mere fact that the firm
+  has a contact on file can reveal confidential representation. A Contact
+  is visible only to ADMIN, to the user who created it, and to users who
+  can access a matter it is actively linked to (a non-removed
+  `MatterContact`, or — for a client's directory entry — one of that
+  Client's matters). `lib/contacts/visibility.ts#buildContactVisibilityFilter`
+  is the single rule; every Contact read in `lib/contacts/queries.ts` ANDs
+  it, and every Contact Server Action re-checks it with `canViewContact`
+  (plus `hasMatterAccess` for anything matter-scoped). Leak-prevention
+  rules built in and tested (`tests/contacts/`):
+  - Matter-derived sections of a profile (associated matters, client
+    status, matter-specific relationships, interactions, linked calls) are
+    filtered to the viewer's matters *before* rendering; hidden rows are
+    never counted or hinted at. Unfiled linked calls follow the
+    Communications rule (ADMIN/ATTORNEY only).
+  - "Current/former client" is derived only from matters the viewer can
+    see, so the badge can't reveal an unseen open matter.
+  - Filtering the directory by a matter the viewer can't access returns
+    nothing (it would otherwise reveal which visible contacts are on it).
+  - Duplicate-contact warnings compare only against contacts the user can
+    already see. Accepted consequence: a non-admin can create a duplicate
+    of a contact they can't see; ADMIN (who sees everything) is the
+    remedy.
+  - A call can only be linked to a contact who is actively on the call's
+    matter, so a forged `contactId` can't attach call notes to an
+    unrelated person.
+  - Known residual: `Contact.lastContactedAt` is a single stored date, so a
+    viewer can see that *some* interaction happened on that date even if it
+    was on a matter they can't access. It never reveals which matter or
+    what was said.
+  - Contact create/edit is open to every active role (it's how staff record
+    people they deal with); archive/reactivate is ADMIN/ATTORNEY, matching
+    the Client rule. Audit metadata for contacts, matter links,
+    relationships, and interactions records ids, enum values, and changed
+    field names only — never notes, interaction summaries, or relationship
+    context.
 
 ## Audit logging
 

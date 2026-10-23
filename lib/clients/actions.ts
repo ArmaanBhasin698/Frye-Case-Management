@@ -71,10 +71,18 @@ export async function updateClient(
   }
 
   const nextDateOfBirth = dateOfBirth ? new Date(dateOfBirth) : null;
-  await prisma.client.update({
-    where: { id: clientId },
-    data: { ...rest, dateOfBirth: nextDateOfBirth },
-  });
+  // The client's Contact-directory entry takes its names from this record —
+  // keep them in step in the same transaction.
+  await prisma.$transaction([
+    prisma.client.update({
+      where: { id: clientId },
+      data: { ...rest, dateOfBirth: nextDateOfBirth },
+    }),
+    prisma.contact.updateMany({
+      where: { clientId },
+      data: { firstName: rest.firstName, lastName: rest.lastName, displayName: `${rest.firstName} ${rest.lastName}` },
+    }),
+  ]);
 
   // `notes` is free text (up to 5,000 chars) — record only that it changed,
   // never the content, so the audit log can't become a second copy of

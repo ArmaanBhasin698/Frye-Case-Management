@@ -84,7 +84,23 @@ export type ParsedClientFields = {
 export async function createClientRecord(fields: ParsedClientFields, actorId: string) {
   const { dateOfBirth, ...rest } = fields;
   const client = await prisma.client.create({
-    data: { ...rest, dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined },
+    data: {
+      ...rest,
+      dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
+      // Every Client gets its Contact-directory entry in the same insert
+      // (nested create = one transaction), so a client can never exist
+      // without one. Only names live on the Contact; email/phone/address
+      // stay on Client (see Contact in prisma/schema.prisma).
+      contact: {
+        create: {
+          kind: "INDIVIDUAL",
+          firstName: rest.firstName,
+          lastName: rest.lastName,
+          displayName: `${rest.firstName} ${rest.lastName}`,
+          createdById: actorId,
+        },
+      },
+    },
   });
 
   await prisma.auditEvent.create({
