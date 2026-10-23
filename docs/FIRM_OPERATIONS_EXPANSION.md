@@ -1,6 +1,6 @@
 # Firm Operations Expansion — Architecture & Delivery Plan
 
-Status: **planning — no feature code or schema changes have landed yet.**
+Status: **in progress — Phase 1 (Contacts) is in review; no phase is merged yet.**
 This document is the single source of truth for the multi-phase
 "Comprehensive Firm Operations Expansion" initiative (contacts, professional
 history, matter closure, calendar, time tracking, usage reporting, team
@@ -230,7 +230,7 @@ predictions.
 | # | Branch | Scope | Needs approval |
 |---|---|---|---|
 | 0 | `docs/firm-operations-expansion-plan` | This document | — |
-| 1 | `feature/contacts` | Phase 1 schema, `lib/contacts`, `/contacts` list/detail/forms, matter Contacts tab, duplicate warnings, tests | Schema + migration |
+| 1 | `feature/contacts` | Phase 1 schema, `lib/contacts`, `/contacts` list/detail/forms, matter Contacts tab, duplicate warnings, tests — **PR open (ArmaanBhasin698/Frye-Case-Management#27), not merged** | Approved 2026-10-23 |
 | 2 | `feature/professional-history` | Rulings, observations, judge/prosecutor/counsel profile sections, cross-matter views, aggregates | Schema + migration |
 | 3 | `feature/matter-closure` | Closure workflow, trial report, linking, amendments, reopen, backfill flags | Schema + migration |
 | 4 | `feature/calendar` | Month/week/day/agenda grid, event CRUD, meeting links, matter/contact links | Schema + migration |
