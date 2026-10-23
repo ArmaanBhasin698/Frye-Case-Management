@@ -20,8 +20,18 @@ import { Badge } from "@/components/ui/badge";
  * One conversation. `getReadableConversation` (membership + current matter
  * access) gates the whole page; anything else is the standard not-found.
  */
-export default async function ConversationPage({ params }: { params: Promise<{ conversationId: string }> }) {
+export default async function ConversationPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ conversationId: string }>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   const { conversationId } = await params;
+  const threadParam = (await searchParams).thread;
+  // Only an id is passed through; the thread route re-checks access and
+  // that the parent belongs to this conversation.
+  const initialThreadId = typeof threadParam === "string" ? threadParam.slice(0, 100) : undefined;
   const user = await requireCurrentUser();
   const conversation = await getReadableConversation(user, conversationId);
   if (!conversation) notFound();
@@ -72,6 +82,7 @@ export default async function ConversationPage({ params }: { params: Promise<{ c
             isAdmin={isAdmin(user)}
             isChannel={isChannel}
             references={conversation.matterId ? { matterId: conversation.matterId, documents } : undefined}
+            initialThreadId={initialThreadId}
           />
           {isChannel ? (
             <ChannelMembersPanel
