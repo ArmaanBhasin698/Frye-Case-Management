@@ -31,26 +31,114 @@ handles:
 
 | Tool | Status | Notes |
 |---|---|---|
-| Loop / HighLevel | **Keep** | Leads and intake stay here. This system starts at the "client is retained" stage. |
+| Loop / HighLevel | **Keep** | Leads and intake stay here. This system starts at the "client is retained" stage — new contacts are pulled into a staff-review queue, never turned into a Client automatically. |
 | MyCase | **Replace** | This platform replaces MyCase for active client and case management. |
 | monday.com | **Possibly replace** | Tasks/workflows may move here later. Not a v1 goal. |
 | Dropbox | **Keep** | Remains the source of truth for document storage. This app organizes, indexes, and links to Dropbox files/folders — it does not become a second file store. |
 | Vonage | **Keep** | Remains the phone/SMS provider. This app will eventually surface and file call/SMS activity against the right client/matter. |
 | QuickBooks Online | **Keep (future)** | Billing/accounting integration is a later phase, not v1. |
 
-None of the integrations above (Loop, MyCase, Dropbox, Vonage, QuickBooks) are
-implemented yet. See "Current phase" below.
+Integration status differs per tool — some code exists for HighLevel,
+Dropbox, and Vonage, none for MyCase or QuickBooks, and **none of it is
+connected to production**. See "Integration status" in section 2.
 
-## 2. Current phase — groundwork only
+## 2. Current phase — functional MVP, pre-production
 
-As of this writing, the repository contains **only foundational
-documentation, configuration, and folder scaffolding** — no working
-application code, no database connection, no integrations.
+The application is a working Next.js + Prisma + PostgreSQL app, not
+scaffolding (verified against the codebase in October 2026). It has been
+built and exercised **only with fictional data and fictional development
+accounts**. It is **not deployed to production**: no hosting, production
+database, real staff account, or real client data exists yet. What still
+blocks production use is tracked in `docs/PRODUCTION_READINESS.md`; the
+session-by-session build history is in `docs/ROADMAP.md`.
+
+### Current architecture
+
+One Next.js App Router application serves both UI and backend:
+
+- **Routes** — `app/(auth)/` (login, MFA, forced password change, signup),
+  `app/(dashboard)/` (all signed-in pages), and `app/api/` (Auth.js, health
+  check, HighLevel cron/webhook endpoints).
+- **Route gate** — `proxy.ts` redirects any request without a session to
+  `/login`, except the explicitly public auth pages and the API routes that
+  carry their own secret check. It only checks "signed in"; real
+  authorization happens server-side per request (section 4).
+- **Business logic** — `lib/<module>/` (`queries.ts` for reads,
+  `actions.ts` for Server Action writes), with authorization helpers in
+  `lib/auth/access.ts` and `lib/auth/authorization.ts`.
+- **Data** — `prisma/schema.prisma` plus migrations in `prisma/migrations/`.
+- **Tests** — Vitest unit tests in `tests/`, mirroring `lib/` modules.
+
+### Implemented modules
+
+- **Authentication & user management** — Auth.js credentials login with
+  JWT sessions, TOTP MFA (with recovery codes and admin-assisted reset),
+  forced first-login password change, self-registration that creates
+  `PENDING` accounts only an `ADMIN` can approve, ADMIN-only user
+  management (`/admin/users`), server-side session revocation on
+  deactivation/password reset, and a production admin bootstrap script
+  (`npm run bootstrap:admin`).
+- **Roles & matter-level access** — roles `ADMIN`, `ATTORNEY`,
+  `PARALEGAL`, `STAFF`. `ADMIN` sees every matter; everyone else sees only
+  matters they're assigned to (a URL for any other matter returns a 404).
+  Client/Matter create/edit is limited to `ADMIN`/`ATTORNEY`, and matter
+  team changes to `ADMIN` or that matter's `LEAD_ATTORNEY`.
+- **Clients & Matters** — create, edit, staff assignments, and reversible
+  archive/reactivate (no permanent deletion).
+- **Matter workspace** — Notes, Tasks (including a Kanban board),
+  Deadlines, Calendar Events, general Documents (authenticated
+  upload/download), manual Call logging and filing, and an audit Timeline.
+- **Discovery** — productions, file registration with SHA-256 hashing,
+  Bates-stamped PDF copies (originals never modified), and comparing two
+  productions.
+- **Firm-wide views** — Dashboard, Tasks, Calendar, Communications,
+  Discovery, and Reports, all scoped by the same server-side matter access
+  rules.
+- **Security center** — `/admin/security` (ADMIN-only) lists
+  suspicious-login incidents detected from failed password attempts, for
+  triage (Open → Investigating → Resolved / False Positive). A per-account
+  password-attempt cooldown is backed by the database. Users manage their
+  own MFA at `/account/security`. Also in place: security response headers
+  (including a Content-Security-Policy), audit logging of case-data writes
+  and file downloads, and an unauthenticated `/api/health` probe that
+  exposes no internal details.
+- **Intake review** — `/intake`, a staff review queue for leads pulled
+  from HighLevel (see below).
+
+### Integration status
+
+| Integration | What exists | Production status |
+|---|---|---|
+| Loop / HighLevel | API-polling sync (`lib/intake/highlevelSync.ts`), started by a manual "Sync from Loop" action or a protected cron route (`app/api/cron/highlevel-sync`). It creates `PENDING` `IntakeLead` rows that staff link, convert to a Client, or dismiss. A webhook route (`app/api/intake/highlevel`) is also built but nothing is configured to call it. | Designated as the future production intake path, but not deployed: no host or scheduler has been chosen. |
+| Dropbox | `lib/storage/DocumentStore` with a local-disk store (the default) and a **development/test-only** `DropboxDocumentStore` (`STORAGE_PROVIDER=dropbox`, pointed at a test App-folder account). | Not production: no firm-owned Dropbox app, production folder layout, or encrypted token storage. |
+| Vonage | Library code only (`lib/telephony/`): payload normalization, idempotent unfiled-Call ingestion, and recording storage, tested with fixtures. No route, webhook, or API client calls it. | Not connected. Calls are logged manually today. |
+| MyCase | Nothing. | No data migration has started. |
+| QuickBooks Online | Nothing. | Later phase. |
+
+Existing integration code may be maintained and extended **only when a
+human explicitly authorizes that specific work**. Production connections and
+credentials remain restricted (see below). Don't describe any of these
+integrations as production-ready unless `docs/PRODUCTION_READINESS.md` says
+so.
+
+### Rules for this phase
 
 Until a human explicitly says otherwise, do **NOT**:
 
-- Build or wire up integrations with Vonage, Dropbox, Loop/HighLevel, MyCase,
-  or QuickBooks Online.
+- Start new integration work, or extend existing integration code (Vonage,
+  Dropbox, Loop/HighLevel, MyCase, QuickBooks Online), without explicit
+  authorization for that specific work.
+- Connect to any live external service, including test or sandbox accounts,
+  without explicit approval. Never connect to a production service, use or
+  request production credentials, or make production changes (hosting,
+  production database, production configuration, or production data).
+  Tests use fixtures and mocks, never live calls.
+- Create, edit, or apply Prisma migrations or `schema.prisma` changes
+  without explicit approval.
+- Add, remove, or upgrade dependencies without explicit approval.
+- Run destructive database commands (`db:reset`, `db:seed`,
+  `prisma migrate reset`, or manual data changes) against anything except
+  a local development/test database.
 - Implement billing/invoicing.
 - Migrate or import any real firm or client data.
 - Add real API keys, tokens, or credentials anywhere in the repo (only
@@ -69,11 +157,12 @@ When in doubt about scope, do less and ask.
 - **Database:** PostgreSQL.
 - **ORM:** Prisma.
 - **UI:** shadcn/ui components on top of Tailwind CSS.
-- **Auth:** Auth.js (NextAuth) with credentials + session-based auth,
-  designed so MFA can be added later without a rewrite.
+- **Auth:** Auth.js (NextAuth v5) with a credentials provider and JWT
+  sessions, plus TOTP MFA (implemented — see section 2).
 - **Validation:** Zod for all input validation (forms and API/server actions).
-- **Testing:** Vitest for unit tests, Playwright for end-to-end tests (added
-  when there is a UI worth testing end-to-end).
+- **Testing:** Vitest for unit tests (`npm run test`). Playwright for
+  end-to-end tests is still planned but not installed — adding it is a new
+  dependency and needs approval (section 2).
 
 Rationale for these choices, trade-offs, and deployment thinking are in
 `docs/ARCHITECTURE.md`.
@@ -98,10 +187,12 @@ Rationale for these choices, trade-offs, and deployment thinking are in
    produce an `AuditEvent` (see `docs/DATA_MODEL.md`). This is not optional
    and should not be bolted on later — build it in from the first real
    feature.
-6. **Integrations are isolated behind interfaces.** When Dropbox/Vonage/etc.
-   integrations are eventually built, they must live behind a narrow
-   interface (e.g., `lib/storage/DocumentStore`) so the rest of the app never
-   calls a third-party SDK directly. This keeps future provider swaps and
+6. **Integrations are isolated behind interfaces.** Every integration must
+   live behind a narrow interface so the rest of the app never calls a
+   third-party SDK or API directly. Existing code already does this
+   (`lib/storage/DocumentStore`, `lib/intake/`, `lib/telephony/`; see
+   `docs/INTEGRATION_ARCHITECTURE.md`), and any authorized extension or new
+   integration must keep it that way. This keeps future provider swaps and
    testing sane.
 7. **No secrets in the repo.** Configuration comes from environment
    variables only, documented (with placeholders) in `.env.example`.
@@ -137,8 +228,9 @@ in that document, follow the document and flag the conflict to the user.
 
 - TypeScript everywhere, `strict` mode on, no `any` unless truly
   unavoidable (and commented why).
-- Formatting/linting via Prettier + ESLint; do not hand-format against the
-  configured rules.
+- Linting via ESLint (`npm run lint`) and type-checking via `npm run
+  typecheck`; do not hand-format against the configured rules. Prettier is
+  not configured yet — adding it is a new dependency and needs approval.
 - Prefer small, focused modules over large multi-purpose files.
 - Business logic (discovery numbering, deadline calculation, etc.) belongs
   in `lib/`, not scattered inline in route handlers or components — it needs
@@ -171,7 +263,14 @@ short:
 - `docs/ARCHITECTURE.md` — system architecture and technical rationale.
 - `docs/DATA_MODEL.md` — core entities, fields, and relationships.
 - `docs/SECURITY.md` — security and confidentiality requirements in detail.
-- `docs/ROADMAP.md` — phased plan from groundwork to full feature set.
+- `docs/ROADMAP.md` — phased plan and session-by-session build history.
+- `docs/INTEGRATION_ARCHITECTURE.md` — Dropbox, Vonage, and Loop/HighLevel
+  boundaries (also see `lib/intake/README.md` and `lib/telephony/README.md`).
+- `docs/PRODUCTION_READINESS.md` — what must happen before real data or
+  real staff accounts are allowed.
+- `docs/SECURITY_MONITORING_ASSESSMENT.md` — record of the local,
+  fictional-data exercise that added suspicious-login detection and admin
+  incident triage.
 
 Keep these documents current. If you make an architectural decision while
 implementing a feature, record it in the relevant doc in the same change.
@@ -188,6 +287,18 @@ Because of that:
   things at once.
 - Keep this file and the `docs/` folder accurate — they are the persistent
   memory of the project between sessions.
+
+### Branch and pull request workflow
+
+- Do all work on a feature branch created from the latest `origin/main`;
+  never commit or push directly to `main`.
+- Deliver changes through a pull request targeting `main`. Do not merge a
+  pull request, force-push `main`, or rewrite shared history unless a
+  human explicitly asks.
+- Before opening a PR, run the checks relevant to the change
+  (`npm run lint`, `npm run typecheck`, `npm run test`, and
+  `npm run build` for code changes), and report any that were skipped or
+  failed.
 
 <!-- BEGIN:nextjs-agent-rules -->
 
