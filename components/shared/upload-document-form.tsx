@@ -12,7 +12,15 @@ import { uploadDocument, type FormActionState } from "@/lib/documents/actions";
 
 const INITIAL_STATE: FormActionState = { error: null };
 
-export function UploadDocumentForm({ matterId }: { matterId: string }) {
+export function UploadDocumentForm({
+  matterId,
+  folders,
+  defaultFolderId,
+}: {
+  matterId: string;
+  folders?: { id: string; path: string }[];
+  defaultFolderId?: string;
+}) {
   const [state, formAction, isPending] = useActionState(uploadDocument, INITIAL_STATE);
   const formRef = React.useRef<HTMLFormElement>(null);
   const [open, setOpen] = React.useState(false);
@@ -60,6 +68,19 @@ export function UploadDocumentForm({ matterId }: { matterId: string }) {
             <option value="OTHER">Other</option>
           </Select>
         </div>
+        {folders && folders.length > 0 && (
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="document-folder">Folder</Label>
+            <Select id="document-folder" name="folderId" defaultValue={defaultFolderId ?? ""}>
+              <option value="">Unfiled</option>
+              {folders.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.path}
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
         <div className="space-y-1.5 sm:col-span-2">
           <Label htmlFor="document-notes">Notes</Label>
           <Textarea id="document-notes" name="notes" rows={2} placeholder="Optional" />

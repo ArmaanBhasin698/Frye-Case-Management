@@ -16,6 +16,12 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  DocumentOrganizePanel,
+  DocumentVersionsPanel,
+  type FolderOption,
+  type VersionSummary,
+} from "@/components/shared/document-workspace";
 
 export type DocumentSummary = {
   id: string;
@@ -28,6 +34,12 @@ export type DocumentSummary = {
   notes: string | null;
   /** Whether `storageKey` actually resolves to stored bytes — false for illustrative pre-tenth-session seed rows. */
   hasStoredFile: boolean;
+  folderId: string | null;
+  folderName: string | null;
+  tags: string[];
+  currentVersionId: string | null;
+  versions: VersionSummary[];
+  generatedFrom: string | null;
 };
 
 const INITIAL_STATE: FormActionState = { error: null };
@@ -96,13 +108,26 @@ function DocumentEditForm({
   );
 }
 
-function DocumentRow({ matterId, document }: { matterId: string; document: DocumentSummary }) {
-  const [editing, setEditing] = React.useState(false);
+function DocumentRow({ matterId, document, folders }: { matterId: string; document: DocumentSummary; folders: FolderOption[] }) {
+  const [panel, setPanel] = React.useState<"edit" | "versions" | "organize" | null>(null);
+  const toggle = (next: "edit" | "versions" | "organize") => setPanel((p) => (p === next ? null : next));
+  const versionCount = Math.max(document.versions.length, 1);
 
   return (
     <>
       <TableRow>
-        <TableCell className="font-medium">{document.title}</TableCell>
+        <TableCell className="font-medium">
+          {document.title}
+          <div className="mt-1 flex flex-wrap gap-1">
+            {document.folderName && <Badge variant="secondary">{document.folderName}</Badge>}
+            {document.tags.map((t) => (
+              <Badge key={t} variant="outline">
+                #{t}
+              </Badge>
+            ))}
+            {document.generatedFrom && <Badge variant="outline">Generated: {document.generatedFrom}</Badge>}
+          </div>
+        </TableCell>
         <TableCell>
           <Badge variant="outline">{documentCategoryLabel(document.category)}</Badge>
         </TableCell>
@@ -128,16 +153,39 @@ function DocumentRow({ matterId, document }: { matterId: string; document: Docum
             ) : (
               <span className="text-xs text-muted-foreground">No file stored</span>
             )}
-            <Button variant="ghost" size="sm" onClick={() => setEditing((v) => !v)}>
-              {editing ? "Close" : "Edit"}
+            <Button variant="ghost" size="sm" onClick={() => toggle("versions")}>
+              Versions ({versionCount})
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => toggle("organize")}>
+              Organize
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => toggle("edit")}>
+              {panel === "edit" ? "Close" : "Edit"}
             </Button>
           </div>
         </TableCell>
       </TableRow>
-      {editing && (
+      {panel && (
         <TableRow>
           <TableCell colSpan={7} className="bg-muted/30 p-0">
-            <DocumentEditForm matterId={matterId} document={document} onDone={() => setEditing(false)} />
+            {panel === "edit" && <DocumentEditForm matterId={matterId} document={document} onDone={() => setPanel(null)} />}
+            {panel === "versions" && (
+              <DocumentVersionsPanel
+                matterId={matterId}
+                documentId={document.id}
+                versions={document.versions}
+                currentVersionId={document.currentVersionId}
+              />
+            )}
+            {panel === "organize" && (
+              <DocumentOrganizePanel
+                matterId={matterId}
+                documentId={document.id}
+                folders={folders}
+                folderId={document.folderId}
+                tags={document.tags}
+              />
+            )}
           </TableCell>
         </TableRow>
       )}
@@ -145,7 +193,15 @@ function DocumentRow({ matterId, document }: { matterId: string; document: Docum
   );
 }
 
-export function DocumentList({ matterId, documents }: { matterId: string; documents: DocumentSummary[] }) {
+export function DocumentList({
+  matterId,
+  documents,
+  folders,
+}: {
+  matterId: string;
+  documents: DocumentSummary[];
+  folders: FolderOption[];
+}) {
   if (documents.length === 0) {
     return <p className="p-6 text-sm text-muted-foreground">No documents on file yet.</p>;
   }
@@ -165,7 +221,7 @@ export function DocumentList({ matterId, documents }: { matterId: string; docume
       </TableHeader>
       <TableBody>
         {documents.map((document) => (
-          <DocumentRow key={document.id} matterId={matterId} document={document} />
+          <DocumentRow key={document.id} matterId={matterId} document={document} folders={folders} />
         ))}
       </TableBody>
     </Table>
