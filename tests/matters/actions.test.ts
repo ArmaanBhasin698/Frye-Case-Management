@@ -233,11 +233,28 @@ describe("createTask", () => {
     const result = await createTask({ error: null }, formData({ matterId, title: "Follow up" }));
     expect(result.error).toBeNull();
     expect(prismaMock.task.create).toHaveBeenCalledWith({
-      data: { matterId, title: "Follow up", description: undefined, dueDate: undefined, priority: "NORMAL" },
+      data: { matterId, title: "Follow up", description: undefined, dueDate: undefined, priority: "NORMAL", reminderOffsetsMinutes: [] },
     });
     expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({
       data: { actorId: user.id, action: "CREATE", entityType: "Task", entityId: "task-1", matterId },
     });
+  });
+
+  it("stores selected reminder offsets, sorted and de-duplicated", async () => {
+    prismaMock.task.create.mockResolvedValue({ id: "task-1" });
+    const fd = formData({ matterId, title: "Follow up", dueDate: "2026-11-02" });
+    fd.append("reminderOffsetsMinutes", "1440");
+    fd.append("reminderOffsetsMinutes", "60");
+    fd.append("reminderOffsetsMinutes", "1440");
+    expect((await createTask({ error: null }, fd)).error).toBeNull();
+    expect(prismaMock.task.create).toHaveBeenCalledWith({ data: expect.objectContaining({ reminderOffsetsMinutes: [60, 1440] }) });
+  });
+
+  it("rejects a reminder offset that isn't one of the offered options", async () => {
+    const fd = formData({ matterId, title: "Follow up" });
+    fd.append("reminderOffsetsMinutes", "7");
+    expect((await createTask({ error: null }, fd)).error).toBe("Invalid reminder selection.");
+    expect(prismaMock.task.create).not.toHaveBeenCalled();
   });
 
   it("returns a generic not-found instead of throwing when matterId is a forged/nonexistent id (e.g. an ADMIN whose hasMatterAccess bypasses the assignment check)", async () => {
@@ -294,6 +311,7 @@ describe("updateTask", () => {
         priority: true,
         status: true,
         assignedToId: true,
+        reminderOffsetsMinutes: true,
       },
     });
     expect(prismaMock.task.update).not.toHaveBeenCalled();
@@ -312,6 +330,7 @@ describe("updateTask", () => {
         priority: "HIGH",
         status: "IN_PROGRESS",
         assignedToId: null,
+        reminderOffsetsMinutes: [],
       },
     });
     expect(prismaMock.auditEvent.create).toHaveBeenCalledWith({

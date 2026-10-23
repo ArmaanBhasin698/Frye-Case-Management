@@ -110,6 +110,9 @@ export default async function ReportsPage({
           existing Task/Deadline/Document/Discovery/Call records, not a separate billing or case-outcome
           report.
         </p>
+        <Button variant="outline" size="sm" className="mt-2" asChild>
+          <Link href="/reports/saved">Saved reports &amp; CSV exports</Link>
+        </Button>
       </div>
 
       <div className="rounded-md border border-dashed border-border bg-muted/40 p-3 text-sm text-muted-foreground">

@@ -13,6 +13,7 @@ import { documentStore } from "@/lib/storage/DocumentStore";
 import { hashBuffer } from "@/lib/discovery/hash";
 import { diffFields } from "@/lib/utils";
 import { isAllowedDocumentFile } from "@/lib/documents/validation";
+import { scheduleIndexing } from "@/lib/documents/schedule";
 
 /**
  * Server Actions for general (non-discovery) Matter documents — upload and
@@ -101,22 +102,48 @@ export async function uploadDocument(
 
   await documentStore.save(storageKey, buffer);
 
+  const folderId = String(formData.get("folderId") ?? "").trim() || null;
+  if (folderId) {
+    const folder = await prisma.documentFolder.count({ where: { id: folderId, matterId } });
+    if (folder === 0) return { error: NOT_FOUND_ERROR };
+  }
+
   let document;
+  let versionId: string;
   try {
-    document = await prisma.document.create({
-      data: {
-        matterId,
-        category,
-        title,
-        storageKey,
-        originalFilename: file.name,
-        mimeType: file.type || null,
-        sizeBytes: buffer.byteLength,
-        contentHash,
-        uploadedById: user.id,
-        notes,
-      },
-    });
+    // The Document and its immutable version 1 are written together, and
+    // the Document points at that version as current.
+    ({ document, versionId } = await prisma.$transaction(async (tx) => {
+      const created = await tx.document.create({
+        data: {
+          matterId,
+          category,
+          title,
+          storageKey,
+          originalFilename: file.name,
+          mimeType: file.type || null,
+          sizeBytes: buffer.byteLength,
+          contentHash,
+          uploadedById: user.id,
+          notes,
+          folderId,
+        },
+      });
+      const version = await tx.documentVersion.create({
+        data: {
+          documentId: created.id,
+          version: 1,
+          storageKey,
+          originalFilename: file.name,
+          mimeType: file.type || null,
+          sizeBytes: buffer.byteLength,
+          contentHash,
+          uploadedById: user.id,
+        },
+      });
+      await tx.document.update({ where: { id: created.id }, data: { currentVersionId: version.id } });
+      return { document: created, versionId: version.id };
+    }));
   } catch (error) {
     // The file is now orphaned in the store with no DB row pointing to
     // it — DocumentStore has no delete method, so there's nothing to
@@ -141,9 +168,10 @@ export async function uploadDocument(
       // never end up holding it either. It's still preserved as DB
       // metadata (`Document.originalFilename`), gated by the same
       // matter-level authorization as the document itself.
-      metadata: { sizeBytes: buffer.byteLength, category },
+      metadata: { sizeBytes: buffer.byteLength, category, version: 1 },
     },
   });
+  scheduleIndexing(versionId);
 
   revalidatePath(`/matters/${matterId}/documents`);
   revalidatePath(`/matters/${matterId}`);

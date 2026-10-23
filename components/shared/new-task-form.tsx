@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { createTask } from "@/lib/matters/actions";
+import { TaskReminderOffsetsField } from "@/components/shared/task-reminder-offsets-field";
 
 export function NewTaskForm({ matterId }: { matterId: string }) {
   const [state, formAction, isPending] = useActionState(createTask, { error: null });
@@ -62,6 +63,8 @@ export function NewTaskForm({ matterId }: { matterId: string }) {
           </Select>
         </div>
       </div>
+
+      <TaskReminderOffsetsField idPrefix="task-reminder" />
 
       {state.error && (
         <p className="text-sm font-medium text-destructive" role="alert">

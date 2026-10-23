@@ -222,6 +222,31 @@ describe("sendMessage", () => {
     expect((await sendMessage({ error: null }, fd({ conversationId: "conv-1", body: "x".repeat(4_001) }))).error).toMatch(/too long/);
   });
 
+  it("rejects a reply whose parent is in another conversation (forged parent id)", async () => {
+    prismaMock.chatMessage.findUnique.mockResolvedValue({ conversationId: "conv-other", parentId: null });
+    expect((await sendMessage({ error: null }, fd({ conversationId: "conv-1", body: "hi", parentId: "msg-x" }))).error).toBe(NOT_FOUND);
+    expect(prismaMock.chatMessage.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a reply to a reply — threads are one level deep", async () => {
+    prismaMock.chatMessage.findUnique.mockResolvedValue({ conversationId: "conv-1", parentId: "top-1" });
+    expect((await sendMessage({ error: null }, fd({ conversationId: "conv-1", body: "hi", parentId: "reply-1" }))).error).toBe(NOT_FOUND);
+    expect(prismaMock.chatMessage.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a reply in a conversation the user can't read, even with a valid parent", async () => {
+    getReadableConversationMock.mockResolvedValue(null);
+    prismaMock.chatMessage.findUnique.mockResolvedValue({ conversationId: "conv-1", parentId: null });
+    expect((await sendMessage({ error: null }, fd({ conversationId: "conv-1", body: "hi", parentId: "top-1" }))).error).toBe(NOT_FOUND);
+    expect(prismaMock.chatMessage.create).not.toHaveBeenCalled();
+  });
+
+  it("accepts a reply to a top-level message of the same conversation (deleted parents allowed)", async () => {
+    prismaMock.chatMessage.findUnique.mockResolvedValue({ conversationId: "conv-1", parentId: null });
+    expect((await sendMessage({ error: null }, fd({ conversationId: "conv-1", body: "reply", parentId: "top-1" }))).error).toBeNull();
+    expect(prismaMock.chatMessage.create).toHaveBeenCalledWith({ data: expect.objectContaining({ parentId: "top-1" }) });
+  });
+
   it("persists the message, bumps the conversation, marks it read for the sender, and writes no audit body", async () => {
     expect((await sendMessage({ error: null }, fd({ conversationId: "conv-1", body: "  Privileged strategy note  " }))).error).toBeNull();
     expect(prismaMock.chatMessage.create).toHaveBeenCalledWith({

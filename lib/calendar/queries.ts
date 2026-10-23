@@ -4,6 +4,7 @@ import type {
   DeadlineType,
   MeetingProvider,
   Prisma,
+  TaskStatus,
 } from "@prisma/client";
 
 import { prisma } from "@/lib/db";
@@ -11,7 +12,14 @@ import { matterIdFilterFor, matterScopeFilterFor } from "@/lib/auth/access";
 import type { AuthorizableUser } from "@/lib/auth/authorization";
 import { contactVisibilityFilterFor } from "@/lib/contacts/visibility";
 import { eventVisibilityFilterFor } from "@/lib/calendar/access";
-import { expandOccurrences } from "@/lib/calendar/recurrence";
+import { detectMeetingProvider } from "@/lib/calendar/meeting-url";
+import {
+  MAX_OCCURRENCE_SHIFT_DAYS,
+  allReminderOffsets,
+  occurrenceKey,
+  reminderWindowOpen,
+  resolveOccurrences,
+} from "@/lib/calendar/occurrences";
 import { FIRM_TIME_ZONE, addDaysToKey, startOfDayUtc } from "@/lib/calendar/timezone";
 
 /**
@@ -19,16 +27,18 @@ import { FIRM_TIME_ZONE, addDaysToKey, startOfDayUtc } from "@/lib/calendar/time
  * (matter-linked → matter access; matterless → ADMIN/creator/attendee) and
  * Deadlines by the existing `matterScopeFilterFor`; nothing here returns
  * an unscoped row. Recurring events are expanded into per-occurrence items
- * (lib/calendar/recurrence.ts). Deadlines are date-only and shown as
- * all-day items on their stored calendar date.
+ * with their per-occurrence exceptions applied (lib/calendar/occurrences.ts).
+ * Deadlines are date-only and shown as all-day items on their stored
+ * calendar date. Tasks appear only as an optional read-only layer built
+ * from existing Task rows (never copied into CalendarEvent).
  */
 
 type MatterSummary = { id: string; caseNumber: string; client: { firstName: string; lastName: string } };
 
 export type CalendarItem = {
-  /** Unique per occurrence (event id + occurrence index, or deadline id). */
+  /** Unique per occurrence (event id + original start, or deadline/task id). */
   key: string;
-  kind: "event" | "deadline";
+  kind: "event" | "deadline" | "task";
   id: string;
   title: string;
   start: Date;
@@ -44,7 +54,14 @@ export type CalendarItem = {
   meetingUrl: string | null;
   meetingProvider: MeetingProvider | null;
   reminderMinutesBefore: number | null;
+  /** Every reminder offset in minutes (primary + additional), largest first. */
+  reminderOffsetsMinutes: number[];
   recurring: boolean;
+  /** For a recurring event: the occurrence's original (rule-generated) start — its stable identity. */
+  originalStart: Date | null;
+  /** This occurrence was individually edited. */
+  modified: boolean;
+  taskStatus: TaskStatus | null;
 };
 
 export type CalendarRangeFilters = {
@@ -57,45 +74,70 @@ export type CalendarRangeFilters = {
   staffId?: string;
   type?: CalendarEventType;
   includeCancelled?: boolean;
+  /** Include the read-only task due-date layer. */
+  includeTasks?: boolean;
 };
 
 const matterSummarySelect = {
   select: { id: true, caseNumber: true, client: { select: { firstName: true, lastName: true } } },
 } as const;
 
-/** Events whose (possibly recurring) span can intersect [start, end). */
+const SHIFT_MS = MAX_OCCURRENCE_SHIFT_DAYS * 86_400_000;
+
+/**
+ * Events whose (possibly recurring) span can intersect [start, end). A
+ * recurring series is widened by the maximum occurrence shift so an
+ * occurrence moved into the range by an exception is still found.
+ */
 function rangeCondition(start: Date, end: Date): Prisma.CalendarEventWhereInput {
+  const widenedStart = new Date(start.getTime() - SHIFT_MS);
+  const widenedEnd = new Date(end.getTime() + SHIFT_MS);
   return {
-    startTime: { lt: end },
     OR: [
-      { recurrenceFrequency: "NONE", OR: [{ endTime: { gte: start } }, { startTime: { gte: start } }] },
-      { recurrenceFrequency: { not: "NONE" }, OR: [{ recurrenceUntil: null }, { recurrenceUntil: { gte: start } }] },
+      { recurrenceFrequency: "NONE", startTime: { lt: end }, OR: [{ endTime: { gte: start } }, { startTime: { gte: start } }] },
+      {
+        recurrenceFrequency: { not: "NONE" },
+        startTime: { lt: widenedEnd },
+        OR: [{ recurrenceUntil: null }, { recurrenceUntil: { gte: widenedStart } }],
+      },
     ],
   };
 }
 
-type EventRow = Prisma.CalendarEventGetPayload<{ include: { matter: typeof matterSummarySelect } }>;
+const exceptionSelect = {
+  select: { originalStart: true, kind: true, startTime: true, endTime: true, title: true, location: true, meetingUrl: true },
+} as const;
 
-export function eventToItems(event: EventRow, start: Date, end: Date): CalendarItem[] {
-  return expandOccurrences(event, start, end).map((occurrence) => ({
-    key: `${event.id}:${occurrence.index}`,
+type EventRow = Prisma.CalendarEventGetPayload<{
+  include: { matter: typeof matterSummarySelect; exceptions: typeof exceptionSelect };
+}>;
+
+export function eventToItems(event: EventRow, start: Date, end: Date, options: { includeCancelled?: boolean } = {}): CalendarItem[] {
+  const recurring = event.recurrenceFrequency !== "NONE";
+  return resolveOccurrences(event, event.exceptions ?? [], start, end, options).map((occurrence) => ({
+    key: recurring ? occurrenceKey(event.id, occurrence.originalStart) : event.id,
     kind: "event" as const,
     id: event.id,
-    title: event.title,
+    title: occurrence.title ?? event.title,
     start: occurrence.start,
     end: occurrence.end,
     allDay: event.allDay,
     timeZone: event.timeZone,
     eventType: event.type,
     deadlineType: null,
-    status: event.status,
+    status: occurrence.cancelled ? "CANCELLED" : event.status,
     satisfied: null,
     matter: event.matter,
-    location: event.location,
-    meetingUrl: event.meetingUrl,
-    meetingProvider: event.meetingProvider,
+    // Blank occurrence overrides fall back to the series values.
+    location: occurrence.location ?? event.location,
+    meetingUrl: occurrence.meetingUrl ?? event.meetingUrl,
+    meetingProvider: occurrence.meetingUrl ? detectMeetingProvider(new URL(occurrence.meetingUrl)) : event.meetingProvider,
     reminderMinutesBefore: event.reminderMinutesBefore,
-    recurring: event.recurrenceFrequency !== "NONE",
+    reminderOffsetsMinutes: allReminderOffsets(event.reminderMinutesBefore, event.reminderOffsetsMinutes),
+    recurring,
+    originalStart: recurring ? occurrence.originalStart : null,
+    modified: occurrence.modified,
+    taskStatus: null,
   }));
 }
 
@@ -123,10 +165,10 @@ export async function getCalendarItems(user: AuthorizableUser, filters: Calendar
   ];
   if (filters.matterId) deadlineConditions.push({ matterId: filters.matterId });
 
-  const [events, deadlines] = await Promise.all([
+  const [events, deadlines, tasks] = await Promise.all([
     prisma.calendarEvent.findMany({
       where: { AND: conditions },
-      include: { matter: matterSummarySelect },
+      include: { matter: matterSummarySelect, exceptions: exceptionSelect },
       orderBy: { startTime: "asc" },
       take: 2_000,
     }),
@@ -137,9 +179,13 @@ export async function getCalendarItems(user: AuthorizableUser, filters: Calendar
           orderBy: { date: "asc" },
         })
       : Promise.resolve([]),
+    filters.includeTasks && !filters.type ? getTaskCalendarItems(user, filters) : Promise.resolve([]),
   ]);
 
-  const items: CalendarItem[] = events.flatMap((event) => eventToItems(event, filters.start, filters.end));
+  const items: CalendarItem[] = events.flatMap((event) =>
+    eventToItems(event, filters.start, filters.end, { includeCancelled: filters.includeCancelled }),
+  );
+  items.push(...tasks);
   for (const deadline of deadlines) {
     const key = deadline.date.toISOString().slice(0, 10);
     items.push({
@@ -160,7 +206,11 @@ export async function getCalendarItems(user: AuthorizableUser, filters: Calendar
       meetingUrl: null,
       meetingProvider: null,
       reminderMinutesBefore: null,
+      reminderOffsetsMinutes: [],
       recurring: false,
+      originalStart: null,
+      modified: false,
+      taskStatus: null,
     });
   }
   return items.sort((a, b) => a.start.getTime() - b.start.getTime() || Number(b.allDay) - Number(a.allDay));
@@ -182,7 +232,70 @@ export async function getEventDetail(user: AuthorizableUser, eventId: string) {
         include: { contact: { select: { id: true, displayName: true } } },
       },
       createdBy: { select: { name: true } },
+      exceptions: { orderBy: { originalStart: "asc" } },
     },
+  });
+}
+
+/**
+ * Read-only task layer: open/in-progress/done tasks with a due date in the
+ * range, from existing Task rows, scoped exactly like the firm Tasks page
+ * (`matterScopeFilterFor`, archived matters excluded). The staff filter
+ * means the task's assignee. Task due dates are stored as calendar dates
+ * (UTC midnight), so they render as all-day items on that date.
+ */
+export async function getTaskCalendarItems(
+  user: AuthorizableUser,
+  filters: Pick<CalendarRangeFilters, "firstDay" | "lastDay" | "matterId" | "staffId">,
+): Promise<CalendarItem[]> {
+  const conditions: Prisma.TaskWhereInput[] = [
+    await matterScopeFilterFor(user),
+    { matter: { archived: false } },
+    { status: { not: "CANCELLED" } },
+    {
+      dueDate: {
+        gte: new Date(`${filters.firstDay}T00:00:00.000Z`),
+        lt: new Date(`${addDaysToKey(filters.lastDay, 1)}T00:00:00.000Z`),
+      },
+    },
+  ];
+  if (filters.matterId) conditions.push({ matterId: filters.matterId });
+  if (filters.staffId) conditions.push({ assignedToId: filters.staffId });
+  const tasks = await prisma.task.findMany({
+    where: { AND: conditions },
+    select: { id: true, title: true, dueDate: true, status: true, matter: matterSummarySelect },
+    orderBy: { dueDate: "asc" },
+    take: 1_000,
+  });
+  return tasks.flatMap((task): CalendarItem[] => {
+    if (!task.dueDate) return [];
+    const key = task.dueDate.toISOString().slice(0, 10);
+    return [
+      {
+        key: `task:${task.id}`,
+        kind: "task",
+        id: task.id,
+        title: task.title,
+        start: startOfDayUtc(key, FIRM_TIME_ZONE),
+        end: startOfDayUtc(addDaysToKey(key, 1), FIRM_TIME_ZONE),
+        allDay: true,
+        timeZone: FIRM_TIME_ZONE,
+        eventType: null,
+        deadlineType: null,
+        status: null,
+        satisfied: null,
+        matter: task.matter,
+        location: null,
+        meetingUrl: null,
+        meetingProvider: null,
+        reminderMinutesBefore: null,
+        reminderOffsetsMinutes: [],
+        recurring: false,
+        originalStart: null,
+        modified: false,
+        taskStatus: task.status,
+      },
+    ];
   });
 }
 
@@ -199,15 +312,17 @@ const UPCOMING_WINDOW_DAYS = 14;
 
 /**
  * Next meetings for the dashboard plus reminders whose window has opened
- * (now ≥ start − reminderMinutesBefore, and the occurrence hasn't started).
- * In-app only — no email or push delivery exists.
+ * (now ≥ start − the largest of the event's reminder offsets, and the
+ * occurrence hasn't started). Cancelled occurrences never remind; moved
+ * occurrences remind relative to their new start. In-app only — no email
+ * or push delivery exists.
  */
 export async function getUpcomingMeetings(user: AuthorizableUser, limit = 5, now = new Date()) {
   const end = new Date(now.getTime() + UPCOMING_WINDOW_DAYS * 86_400_000);
   const visibility = await eventVisibilityFilterFor(user);
   const events = await prisma.calendarEvent.findMany({
     where: { AND: [visibility, rangeCondition(now, end), { status: { not: "CANCELLED" } }] },
-    include: { matter: matterSummarySelect },
+    include: { matter: matterSummarySelect, exceptions: exceptionSelect },
     orderBy: { startTime: "asc" },
     take: 500,
   });
@@ -215,10 +330,7 @@ export async function getUpcomingMeetings(user: AuthorizableUser, limit = 5, now
     .flatMap((event) => eventToItems(event, now, end))
     .filter((item) => item.start >= now)
     .sort((a, b) => a.start.getTime() - b.start.getTime());
-  const reminders = occurrences.filter(
-    (item) =>
-      item.reminderMinutesBefore !== null && item.start.getTime() - item.reminderMinutesBefore * 60_000 <= now.getTime(),
-  );
+  const reminders = occurrences.filter((item) => reminderWindowOpen(item.start, item.reminderOffsetsMinutes, now));
   return { meetings: occurrences.slice(0, limit), reminders };
 }
 

@@ -6,6 +6,7 @@ import { getMatterForEdit, listAssignableUsers } from "@/lib/matters/queries";
 import { matterTitle } from "@/lib/matters/format";
 import { EditMatterForm } from "@/components/shared/edit-matter-form";
 import { ManageAssignments } from "@/components/shared/manage-assignments";
+import { CustomFieldsCard } from "@/components/shared/custom-fields/custom-fields-card";
 
 export default async function EditMatterPage({
   params,
@@ -33,6 +34,7 @@ export default async function EditMatterPage({
       </div>
       <EditMatterForm matter={matter} />
       <ManageAssignments matterId={matterId} assignments={matter.assignments} staff={staff} />
+      <CustomFieldsCard entity="MATTER" ownerId={matterId} canEdit />
     </div>
   );
 }

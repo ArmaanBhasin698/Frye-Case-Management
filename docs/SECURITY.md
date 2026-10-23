@@ -802,6 +802,35 @@ this pass.
   network call and always reports not connected; no credentials are
   stored; privileged messages are never synced.
 
+- **MyCase parity pass.** Every new module reuses the existing scope
+  helpers and returns the generic denial/404 for forged or inaccessible
+  ids; audit metadata holds ids, enum values, versions, counts, and
+  changed-field names only — never custom values, search queries,
+  document text, template bodies, message bodies, or expense descriptions.
+  - Workflows: templates ADMIN-only; applying needs ADMIN or an assigned
+    ATTORNEY/PARALEGAL; assignees must be active and have matter access;
+    server recomputes the preview on confirm; one transaction.
+  - Stages: `canEditMatter`; writes only `stageId`.
+  - Custom fields: definitions ADMIN-only; values follow the owning
+    record's edit rule (matter `canEditMatter`, contact visibility,
+    client ADMIN/ATTORNEY).
+  - Global search / saved reports / CSV: each type's scope is part of the
+    database query before count/paging/snippet; forged matter filters
+    return nothing; saved reports re-scope to the running user; USAGE
+    reports ADMIN-only; CSV neutralizes spreadsheet formulas.
+  - Documents: per-version downloads re-check matter + document +
+    version; earlier bytes are never overwritten; content search is
+    parameterized SQL with the matter scope inside it; extraction is local
+    (`unpdf`, `mammoth`) — no OCR, no external service.
+  - Notifications: recipients must have access when planned and again
+    when listed, counted, or opened; the scheduler runs only from the
+    bearer-secret cron route (fails closed) or a dev CLI.
+  - Expenses: amounts visible to ADMIN and ATTORNEYs assigned to the
+    matter only, omitted server-side for everyone else (rows, totals,
+    CSV); receipts must belong to the same matter.
+  - Chat threads: one level, same-conversation parent, full membership +
+    matter re-check on every poll.
+
 ## Audit logging
 
 - Every create/update/delete on Client, Matter, Note, Task, Deadline,

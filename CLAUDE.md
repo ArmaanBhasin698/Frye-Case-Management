@@ -130,6 +130,15 @@ One Next.js App Router application serves both UI and backend:
   (≤ 5), unread state, search, polling refresh (`lib/chat/`).
 - **Slack** — disconnected scaffolding only (`lib/integrations/slack/`,
   `/admin/integrations`).
+- **MyCase parity pass** (status per capability in
+  `docs/MYCASE_PARITY_CHECKLIST.md`) — versioned workflow templates applied
+  to matters (`lib/workflows/`), case stages + custom fields
+  (`lib/stages/`, `lib/custom-fields/`), global search + saved reports + CSV
+  export (`lib/search/`, `lib/reports/saved*.ts`, `lib/csv/`), document
+  folders/versions/templates/content index (`lib/documents/`), in-app
+  notification inbox + reminder scheduler (`lib/notifications/`), calendar
+  occurrence exceptions, chat reply threads, and matter expenses
+  (`lib/expenses/`, amounts ADMIN + assigned attorneys only).
 
 ### Integration status
 
@@ -298,6 +307,9 @@ short:
 - `docs/SECURITY_MONITORING_ASSESSMENT.md` — record of the local,
   fictional-data exercise that added suspicious-login detection and admin
   incident triage.
+- `docs/MYCASE_PARITY_CHECKLIST.md` — evidence-based MyCase parity status,
+  including gated/deferred items; `docs/MYCASE_PARITY_SCHEMA_PROPOSAL.md`
+  is the approved schema/dependency record.
 - `docs/FIRM_OPERATIONS_EXPANSION.md` — architecture, confidentiality
   model, and phased delivery plan for the contacts / professional history /
   matter closure / calendar / time tracking / usage reporting / team chat /

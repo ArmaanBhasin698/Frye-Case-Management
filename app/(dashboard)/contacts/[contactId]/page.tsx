@@ -3,8 +3,9 @@ import { notFound } from "next/navigation";
 import { format } from "date-fns";
 
 import { prisma } from "@/lib/db";
+import { CustomFieldsCard } from "@/components/shared/custom-fields/custom-fields-card";
 import { getContactMeetingHistory } from "@/lib/calendar/queries";
-import { formatInZone } from "@/lib/calendar/timezone";
+import { formatInZone, DATE_TIME_WITH_ZONE } from "@/lib/calendar/timezone";
 import { requireCurrentUser } from "@/lib/auth/session";
 import { canManageClientsAndMatters } from "@/lib/auth/authorization";
 import { getContactDetail, listAccessibleMatterOptions, listContactOptions } from "@/lib/contacts/queries";
@@ -28,6 +29,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArchiveContactButton } from "@/components/shared/archive-contact-button";
+import { ScheduleWithContactLink } from "@/components/shared/calendar/schedule-with-contact-link";
 import { ContactRelationshipForm, DeleteRelationshipButton } from "@/components/shared/contact-relationship-form";
 import { CompleteFollowUpButton, ContactInteractionForm } from "@/components/shared/contact-interaction-form";
 import {
@@ -228,6 +230,9 @@ export default async function ContactDetailPage({
         </Card>
       )}
 
+      {/* The contact passed visibility above; editing custom values follows the same rule as updateContact. */}
+      <CustomFieldsCard entity="CONTACT" ownerId={contact.id} canEdit />
+
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
           <CardTitle>Associated with</CardTitle>
@@ -278,9 +283,7 @@ export default async function ContactDetailPage({
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
           <CardTitle>Meetings &amp; appointments</CardTitle>
-          <Button variant="outline" size="sm" asChild>
-            <Link href="/calendar/events/new">Schedule meeting</Link>
-          </Button>
+          {!contact.archived && <ScheduleWithContactLink contactId={contact.id} />}
         </CardHeader>
         <CardContent>
           {meetings.length === 0 ? (
@@ -297,7 +300,7 @@ export default async function ContactDetailPage({
                       {formatInZone(
                         m.startTime,
                         m.timeZone,
-                        m.allDay ? { dateStyle: "medium" } : { dateStyle: "medium", timeStyle: "short", timeZoneName: "short" },
+                        m.allDay ? { dateStyle: "medium" } : DATE_TIME_WITH_ZONE,
                       )}
                       {m.matter ? ` · ${m.matter.caseNumber}` : " · Internal"}
                     </p>

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { ChatMessageBody } from "@/components/shared/chat-message-body";
+import { ChatThreadPanel } from "@/components/shared/chat-thread-panel";
 import { deleteMessage, editMessage, markConversationRead, sendMessage, type ChatFormState } from "@/lib/chat/actions";
 import { MESSAGE_MAX_LENGTH } from "@/lib/chat/rules";
 import type { MessageView } from "@/lib/chat/queries";
@@ -28,6 +29,10 @@ function mergeMessages(current: MessageView[], incoming: MessageView[]): Message
  * dependency); a 404 there means access was revoked, so the view stops
  * polling and says so. The latest page is merged by id, which also picks
  * up edits and deletions.
+ *
+ * Replies live in threads, not in this timeline: each top-level message
+ * shows its reply count (and unread replies), and "Reply" / "N replies"
+ * opens ChatThreadPanel beside it.
  */
 export function ChatConversationView({
   conversationId,
@@ -36,6 +41,7 @@ export function ChatConversationView({
   isAdmin,
   isChannel,
   references,
+  initialThreadId,
 }: {
   conversationId: string;
   initialMessages: MessageView[];
@@ -44,6 +50,8 @@ export function ChatConversationView({
   isChannel: boolean;
   /** Matter channels only: the matter id and its documents, for optional references. */
   references?: { matterId: string; documents: { id: string; title: string }[] };
+  /** Opens this thread on load (e.g. from a search result that is a reply). */
+  initialThreadId?: string;
 }) {
   const router = useRouter();
   const [messages, setMessages] = React.useState(initialMessages);
@@ -52,6 +60,7 @@ export function ChatConversationView({
   const [editing, setEditing] = React.useState<{ id: string; body: string } | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [sendError, setSendError] = React.useState<string | null>(null);
+  const [openThread, setOpenThread] = React.useState<string | null>(initialThreadId ?? null);
   const bottomRef = React.useRef<HTMLDivElement>(null);
   const lastSeenRef = React.useRef<string | null>(initialMessages.at(-1)?.id ?? null);
 
@@ -132,6 +141,7 @@ export function ChatConversationView({
   }
 
   return (
+    <div className={openThread ? "grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]" : ""}>
     <div className="flex flex-col gap-3">
       <div className="max-h-[60vh] min-h-[300px] space-y-3 overflow-y-auto rounded-lg border border-border bg-card p-4">
         {hasOlder && (
@@ -183,6 +193,19 @@ export function ChatConversationView({
             ) : (
               <ChatMessageBody message={m} />
             )}
+            <div className="mt-1 flex items-center gap-2 text-xs">
+              {!m.deleted && (
+                <button type="button" className="text-muted-foreground hover:text-foreground" onClick={() => setOpenThread(m.id)}>
+                  Reply
+                </button>
+              )}
+              {m.replyCount > 0 && (
+                <button type="button" className="font-medium text-primary hover:underline" onClick={() => setOpenThread(m.id)}>
+                  {m.replyCount} {m.replyCount === 1 ? "reply" : "replies"}
+                  {m.unreadReplies > 0 ? ` · ${m.unreadReplies} new` : ""}
+                </button>
+              )}
+            </div>
           </div>
         ))}
         <div ref={bottomRef} />
@@ -225,6 +248,16 @@ export function ChatConversationView({
           <SendButton />
         </div>
       </form>
+    </div>
+    {openThread && (
+      <ChatThreadPanel
+        key={openThread}
+        conversationId={conversationId}
+        parentId={openThread}
+        onClose={() => setOpenThread(null)}
+        onChanged={() => void refresh()}
+      />
+    )}
     </div>
   );
 }

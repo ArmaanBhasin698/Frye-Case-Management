@@ -6,9 +6,19 @@ import { usePathname } from "next/navigation";
 
 import { ActivityHeartbeat } from "@/components/shared/activity-heartbeat";
 import { TimerIndicator } from "@/components/shared/timer-indicator";
+import { GlobalSearchBox } from "@/components/shared/global-search-box";
+import { NotificationBell } from "@/components/shared/notification-bell";
 import {
   Activity,
   BarChart3,
+  Bell,
+  FileText,
+  FolderTree,
+  ListChecks,
+  Milestone,
+  Receipt,
+  Search,
+  SlidersHorizontal,
   CalendarDays,
   CheckSquare,
   Contact,
@@ -86,10 +96,13 @@ function navItemsFor(role: string): NavItem[] {
     { href: "/tasks", label: "Tasks", icon: CheckSquare },
     { href: "/calendar", label: "Calendar", icon: CalendarDays },
     { href: "/time", label: "Time", icon: Timer },
+    { href: "/expenses", label: "Expenses", icon: Receipt },
     { href: "/chat", label: "Team Chat", icon: MessagesSquare },
     { href: "/discovery", label: "Discovery", icon: FileSearch },
     { href: "/communications", label: "Communications", icon: Phone },
     { href: "/reports", label: "Reports", icon: BarChart3 },
+    { href: "/search", label: "Search", icon: Search },
+    { href: "/notifications", label: "Notifications", icon: Bell },
   ];
   // Fully hidden (not just disabled) for non-admins — unlike Clients above,
   // there's no reason to advertise an admin-only page's existence to roles
@@ -100,6 +113,11 @@ function navItemsFor(role: string): NavItem[] {
     items.push({ href: "/admin/security", label: "Security", icon: ShieldAlert });
     items.push({ href: "/admin/usage", label: "Usage & Reports", icon: Activity });
     items.push({ href: "/admin/integrations", label: "Integrations", icon: Plug });
+    items.push({ href: "/admin/workflows", label: "Workflows", icon: ListChecks });
+    items.push({ href: "/admin/stages", label: "Case Stages", icon: Milestone });
+    items.push({ href: "/admin/custom-fields", label: "Custom Fields", icon: SlidersHorizontal });
+    items.push({ href: "/admin/folder-sets", label: "Folder Sets", icon: FolderTree });
+    items.push({ href: "/admin/document-templates", label: "Document Templates", icon: FileText });
   }
   return items;
 }
@@ -216,7 +234,9 @@ export function AppShell({
           </div>
 
           <div className="flex items-center gap-3">
+            <GlobalSearchBox />
             <TimerIndicator />
+            <NotificationBell />
             <Link
               href="/account/security"
               className="flex items-center gap-3 rounded-md px-1 py-1 hover:bg-accent"

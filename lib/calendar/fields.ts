@@ -56,6 +56,25 @@ export const REMINDER_OPTIONS = [
   { value: "10080", label: "1 week before" },
 ] as const;
 
+/** Offsets offered as additional reminders (minutes), in addition to the primary one. */
+export const ADDITIONAL_REMINDER_OPTIONS = [
+  { value: 15, label: "15 minutes before" },
+  { value: 60, label: "1 hour before" },
+  { value: 120, label: "2 hours before" },
+  { value: 1440, label: "1 day before" },
+  { value: 2880, label: "2 days before" },
+  { value: 10080, label: "1 week before" },
+] as const;
+const ALLOWED_ADDITIONAL_OFFSETS: ReadonlySet<number> = new Set(ADDITIONAL_REMINDER_OPTIONS.map((o) => o.value));
+
+export function reminderOffsetLabel(minutes: number): string {
+  return (
+    ADDITIONAL_REMINDER_OPTIONS.find((o) => o.value === minutes)?.label ??
+    REMINDER_OPTIONS.find((o) => o.value === String(minutes))?.label ??
+    `${minutes} minutes before`
+  );
+}
+
 const optionalText = (max: number, label: string) =>
   z
     .string()
@@ -95,6 +114,10 @@ const eventFormSchema = z.object({
     .optional()
     .transform((v) => (v ? Number(v) : undefined))
     .refine((v) => v === undefined || (Number.isInteger(v) && v >= 1 && v <= 500), "Repeat count must be 1–500."),
+  reminderOffsetsMinutes: z
+    .array(z.coerce.number().int())
+    .max(ADDITIONAL_REMINDER_OPTIONS.length)
+    .refine((values) => values.every((v) => ALLOWED_ADDITIONAL_OFFSETS.has(v)), "Invalid additional reminder."),
   attendeeIds: z.array(z.string().trim().min(1).max(100)).max(50),
   contactIds: z.array(z.string().trim().min(1).max(100)).max(50),
 });
@@ -113,6 +136,8 @@ export type ParsedEventForm = {
   meetingUrl: string | null;
   meetingProvider: MeetingProvider | null;
   reminderMinutesBefore: number | null;
+  /** Additional offsets only — the primary `reminderMinutesBefore` is never duplicated here. */
+  reminderOffsetsMinutes: number[];
   recurrenceFrequency: RecurrenceFrequency;
   recurrenceInterval: number;
   recurrenceUntil: Date | null;
@@ -139,6 +164,7 @@ export function readEventForm(formData: FormData): { ok: true; data: ParsedEvent
     description: get("description"),
     meetingUrl: get("meetingUrl"),
     reminderMinutesBefore: get("reminderMinutesBefore"),
+    reminderOffsetsMinutes: [...new Set(formData.getAll("reminderOffsetsMinutes").map(String))],
     recurrenceFrequency: get("recurrenceFrequency") || undefined,
     recurrenceInterval: get("recurrenceInterval") || undefined,
     recurrenceUntil: get("recurrenceUntil"),
@@ -203,6 +229,9 @@ export function readEventForm(formData: FormData): { ok: true; data: ParsedEvent
       meetingUrl,
       meetingProvider,
       reminderMinutesBefore: d.reminderMinutesBefore ?? null,
+      reminderOffsetsMinutes: [...new Set(d.reminderOffsetsMinutes)]
+        .filter((v) => v !== (d.reminderMinutesBefore ?? null))
+        .sort((a, b) => a - b),
       recurrenceFrequency: d.recurrenceFrequency,
       recurrenceInterval: recurring ? d.recurrenceInterval : 1,
       recurrenceUntil,
@@ -210,5 +239,84 @@ export function readEventForm(formData: FormData): { ok: true; data: ParsedEvent
       attendeeIds: d.attendeeIds,
       contactIds: d.contactIds,
     },
+  };
+}
+
+export type ParsedOccurrenceForm = {
+  startTime: Date;
+  endTime: Date | null;
+  title: string | null;
+  location: string | null;
+  meetingUrl: string | null;
+};
+
+const occurrenceFormSchema = z.object({
+  start: z.string().min(1, "Start is required."),
+  end: z.string().optional(),
+  title: optionalText(200, "Title"),
+  location: optionalText(300, "Location"),
+  meetingUrl: optionalText(2_100, "Meeting link"),
+});
+
+/**
+ * Parses an edit to ONE occurrence of a recurring event. Times are wall
+ * times in the series' own zone (all-day series take dates). The moved
+ * occurrence must stay within `maxShiftDays` of its original start — that
+ * bound is what lets calendar views find moved occurrences.
+ */
+export function readOccurrenceForm(
+  formData: FormData,
+  series: { allDay: boolean; timeZone: string },
+  originalStart: Date,
+  maxShiftDays: number,
+): { ok: true; data: ParsedOccurrenceForm } | { ok: false; error: string } {
+  const get = (key: string) => {
+    const value = formData.get(key);
+    return value === null ? undefined : String(value);
+  };
+  const parsed = occurrenceFormSchema.safeParse({
+    start: get("start") ?? "",
+    end: get("end"),
+    title: get("title"),
+    location: get("location"),
+    meetingUrl: get("meetingUrl"),
+  });
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  const d = parsed.data;
+
+  let startTime: Date | null;
+  let endTime: Date | null = null;
+  if (series.allDay) {
+    const first = parseDateKey(d.start.slice(0, 10)) ? d.start.slice(0, 10) : null;
+    const last = d.end ? (parseDateKey(d.end.slice(0, 10)) ? d.end.slice(0, 10) : null) : first;
+    if (!first || !last) return { ok: false, error: "Enter valid dates." };
+    if (last < first) return { ok: false, error: "End date must be on or after the start date." };
+    startTime = startOfDayUtc(first, series.timeZone);
+    endTime = startOfDayUtc(addDaysToKey(last, 1), series.timeZone);
+  } else {
+    startTime = fromDateTimeLocalInZone(d.start, series.timeZone);
+    if (!startTime) return { ok: false, error: "Enter a valid start date and time." };
+    if (d.end) {
+      endTime = fromDateTimeLocalInZone(d.end, series.timeZone);
+      if (!endTime) return { ok: false, error: "Enter a valid end date and time." };
+      if (endTime <= startTime) return { ok: false, error: "End time must be after start time." };
+    }
+  }
+  if (Math.abs(startTime.getTime() - originalStart.getTime()) > maxShiftDays * 86_400_000) {
+    return { ok: false, error: `An occurrence can move at most ${maxShiftDays} days — edit the series instead.` };
+  }
+  if (endTime && endTime.getTime() - startTime.getTime() > MAX_EVENT_DAYS * 86_400_000) {
+    return { ok: false, error: "A single occurrence can't span more than 31 days." };
+  }
+
+  let meetingUrl: string | null = null;
+  if (d.meetingUrl) {
+    const result = validateMeetingUrl(d.meetingUrl);
+    if (!result.ok) return { ok: false, error: result.error };
+    meetingUrl = result.url;
+  }
+  return {
+    ok: true,
+    data: { startTime, endTime, title: d.title ?? null, location: d.location ?? null, meetingUrl },
   };
 }

@@ -17,6 +17,7 @@ export type EventFormInitial = {
   description: string;
   meetingUrl: string;
   reminderMinutesBefore: string;
+  reminderOffsetsMinutes: number[];
   recurrenceFrequency: RecurrenceFrequency;
   recurrenceInterval: string;
   recurrenceUntil: string;
@@ -25,8 +26,8 @@ export type EventFormInitial = {
   contactIds: string[];
 };
 
-/** Blank form for a new event, optionally pre-linked to a matter and a day. */
-export function newEventInitial(options: { matterId?: string; date?: string }): EventFormInitial {
+/** Blank form for a new event, optionally pre-linked to a matter, a contact, and a day. */
+export function newEventInitial(options: { matterId?: string; date?: string; contactId?: string }): EventFormInitial {
   const date = options.date && parseDateKey(options.date) ? options.date : dateKeyInZone(new Date(), FIRM_TIME_ZONE);
   return {
     title: "",
@@ -41,12 +42,13 @@ export function newEventInitial(options: { matterId?: string; date?: string }): 
     description: "",
     meetingUrl: "",
     reminderMinutesBefore: "",
+    reminderOffsetsMinutes: [],
     recurrenceFrequency: "NONE",
     recurrenceInterval: "1",
     recurrenceUntil: "",
     recurrenceCount: "",
     attendeeIds: [],
-    contactIds: [],
+    contactIds: options.contactId ? [options.contactId] : [],
   };
 }
 
@@ -70,6 +72,7 @@ export function eventToFormInitial(
     description: event.description ?? "",
     meetingUrl: event.meetingUrl ?? "",
     reminderMinutesBefore: event.reminderMinutesBefore?.toString() ?? "",
+    reminderOffsetsMinutes: event.reminderOffsetsMinutes ?? [],
     recurrenceFrequency: event.recurrenceFrequency,
     recurrenceInterval: String(event.recurrenceInterval),
     recurrenceUntil: event.recurrenceUntil ? addDaysToKey(dateKeyInZone(event.recurrenceUntil, tz), -1) : "",

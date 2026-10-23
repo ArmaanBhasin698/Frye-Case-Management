@@ -8,9 +8,14 @@ const { requireCurrentUserMock, hasMatterAccessMock, prismaMock, revalidatePathM
     documentStoreMock: { save: vi.fn(), read: vi.fn() },
     prismaMock: {
       document: { create: vi.fn(), update: vi.fn(), findFirst: vi.fn() },
+      documentVersion: { create: vi.fn() },
+      documentFolder: { count: vi.fn() },
       auditEvent: { create: vi.fn() },
+      $transaction: vi.fn(),
     },
   }));
+const { scheduleIndexingMock } = vi.hoisted(() => ({ scheduleIndexingMock: vi.fn() }));
+vi.mock("@/lib/documents/schedule", () => ({ scheduleIndexing: scheduleIndexingMock }));
 
 vi.mock("next/cache", () => ({ revalidatePath: revalidatePathMock }));
 vi.mock("@/lib/auth/session", () => ({ requireCurrentUser: requireCurrentUserMock }));
@@ -40,6 +45,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   requireCurrentUserMock.mockResolvedValue(user);
   hasMatterAccessMock.mockResolvedValue(true);
+  prismaMock.$transaction.mockImplementation((cb: (tx: unknown) => unknown) => cb(prismaMock));
+  prismaMock.documentVersion.create.mockResolvedValue({ id: "ver-1" });
 });
 
 describe("isAllowedDocumentFile", () => {
@@ -165,9 +172,17 @@ describe("uploadDocument", () => {
         entityType: "Document",
         entityId: "doc-1",
         matterId,
-        metadata: { sizeBytes: validFile.content.length, category: "PLEADING" },
+        metadata: { sizeBytes: validFile.content.length, category: "PLEADING", version: 1 },
       },
     });
+    // The upload records an immutable version 1 with the same bytes/key,
+    // points the Document at it, and schedules indexing after commit.
+    const created = prismaMock.document.create.mock.calls[0]![0].data;
+    expect(prismaMock.documentVersion.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ documentId: "doc-1", version: 1, storageKey: created.storageKey, contentHash: created.contentHash }),
+    });
+    expect(prismaMock.document.update).toHaveBeenCalledWith({ where: { id: "doc-1" }, data: { currentVersionId: "ver-1" } });
+    expect(scheduleIndexingMock).toHaveBeenCalledWith("ver-1");
     expect(prismaMock.auditEvent.create).not.toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({

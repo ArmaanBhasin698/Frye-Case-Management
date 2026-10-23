@@ -52,8 +52,9 @@ export const config = {
   // shared-secret check instead (see lib/intake/webhookAuth.ts).
   // `api/cron/highlevel-sync` is excluded for the identical reason: a
   // deployment scheduler has no session cookie, and that route enforces
-  // its own HIGHLEVEL_SYNC_CRON_SECRET check.
+  // its own HIGHLEVEL_SYNC_CRON_SECRET check. `api/cron/notifications` is
+  // excluded for the same reason and enforces NOTIFICATIONS_CRON_SECRET.
   matcher: [
-    "/((?!api/auth|api/health|api/intake/highlevel|api/cron/highlevel-sync|_next/static|_next/image|favicon.ico|brand).*)",
+    "/((?!api/auth|api/health|api/intake/highlevel|api/cron/highlevel-sync|api/cron/notifications|_next/static|_next/image|favicon.ico|brand).*)",
   ],
 };
