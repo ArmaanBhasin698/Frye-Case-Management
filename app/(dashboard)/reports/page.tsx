@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { format } from "date-fns";
+import { format, subDays } from "date-fns";
 import {
   AlertTriangle,
   CalendarClock,
@@ -23,6 +23,11 @@ import {
   taskStatusLabel,
 } from "@/lib/matters/format";
 import { requireCurrentUser } from "@/lib/auth/session";
+import { isAdmin } from "@/lib/auth/authorization";
+import { prisma } from "@/lib/db";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -81,7 +86,15 @@ export default async function ReportsPage({
 
   const filters: ReportFilters = { matterId: matterId || undefined, window };
 
-  const [summary, matters] = await Promise.all([getFirmReportSummary(user, filters), listMatters(user)]);
+  const [summary, matters, staff] = await Promise.all([
+    getFirmReportSummary(user, filters),
+    listMatters(user),
+    isAdmin(user)
+      ? prisma.user.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } })
+      : Promise.resolve([]),
+  ]);
+  const pdfTo = format(new Date(), "yyyy-MM-dd");
+  const pdfFrom = format(subDays(new Date(), 30), "yyyy-MM-dd");
 
   const currentFilters: ReportsFilterValues = { matterId, window };
   const matterOptions = matters.map((m) => ({ id: m.id, label: `${matterTitle(m)} · ${m.caseNumber}` }));
@@ -100,10 +113,54 @@ export default async function ReportsPage({
       </div>
 
       <div className="rounded-md border border-dashed border-border bg-muted/40 p-3 text-sm text-muted-foreground">
-        These figures reflect only what&apos;s recorded in this system today — no billing, settlement,
-        win/loss, or time-entry data exists yet (see docs/DATA_MODEL.md). Dates use the server&apos;s local
-        time zone; no separate time zone handling is applied.
+        These figures reflect only what&apos;s recorded in this system today — no billing, settlement, or
+        win/loss data. Recorded work time lives on each matter&apos;s Time &amp; Activity tab and in the PDF
+        reports below. Dates use the server&apos;s local time zone; no separate time zone handling is applied.
       </div>
+
+      {isAdmin(user) && (
+        <Card>
+          <CardHeader>
+            <CardTitle>PDF reports (admin)</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-6 md:grid-cols-2">
+            <form method="get" action="/reports/pdf/firm-utilization" className="space-y-2">
+              <p className="text-sm font-medium">Firm utilization</p>
+              <p className="text-xs text-muted-foreground">Recorded hours by employee and matter, billable vs. nonbillable.</p>
+              <div className="flex flex-wrap items-end gap-2">
+                <Input name="from" type="date" aria-label="From" defaultValue={pdfFrom} className="w-40" />
+                <Input name="to" type="date" aria-label="To" defaultValue={pdfTo} className="w-40" />
+                <Button type="submit" size="sm">
+                  Download PDF
+                </Button>
+              </div>
+            </form>
+            <form method="get" action="/reports/pdf/employee-activity" className="space-y-2">
+              <p className="text-sm font-medium">Employee activity</p>
+              <p className="text-xs text-muted-foreground">
+                Sessions, significant actions, estimated active app time, and recorded work time.
+              </p>
+              <div className="flex flex-wrap items-end gap-2">
+                <Select name="userId" aria-label="Employee" required className="w-48" defaultValue="">
+                  <option value="" disabled>
+                    Employee…
+                  </option>
+                  {staff.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </Select>
+                <Input name="from" type="date" aria-label="From" defaultValue={pdfFrom} className="w-40" />
+                <Input name="to" type="date" aria-label="To" defaultValue={pdfTo} className="w-40" />
+                <Button type="submit" size="sm">
+                  Download PDF
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+      )}
 
       <ReportsFilterBar basePath="/reports" current={currentFilters} matters={matterOptions} />
 
