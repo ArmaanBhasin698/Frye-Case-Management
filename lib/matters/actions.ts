@@ -18,6 +18,7 @@ import { canEditMatter, canManageMatterTeam, hasMatterAccess } from "@/lib/auth/
 import { requireCurrentUser } from "@/lib/auth/session";
 import { canManageClientsAndMatters } from "@/lib/auth/authorization";
 import { diffFields } from "@/lib/utils";
+import { readTaskReminderOffsets } from "@/lib/notifications/labels";
 import { isContactOnMatter } from "@/lib/contacts/queries";
 
 /**
@@ -250,6 +251,10 @@ export async function createTask(
     return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
   }
   const { matterId, title, description, dueDate, priority } = parsed.data;
+  const reminderOffsetsMinutes = readTaskReminderOffsets(formData.getAll("reminderOffsetsMinutes"));
+  if (!reminderOffsetsMinutes) {
+    return { error: "Invalid reminder selection." };
+  }
 
   if (!(await hasMatterAccess(user, matterId))) {
     return { error: NOT_FOUND.error };
@@ -264,6 +269,7 @@ export async function createTask(
         description,
         dueDate: dueDate ? new Date(dueDate) : undefined,
         priority,
+        reminderOffsetsMinutes,
       },
     });
   } catch (error) {
@@ -340,6 +346,10 @@ export async function updateTask(
     return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
   }
   const { matterId, taskId, title, description, dueDate, priority, status, assignedToId } = parsed.data;
+  const reminderOffsetsMinutes = readTaskReminderOffsets(formData.getAll("reminderOffsetsMinutes"));
+  if (!reminderOffsetsMinutes) {
+    return { error: "Invalid reminder selection." };
+  }
 
   if (!(await hasMatterAccess(user, matterId))) {
     return { error: NOT_FOUND.error };
@@ -357,6 +367,7 @@ export async function updateTask(
       priority: true,
       status: true,
       assignedToId: true,
+      reminderOffsetsMinutes: true,
     },
   });
   if (!before) {
@@ -397,6 +408,7 @@ export async function updateTask(
       priority,
       status,
       assignedToId: nextAssignedToId,
+      reminderOffsetsMinutes,
     },
   });
 
@@ -405,6 +417,7 @@ export async function updateTask(
   // changed, never the content, same treatment `Note.body`/`Client.notes`/
   // `Document.notes` already get (see docs/SECURITY.md).
   const descriptionChanged = before.description !== nextDescription;
+  const remindersChanged = (before.reminderOffsetsMinutes ?? []).join() !== reminderOffsetsMinutes.join();
   const changed = diffFields(
     {
       title: before.title,
@@ -416,7 +429,7 @@ export async function updateTask(
     { title, dueDate: nextDueDate, priority, status, assignedToId: nextAssignedToId },
   );
 
-  if (descriptionChanged || Object.keys(changed).length > 0) {
+  if (descriptionChanged || remindersChanged || Object.keys(changed).length > 0) {
     await prisma.auditEvent.create({
       data: {
         actorId: user.id,
@@ -427,6 +440,7 @@ export async function updateTask(
         metadata: {
           ...(Object.keys(changed).length > 0 ? { changed } : {}),
           ...(descriptionChanged ? { descriptionChanged: true } : {}),
+          ...(remindersChanged ? { reminderOffsetsMinutes } : {}),
         },
       },
     });
