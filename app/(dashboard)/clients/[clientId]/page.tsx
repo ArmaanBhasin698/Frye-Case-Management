@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArchiveClientButton } from "@/components/shared/archive-client-button";
+import { CustomFieldsCard } from "@/components/shared/custom-fields/custom-fields-card";
 
 export default async function ClientDetailPage({
   params,
@@ -109,6 +110,7 @@ export default async function ClientDetailPage({
           </CardContent>
         </Card>
       </div>
+      <CustomFieldsCard entity="CLIENT" ownerId={client.id} canEdit />
     </div>
   );
 }

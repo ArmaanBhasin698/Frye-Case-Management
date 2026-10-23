@@ -4,6 +4,7 @@ import { requireCurrentUser } from "@/lib/auth/session";
 import { getContactForEdit } from "@/lib/contacts/queries";
 import { contactToFormInitial, getContactFormOptions } from "@/lib/contacts/form-options";
 import { ContactForm } from "@/components/shared/contact-form";
+import { CustomFieldsCard } from "@/components/shared/custom-fields/custom-fields-card";
 
 export default async function EditContactPage({ params }: { params: Promise<{ contactId: string }> }) {
   const { contactId } = await params;
@@ -23,6 +24,7 @@ export default async function EditContactPage({ params }: { params: Promise<{ co
         clientLinked={Boolean(contact.clientId)}
         cancelHref={`/contacts/${contact.id}`}
       />
+      <CustomFieldsCard entity="CONTACT" ownerId={contact.id} canEdit />
     </div>
   );
 }

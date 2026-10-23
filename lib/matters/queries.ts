@@ -1,3 +1,5 @@
+import type { Prisma } from "@prisma/client";
+
 import { prisma } from "@/lib/db";
 import { matterIdFilterFor } from "@/lib/auth/access";
 import { canManageClientsAndMatters } from "@/lib/auth/authorization";
@@ -28,13 +30,30 @@ export type MatterListView = "active" | "archived";
  * scoping, never a substitute for it — an archived Matter the caller isn't
  * otherwise authorized to see still never appears in either view.
  */
-export async function listMatters(user: AuthorizableUser, options: { view?: MatterListView } = {}) {
+export async function listMatters(
+  user: AuthorizableUser,
+  options: {
+    view?: MatterListView;
+    /** A stage id, or "none" for matters without a stage. */
+    stageId?: string;
+    /** Extra filter (e.g. a custom-field match), always ANDed with the access scope. */
+    extraWhere?: Prisma.MatterWhereInput;
+  } = {},
+) {
   const where = await matterIdFilterFor(user);
+  const conditions: Prisma.MatterWhereInput[] = [];
+  if (options.stageId) conditions.push({ stageId: options.stageId === "none" ? null : options.stageId });
+  if (options.extraWhere) conditions.push(options.extraWhere);
   return prisma.matter.findMany({
-    where: { ...where, archived: (options.view ?? "active") === "archived" },
+    where: {
+      ...where,
+      archived: (options.view ?? "active") === "archived",
+      ...(conditions.length > 0 ? { AND: conditions } : {}),
+    },
     include: {
       client: true,
       assignments: { include: { user: true } },
+      stage: { select: { id: true, name: true, archivedAt: true } },
     },
     orderBy: { openedDate: "desc" },
   });
@@ -47,6 +66,7 @@ export function getMatterHeader(matterId: string) {
       client: true,
       assignments: { include: { user: true } },
       archivedBy: true,
+      stage: { select: { id: true, name: true, archivedAt: true } },
     },
   });
 }

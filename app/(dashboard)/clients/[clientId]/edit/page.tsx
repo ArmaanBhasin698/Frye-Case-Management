@@ -5,6 +5,7 @@ import { assertCanManageClientsAndMatters } from "@/lib/auth/access";
 import { getClientById } from "@/lib/clients/queries";
 import { formatClientName } from "@/lib/matters/format";
 import { EditClientForm } from "@/components/shared/edit-client-form";
+import { CustomFieldsCard } from "@/components/shared/custom-fields/custom-fields-card";
 
 export default async function EditClientPage({
   params,
@@ -24,6 +25,7 @@ export default async function EditClientPage({
         <h1 className="page-title">Edit {formatClientName(client)}</h1>
       </div>
       <EditClientForm client={client} />
+      <CustomFieldsCard entity="CLIENT" ownerId={client.id} canEdit />
     </div>
   );
 }
