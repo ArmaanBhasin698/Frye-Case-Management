@@ -37,6 +37,16 @@ async function main() {
   await prisma.discoveryComparison.deleteMany();
   await prisma.auditEvent.deleteMany();
   await prisma.call.deleteMany();
+  await prisma.chatMessage.deleteMany();
+  await prisma.chatMembership.deleteMany();
+  await prisma.chatConversation.deleteMany();
+  await prisma.timeEntry.deleteMany();
+  await prisma.activeTimer.deleteMany();
+  await prisma.userActivityMinute.deleteMany();
+  await prisma.userActivityEvent.deleteMany();
+  await prisma.userSession.deleteMany();
+  await prisma.calendarEventAttendee.deleteMany();
+  await prisma.calendarEventContact.deleteMany();
   await prisma.judicialRuling.deleteMany();
   await prisma.professionalObservation.deleteMany();
   await prisma.matterClosureReport.deleteMany();

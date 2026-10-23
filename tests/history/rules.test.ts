@@ -73,7 +73,8 @@ describe("closure validation", () => {
   });
 
   it("requires review of professional-history observations", () => {
-    const { reviewedObservations: _omit, ...rest } = plea;
+    const rest: Record<string, string> = { ...plea };
+    delete rest.reviewedObservations;
     expect(readClosureFields(fd(rest)).success).toBe(false);
   });
 
