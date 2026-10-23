@@ -68,6 +68,11 @@ export default async function MatterLayout({
                 {matterStatusLabel(matter.status)}
               </Badge>
               {matter.archived && <Badge variant="secondary">Archived</Badge>}
+              {matter.stage && (
+                <Badge variant="outline" title="Case stage (progress only — not open/closed status)">
+                  Stage: {matter.stage.name}
+                </Badge>
+              )}
               {matter.closureReviewStatus === "NEEDS_BACKFILL" && (
                 <Link href={`/matters/${matter.id}/outcome`}>
                   <Badge variant="warning">Closure report not reviewed</Badge>

@@ -10,6 +10,12 @@ import {
   matterTitle,
 } from "@/lib/matters/format";
 import { requireCurrentUser } from "@/lib/auth/session";
+import { prisma } from "@/lib/db";
+import { listStages } from "@/lib/stages/queries";
+import { buildMatterCustomFieldFilter, parseOptions } from "@/lib/custom-fields/values";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
 import { canManageClientsAndMatters } from "@/lib/auth/authorization";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -43,8 +49,25 @@ export default async function MattersPage({
   const user = await requireCurrentUser();
   const params = await searchParams;
   const view: MatterListView = readParam(params.archived) === "1" ? "archived" : "active";
+  const stageParam = readParam(params.stage) ?? "";
+  const fieldParam = readParam(params.cf) ?? "";
+  const fieldValue = (readParam(params.cfv) ?? "").slice(0, 200);
 
-  const matters = await listMatters(user, { view });
+  const [stages, fieldDefs] = await Promise.all([
+    listStages({ includeArchived: true }),
+    prisma.customFieldDefinition.findMany({
+      where: { entity: "MATTER", type: { in: ["SINGLE_SELECT", "BOOLEAN", "SHORT_TEXT"] } },
+      orderBy: [{ position: "asc" }, { label: "asc" }],
+    }),
+  ]);
+  // Unknown ids are ignored rather than trusted: a forged stage or field
+  // id simply means "no filter", and every filter is ANDed with the
+  // caller's matter scope inside listMatters.
+  const stageId = stageParam === "none" || stages.some((s) => s.id === stageParam) ? stageParam : "";
+  const fieldDef = fieldDefs.find((d) => d.id === fieldParam);
+  const extraWhere = fieldDef ? (buildMatterCustomFieldFilter(fieldDef, fieldValue) ?? undefined) : undefined;
+
+  const matters = await listMatters(user, { view, stageId: stageId || undefined, extraWhere });
 
   return (
     <div className="space-y-6">
@@ -72,6 +95,72 @@ export default async function MattersPage({
         </Button>
       </div>
 
+      <form method="get" className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-muted/30 p-3">
+        {view === "archived" && <input type="hidden" name="archived" value="1" />}
+        <div className="space-y-1">
+          <Label htmlFor="matters-stage" className="text-xs">
+            Stage
+          </Label>
+          <Select id="matters-stage" name="stage" defaultValue={stageId} className="w-48">
+            <option value="">Any stage</option>
+            <option value="none">No stage</option>
+            {stages.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+                {s.archivedAt ? " (archived)" : ""}
+              </option>
+            ))}
+          </Select>
+        </div>
+        {fieldDefs.length > 0 && (
+          <>
+            <div className="space-y-1">
+              <Label htmlFor="matters-cf" className="text-xs">
+                Custom field
+              </Label>
+              <Select id="matters-cf" name="cf" defaultValue={fieldDef?.id ?? ""} className="w-48">
+                <option value="">Any</option>
+                {fieldDefs.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="matters-cfv" className="text-xs">
+                Equals
+              </Label>
+              {fieldDef?.type === "SINGLE_SELECT" ? (
+                <Select id="matters-cfv" name="cfv" defaultValue={fieldValue} className="w-48">
+                  <option value="">Any value</option>
+                  {parseOptions(fieldDef.options).map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.label}
+                      {o.archived ? " (retired)" : ""}
+                    </option>
+                  ))}
+                </Select>
+              ) : fieldDef?.type === "BOOLEAN" ? (
+                <Select id="matters-cfv" name="cfv" defaultValue={fieldValue} className="w-32">
+                  <option value="">Any</option>
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </Select>
+              ) : (
+                <Input id="matters-cfv" name="cfv" defaultValue={fieldValue} maxLength={200} className="w-48" placeholder="Exact value" />
+              )}
+            </div>
+          </>
+        )}
+        <Button type="submit" size="sm">
+          Apply
+        </Button>
+        <Button variant="ghost" size="sm" asChild>
+          <Link href={view === "archived" ? "/matters?archived=1" : "/matters"}>Clear</Link>
+        </Button>
+      </form>
+
       <Card>
         <CardContent className="p-0">
           {matters.length === 0 ? (
@@ -86,6 +175,7 @@ export default async function MattersPage({
                   <TableHead>Client</TableHead>
                   <TableHead>Court</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Stage</TableHead>
                   <TableHead>Assigned</TableHead>
                   <TableHead>Opened</TableHead>
                 </TableRow>
@@ -114,6 +204,9 @@ export default async function MattersPage({
                         </Badge>
                         {matter.archived && <Badge variant="secondary">Archived</Badge>}
                       </div>
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {matter.stage ? `${matter.stage.name}${matter.stage.archivedAt ? " (archived)" : ""}` : "—"}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {matter.assignments.map((a) => a.user.name).join(", ") || "Unassigned"}

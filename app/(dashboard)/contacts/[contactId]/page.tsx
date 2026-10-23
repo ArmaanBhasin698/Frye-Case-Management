@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { format } from "date-fns";
 
 import { prisma } from "@/lib/db";
+import { CustomFieldsCard } from "@/components/shared/custom-fields/custom-fields-card";
 import { getContactMeetingHistory } from "@/lib/calendar/queries";
 import { formatInZone } from "@/lib/calendar/timezone";
 import { requireCurrentUser } from "@/lib/auth/session";
@@ -227,6 +228,9 @@ export default async function ContactDetailPage({
           </CardContent>
         </Card>
       )}
+
+      {/* The contact passed visibility above; editing custom values follows the same rule as updateContact. */}
+      <CustomFieldsCard entity="CONTACT" ownerId={contact.id} canEdit />
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">

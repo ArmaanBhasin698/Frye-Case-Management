@@ -28,6 +28,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { QuickActions } from "@/components/shared/quick-actions";
+import { MatterStageForm } from "@/components/shared/stages/stage-forms";
+import { CustomFieldsCard } from "@/components/shared/custom-fields/custom-fields-card";
+import { requireCurrentUser } from "@/lib/auth/session";
+import { assertMatterAccess, canEditMatter } from "@/lib/auth/access";
+import { getMatterStageHistory, listStages } from "@/lib/stages/queries";
 
 type KeyDate =
   | { kind: "deadline"; id: string; date: Date; title: string; deadlineType: DeadlineType }
@@ -51,6 +56,13 @@ export default async function MatterOverviewPage({
   ]);
 
   if (!matter) return null;
+  const user = await requireCurrentUser();
+  await assertMatterAccess(user, matterId);
+  const [mayEdit, activeStages, stageHistory] = await Promise.all([
+    canEditMatter(user, matterId),
+    listStages(),
+    getMatterStageHistory(matterId),
+  ]);
 
   const openTasks = tasks.filter((t) => t.status === "OPEN" || t.status === "IN_PROGRESS");
   const discoveryFileCount = productions.reduce((sum, p) => sum + p.files.length, 0);
@@ -94,6 +106,36 @@ export default async function MatterOverviewPage({
           <QuickActions matterId={matterId} />
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Case stage</CardTitle>
+          <p className="text-xs text-muted-foreground">Progress tracking only — it never opens or closes the matter.</p>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {mayEdit ? (
+            <MatterStageForm
+              matterId={matterId}
+              currentStage={matter.stage ? { id: matter.stage.id, name: matter.stage.name, archived: Boolean(matter.stage.archivedAt) } : null}
+              stages={activeStages.map((s) => ({ id: s.id, name: s.name }))}
+            />
+          ) : (
+            <p className="text-sm">{matter.stage ? matter.stage.name : "No stage set"}</p>
+          )}
+          {stageHistory.length > 0 && (
+            <ul className="space-y-1 text-xs text-muted-foreground">
+              {stageHistory.map((h) => (
+                <li key={h.id}>
+                  {format(h.changedAt, "MMM d, yyyy h:mm a")}: {h.fromStage?.name ?? "No stage"} → {h.toStage?.name ?? "No stage"}
+                  {h.changedBy ? ` by ${h.changedBy.name}` : ""}
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+
+      <CustomFieldsCard entity="MATTER" ownerId={matterId} canEdit={mayEdit} />
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
