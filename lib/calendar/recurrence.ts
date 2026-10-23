@@ -8,10 +8,10 @@ import { toWallTime, wallTimeToUtc, type WallTime } from "@/lib/calendar/timezon
  * interval, and an optional end (`until` instant or `count`). Occurrences
  * are computed on *wall-clock* time in the event's own zone, so a weekly
  * 10:00 meeting stays at 10:00 local across DST. Monthly rules on the
- * 29th–31st clamp to the last day of shorter months. There are no
- * per-occurrence exceptions — editing or cancelling an event applies to the
- * whole series (documented limitation). Expansion is capped at
- * MAX_OCCURRENCES per series.
+ * 29th–31st clamp to the last day of shorter months. Per-occurrence
+ * cancellations/edits are applied on top of this expansion by
+ * lib/calendar/occurrences.ts. Expansion is capped at MAX_OCCURRENCES per
+ * series.
  */
 
 export const MAX_OCCURRENCES = 500;

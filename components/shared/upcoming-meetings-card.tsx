@@ -3,6 +3,7 @@ import { Bell, Video } from "lucide-react";
 
 import type { CalendarItem } from "@/lib/calendar/queries";
 import { FIRM_TIME_ZONE, formatInZone } from "@/lib/calendar/timezone";
+import { occurrenceHref } from "@/lib/calendar/occurrences";
 import { calendarEventTypeLabel } from "@/lib/matters/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,7 +38,7 @@ export function UpcomingMeetingsCard({ meetings, reminders }: { meetings: Calend
             {reminders.map((item) => (
               <li key={`r-${item.key}`} className="flex items-center gap-2 text-amber-900">
                 <Bell className="h-3.5 w-3.5 shrink-0" />
-                <Link href={`/calendar/events/${item.id}`} className="truncate hover:underline">
+                <Link href={occurrenceHref(item.id, item.originalStart)} className="truncate hover:underline">
                   {item.title}
                 </Link>
                 <span className="shrink-0 text-xs">{when(item)}</span>
@@ -52,7 +53,7 @@ export function UpcomingMeetingsCard({ meetings, reminders }: { meetings: Calend
             {meetings.map((item) => (
               <li key={item.key} className="flex items-center justify-between gap-2 py-2 first:pt-0 last:pb-0">
                 <div className="min-w-0">
-                  <Link href={`/calendar/events/${item.id}`} className="block truncate text-sm font-medium hover:underline">
+                  <Link href={occurrenceHref(item.id, item.originalStart)} className="block truncate text-sm font-medium hover:underline">
                     {item.title}
                   </Link>
                   <p className="text-xs text-muted-foreground">

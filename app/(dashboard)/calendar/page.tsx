@@ -26,7 +26,7 @@ function noonUtc(key: string) {
 /**
  * Firm calendar: month / week / day / agenda over CalendarEvents (with
  * recurrence expanded) and matter Deadlines. All state lives in the URL
- * (?view=week&date=2026-10-23&matterId=…), and every item comes from
+ * (?view=week&date=2026-10-23&matterId=…&tasks=1), and every item comes from
  * lib/calendar/queries.ts#getCalendarItems, which applies the viewer's
  * event/matter visibility server-side. The grid renders in the firm's
  * display zone; each event keeps its own zone for its detail page.
@@ -52,6 +52,7 @@ export default async function CalendarPage({
   const typeParam = readParam(params.type) ?? "";
   const type = (CALENDAR_EVENT_TYPE_VALUES as readonly string[]).includes(typeParam) ? (typeParam as CalendarEventType) : undefined;
   const includeCancelled = readParam(params.cancelled) === "1";
+  const includeTasks = readParam(params.tasks) === "1";
 
   const items = await getCalendarItems(user, {
     start: range.start,
@@ -63,6 +64,7 @@ export default async function CalendarPage({
     staffId: options.staff.some((s) => s.id === staffId) ? staffId : undefined,
     type,
     includeCancelled,
+    includeTasks,
   });
 
   const filterParams = new URLSearchParams();
@@ -70,6 +72,7 @@ export default async function CalendarPage({
   if (staffId) filterParams.set("staffId", staffId);
   if (type) filterParams.set("type", type);
   if (includeCancelled) filterParams.set("cancelled", "1");
+  if (includeTasks) filterParams.set("tasks", "1");
   const href = (nextView: string, date: string) => {
     const p = new URLSearchParams(filterParams);
     p.set("view", nextView);
@@ -180,6 +183,10 @@ export default async function CalendarPage({
         <label className="flex items-center gap-2 pb-2 text-sm">
           <input type="checkbox" name="cancelled" value="1" defaultChecked={includeCancelled} />
           Show cancelled
+        </label>
+        <label className="flex items-center gap-2 pb-2 text-sm" title="Read-only layer of task due dates from your matters (staff filter = assignee)">
+          <input type="checkbox" name="tasks" value="1" defaultChecked={includeTasks} />
+          Show task due dates
         </label>
         <Button type="submit" size="sm">
           Apply

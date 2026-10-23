@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { AddMatterContactForm, RemoveMatterContactButton } from "@/components/shared/matter-contacts";
+import { ScheduleWithContactLink } from "@/components/shared/calendar/schedule-with-contact-link";
 
 /**
  * Everyone involved in this matter — the client, judges, prosecutors,
@@ -45,7 +46,7 @@ export default async function MatterContactsPage({ params }: { params: Promise<{
                 <TableHead>Role</TableHead>
                 <TableHead>Contact</TableHead>
                 <TableHead>Involved</TableHead>
-                <TableHead className="w-24" />
+                <TableHead className="w-40" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -67,7 +68,9 @@ export default async function MatterContactsPage({ params }: { params: Promise<{
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">See client record</TableCell>
                   <TableCell className="text-sm text-muted-foreground">—</TableCell>
-                  <TableCell />
+                  <TableCell>
+                    {client.contact && <ScheduleWithContactLink contactId={client.contact.id} matterId={matterId} compact />}
+                  </TableCell>
                 </TableRow>
               )}
               {links.map((link) => (
@@ -95,7 +98,10 @@ export default async function MatterContactsPage({ params }: { params: Promise<{
                     {link.endDate ? ` – ${format(asCalendarDate(link.endDate), "MMM d, yyyy")}` : ""}
                   </TableCell>
                   <TableCell>
-                    <RemoveMatterContactButton matterContactId={link.id} />
+                    <div className="flex items-center gap-1">
+                      <ScheduleWithContactLink contactId={link.contact.id} matterId={matterId} compact />
+                      <RemoveMatterContactButton matterContactId={link.id} />
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}

@@ -12,6 +12,7 @@ import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { createEvent, updateEvent, type EventFormState } from "@/lib/calendar/actions";
 import {
+  ADDITIONAL_REMINDER_OPTIONS,
   CALENDAR_EVENT_TYPE_VALUES,
   EVENT_STATUS_LABELS,
   EVENT_STATUS_VALUES,
@@ -40,12 +41,15 @@ export function EventForm({
   staff,
   contacts,
   cancelHref,
+  notice,
 }: {
   initial: EventFormInitial;
   matters: Option[];
   staff: Option[];
   contacts: Option[];
   cancelHref: string;
+  /** Optional context line (e.g. "This contact is on 2 of your matters — choose one"). */
+  notice?: string;
 }) {
   const isEdit = Boolean(initial.id);
   const [state, formAction, isPending] = useActionState(isEdit ? updateEvent : createEvent, INITIAL_STATE);
@@ -66,6 +70,7 @@ export function EventForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-5 rounded-lg border border-border bg-card p-6">
       {initial.id && <input type="hidden" name="eventId" value={initial.id} />}
+      {notice && <p className="rounded-md border border-border bg-muted/40 p-2 text-sm text-muted-foreground">{notice}</p>}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-1.5 sm:col-span-2">
@@ -197,6 +202,22 @@ export function EventForm({
           </Select>
           <p className="text-xs text-muted-foreground">Shown in-app on the dashboard; no email or text is sent.</p>
         </div>
+        <fieldset className="space-y-1.5 sm:col-span-2">
+          <legend className="text-sm font-medium">Additional reminders</legend>
+          <div className="flex flex-wrap gap-x-4 gap-y-1">
+            {ADDITIONAL_REMINDER_OPTIONS.map((r) => (
+              <label key={r.value} className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  name="reminderOffsetsMinutes"
+                  value={r.value}
+                  defaultChecked={initial.reminderOffsetsMinutes.includes(r.value)}
+                />
+                {r.label}
+              </label>
+            ))}
+          </div>
+        </fieldset>
         <div className="space-y-1.5 sm:col-span-2">
           <Label htmlFor="ev-description">Description</Label>
           <Textarea id="ev-description" name="description" rows={3} defaultValue={initial.description} />
@@ -228,6 +249,13 @@ export function EventForm({
           </div>
         </fieldset>
       </div>
+
+      {isEdit && initial.recurrenceFrequency !== "NONE" && (
+        <p className="rounded-md border border-border bg-muted/40 p-2 text-xs text-muted-foreground">
+          You are editing the entire series. Individually changed or cancelled occurrences are kept when their original date
+          is still part of the series; any that no longer are will be removed.
+        </p>
+      )}
 
       {state.error && (
         <p className="text-sm font-medium text-destructive" role="alert">

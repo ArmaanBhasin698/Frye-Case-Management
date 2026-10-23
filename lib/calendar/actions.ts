@@ -11,7 +11,8 @@ import { requireCurrentUser } from "@/lib/auth/session";
 import type { AuthorizableUser } from "@/lib/auth/authorization";
 import { canViewContact } from "@/lib/contacts/visibility";
 import { canAccessEvent } from "@/lib/calendar/access";
-import { readEventForm, type ParsedEventForm } from "@/lib/calendar/fields";
+import { readEventForm, readOccurrenceForm, type ParsedEventForm } from "@/lib/calendar/fields";
+import { MAX_OCCURRENCE_SHIFT_DAYS, findOccurrence, partitionExceptionsForSeries } from "@/lib/calendar/occurrences";
 import type { ActionResult } from "@/lib/matters/actions";
 
 /**
@@ -54,6 +55,7 @@ function columns(data: ParsedEventForm) {
     meetingUrl: data.meetingUrl,
     meetingProvider: data.meetingProvider,
     reminderMinutesBefore: data.reminderMinutesBefore,
+    reminderOffsetsMinutes: data.reminderOffsetsMinutes,
     recurrenceFrequency: data.recurrenceFrequency,
     recurrenceInterval: data.recurrenceInterval,
     recurrenceUntil: data.recurrenceUntil,
@@ -136,7 +138,11 @@ export async function updateEvent(_prev: EventFormState, formData: FormData): Pr
 
   const before = await prisma.calendarEvent.findUnique({
     where: { id: eventId.data },
-    include: { attendees: { select: { userId: true } }, contacts: { select: { contactId: true } } },
+    include: {
+      attendees: { select: { userId: true } },
+      contacts: { select: { contactId: true } },
+      exceptions: { select: { id: true, originalStart: true } },
+    },
   });
   if (!before) return { error: NOT_FOUND_ERROR };
 
@@ -153,11 +159,14 @@ export async function updateEvent(_prev: EventFormState, formData: FormData): Pr
   const nextContactIds = [...new Set([...data.contactIds, ...hiddenContactIds])];
 
   const next = columns(data);
-  const changedFields = (Object.keys(next) as (keyof typeof next)[]).filter((key) => {
-    const a = before[key];
-    const b = next[key];
-    return (a instanceof Date ? a.getTime() : a) !== (b instanceof Date ? b.getTime() : b);
-  });
+  const comparable = (v: unknown) => (v instanceof Date ? v.getTime() : Array.isArray(v) ? JSON.stringify(v) : v);
+  const changedFields = (Object.keys(next) as (keyof typeof next)[]).filter(
+    (key) => comparable(before[key]) !== comparable(next[key]),
+  );
+  // Per-occurrence exceptions survive a whole-series edit only while their
+  // original start is still an occurrence of the new series; orphans are
+  // removed in the same transaction (counts audited).
+  const { keep, drop } = partitionExceptionsForSeries(next, before.exceptions ?? []);
   const attendeesChanged =
     [...before.attendees.map((a) => a.userId)].sort().join() !== [...data.attendeeIds].sort().join();
   const contactsChanged = [...before.contacts.map((c) => c.contactId)].sort().join() !== [...nextContactIds].sort().join();
@@ -165,6 +174,9 @@ export async function updateEvent(_prev: EventFormState, formData: FormData): Pr
   try {
     await prisma.$transaction(async (tx) => {
       await tx.calendarEvent.update({ where: { id: before.id }, data: next });
+      if (drop.length > 0) {
+        await tx.calendarEventException.deleteMany({ where: { eventId: before.id, id: { in: drop } } });
+      }
       await tx.calendarEventAttendee.deleteMany({ where: { eventId: before.id } });
       await tx.calendarEventContact.deleteMany({ where: { eventId: before.id } });
       if (data.attendeeIds.length > 0) {
@@ -180,7 +192,12 @@ export async function updateEvent(_prev: EventFormState, formData: FormData): Pr
           entityType: "CalendarEvent",
           entityId: before.id,
           matterId: data.matterId ?? before.matterId,
-          metadata: { changedFields, attendeesChanged, contactsChanged },
+          metadata: {
+            changedFields,
+            attendeesChanged,
+            contactsChanged,
+            ...(drop.length + keep.length > 0 ? { exceptionsKept: keep.length, exceptionsDropped: drop.length } : {}),
+          },
         },
       });
     });
@@ -221,4 +238,145 @@ export async function cancelEvent(input: { eventId: string }): Promise<ActionRes
   revalidateCalendar([event.matterId]);
   revalidatePath(`/calendar/events/${event.id}`);
   return { ok: true, data: undefined };
+}
+
+// --- Single occurrences of a recurring series ---------------------------------
+
+const occurrenceRefSchema = z.object({
+  eventId: z.string().trim().min(1).max(100),
+  originalStart: z
+    .string()
+    .trim()
+    .max(40)
+    .refine((v) => !Number.isNaN(Date.parse(v)), "Invalid occurrence."),
+});
+
+/**
+ * Loads a visible, active recurring event and confirms `originalStart` is
+ * really one of its generated occurrences — a forged instant is refused
+ * like any other unknown id.
+ */
+async function loadOccurrence(user: AuthorizableUser, input: { eventId: unknown; originalStart: unknown }) {
+  const parsed = occurrenceRefSchema.safeParse(input);
+  if (!parsed.success || !(await canAccessEvent(user, parsed.data.eventId))) return null;
+  const event = await prisma.calendarEvent.findUnique({ where: { id: parsed.data.eventId } });
+  if (!event || event.recurrenceFrequency === "NONE" || event.status === "CANCELLED") return null;
+  const originalStart = new Date(parsed.data.originalStart);
+  if (!findOccurrence(event, originalStart)) return null;
+  return { event, originalStart };
+}
+
+/** Cancels one occurrence (a CANCELLED exception); the rest of the series is untouched. */
+export async function cancelOccurrence(input: { eventId: string; originalStart: string }): Promise<ActionResult> {
+  const user = await requireCurrentUser();
+  const target = await loadOccurrence(user, input);
+  if (!target) return { ok: false, error: NOT_FOUND_ERROR };
+  const { event, originalStart } = target;
+
+  await prisma.$transaction(async (tx) => {
+    const exception = await tx.calendarEventException.upsert({
+      where: { eventId_originalStart: { eventId: event.id, originalStart } },
+      create: { eventId: event.id, originalStart, kind: "CANCELLED", createdById: user.id },
+      update: { kind: "CANCELLED" },
+    });
+    await tx.auditEvent.create({
+      data: {
+        actorId: user.id,
+        action: "UPDATE",
+        entityType: "CalendarEventException",
+        entityId: exception.id,
+        matterId: event.matterId,
+        metadata: { eventId: event.id, originalStart: originalStart.toISOString(), kind: "CANCELLED" },
+      },
+    });
+  });
+
+  revalidateCalendar([event.matterId]);
+  revalidatePath(`/calendar/events/${event.id}`);
+  return { ok: true, data: undefined };
+}
+
+/** Restores one occurrence to the series defaults by removing its exception. */
+export async function restoreOccurrence(input: { eventId: string; originalStart: string }): Promise<ActionResult> {
+  const user = await requireCurrentUser();
+  const target = await loadOccurrence(user, input);
+  if (!target) return { ok: false, error: NOT_FOUND_ERROR };
+  const { event, originalStart } = target;
+
+  const existing = await prisma.calendarEventException.findUnique({
+    where: { eventId_originalStart: { eventId: event.id, originalStart } },
+  });
+  if (!existing) return { ok: false, error: "This occurrence already follows the series." };
+
+  await prisma.$transaction([
+    prisma.calendarEventException.delete({ where: { id: existing.id } }),
+    prisma.auditEvent.create({
+      data: {
+        actorId: user.id,
+        action: "DELETE",
+        entityType: "CalendarEventException",
+        entityId: existing.id,
+        matterId: event.matterId,
+        metadata: { eventId: event.id, originalStart: originalStart.toISOString(), kind: existing.kind },
+      },
+    }),
+  ]);
+
+  revalidateCalendar([event.matterId]);
+  revalidatePath(`/calendar/events/${event.id}`);
+  return { ok: true, data: undefined };
+}
+
+/** Edits one occurrence (a MODIFIED exception overriding time/title/location/link). */
+export async function updateOccurrence(_prev: EventFormState, formData: FormData): Promise<EventFormState> {
+  const user = await requireCurrentUser();
+  const target = await loadOccurrence(user, {
+    eventId: formData.get("eventId"),
+    originalStart: formData.get("originalStart"),
+  });
+  if (!target) return { error: NOT_FOUND_ERROR };
+  const { event, originalStart } = target;
+
+  const parsed = readOccurrenceForm(formData, event, originalStart, MAX_OCCURRENCE_SHIFT_DAYS);
+  if (!parsed.ok) return { error: parsed.error };
+  const data = parsed.data;
+  const override = {
+    kind: "MODIFIED" as const,
+    startTime: data.startTime,
+    endTime: data.endTime,
+    title: data.title,
+    location: data.location,
+    meetingUrl: data.meetingUrl,
+  };
+
+  await prisma.$transaction(async (tx) => {
+    const exception = await tx.calendarEventException.upsert({
+      where: { eventId_originalStart: { eventId: event.id, originalStart } },
+      create: { eventId: event.id, originalStart, createdById: user.id, ...override },
+      update: override,
+    });
+    await tx.auditEvent.create({
+      data: {
+        actorId: user.id,
+        action: "UPDATE",
+        entityType: "CalendarEventException",
+        entityId: exception.id,
+        matterId: event.matterId,
+        metadata: {
+          eventId: event.id,
+          originalStart: originalStart.toISOString(),
+          kind: "MODIFIED",
+          moved: data.startTime.getTime() !== originalStart.getTime(),
+          overrides: Object.entries({ title: data.title, location: data.location, meetingUrl: data.meetingUrl })
+            .filter(([, v]) => v !== null)
+            .map(([k]) => k),
+        },
+      },
+    });
+  });
+
+  revalidateCalendar([event.matterId]);
+  const href = `/calendar/events/${event.id}?occurrence=${encodeURIComponent(originalStart.toISOString())}`;
+  revalidatePath(`/calendar/events/${event.id}`);
+  redirect(href);
 }
